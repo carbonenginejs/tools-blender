@@ -1,0 +1,12 @@
+[project]
+name = "carbonenginejs-tool-blender"
+version = "0.2.2"
+description = "Pure-Python CarbonEngine resource tools for Blender"
+requires-python = ">=3.10"
+license = "EUPL-1.2"
+authors = [{ name = "CarbonengineJS" }]
+
+[project.urls]
+Homepage = "https://github.com/orgs/carbonenginejs/"
+Repository = "https://github.com/carbonenginejs/tool-blender"
+Issues = "https://github.com/carbonenginejs/tool-blender/issues"

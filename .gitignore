@@ -1,0 +1,23 @@
+# Local agent and tool state. Organization knowledge belongs at the org root.
+.agent/
+.agents/
+.claude/
+.codex/
+.scratch/
+.skill/
+.skills/
+review/
+_review/
+carbonenginejs.md
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+dist/
+*.zip
+
+# Do not commit proprietary resource samples.
+*.gr2
+*.gsf
+*.cmf

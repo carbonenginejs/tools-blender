@@ -1,0 +1,27 @@
+tool-blender is currently licensed under the European Union Public Licence
+version 1.2 (EUPL-1.2).
+
+SPDX-License-Identifier: EUPL-1.2
+
+Current licensing posture
+-------------------------
+
+The current combined work includes `addons/io_scene_carbon_gr2/gr2/codecs.py`, whose
+BitKnit2 decoder derives from
+`neptuwunium/Knit` under EUPL-1.2. Until that implementation is replaced with a
+non-EUPL-derived implementation, distribute this repository and any package
+containing it under EUPL-1.2.
+
+The official English EUPL-1.2 text is published by the European Commission at:
+
+https://joinup.ec.europa.eu/sites/default/files/custom-page/attachment/eupl_v1.2_en.pdf
+
+Future MIT target
+-----------------
+
+CarbonEngineJS may re-license this package under MIT once the
+EUPL-derived BitKnit implementation is replaced or removed and the remaining
+code and dependencies permit MIT distribution.
+
+That future intent is not the current license. Treat EUPL-1.2 as the effective
+license until a later commit replaces this file and the package metadata.
