@@ -22,14 +22,19 @@ later.
 
 ## Install
 
-1. Download the zip for the tool you want. Do not unzip it.
+1. Download the zip for the tool you want using the links below. Do not unzip it.
 2. In Blender, open **Edit > Preferences > Add-ons**.
 3. Choose **Install from Disk**, select the zip, then enable the add-on.
 
-The two installable zips are:
+Current downloads:
 
-- `io_scene_carbon_gr2-*.zip` — import Granny GR2 files.
-- `carbon_eve_resources-*.zip` — browse and download EVE resources.
+- [GR2 Importer 0.1.2](https://github.com/carbonenginejs/tool-blender/releases/download/v0.2.2/io_scene_carbon_gr2-0.1.2.zip)
+  — import Granny GR2 files.
+- [EVE Resource Browser 0.2.2](https://github.com/carbonenginejs/tool-blender/releases/download/v0.2.2/carbon_eve_resources-0.2.2.zip)
+  — browse and download EVE resources.
+
+Do not install GitHub's `tool-blender-main.zip`; it is the repository source,
+not a Blender add-on package.
 
 ## Import a GR2
 
