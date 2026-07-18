@@ -1,6 +1,6 @@
 # Third-party notices
 
-`tool-blender` is currently licensed under **EUPL-1.2**. It contains no
+`tools-blender` is currently licensed under **EUPL-1.2**. It contains no
 RAD/Granny proprietary code and does not link `granny2.dll`. The section
 decompressors are pure-Python ports of open reverse-engineering work and must
 retain the notices and obligations listed below.
@@ -58,7 +58,7 @@ DEALINGS IN THE SOFTWARE.
 powzix/ooz `bitknit.cpp`.
 
 > **STATUS - current repository license.** Because this file currently derives
-> from Knit's EUPL-1.2 expression, `tool-blender` is licensed under EUPL-1.2.
+> from Knit's EUPL-1.2 expression, `tools-blender` is licensed under EUPL-1.2.
 > To ship MIT in the future, the BitKnit2 portion of `codecs.py` must be re-derived directly from
 > pybg3's MIT `rans.h`, replaced with another permissively licensed
 > implementation, or removed. A direct re-base attempt was previously reverted

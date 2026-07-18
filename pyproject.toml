@@ -1,5 +1,5 @@
 [project]
-name = "carbonenginejs-tool-blender"
+name = "carbonenginejs-tools-blender"
 version = "0.2.2"
 description = "Pure-Python CarbonEngine resource tools for Blender"
 requires-python = ">=3.10"
@@ -8,5 +8,5 @@ authors = [{ name = "CarbonengineJS" }]
 
 [project.urls]
 Homepage = "https://github.com/orgs/carbonenginejs/"
-Repository = "https://github.com/carbonenginejs/tool-blender"
-Issues = "https://github.com/carbonenginejs/tool-blender/issues"
+Repository = "https://github.com/carbonenginejs/tools-blender"
+Issues = "https://github.com/carbonenginejs/tools-blender/issues"

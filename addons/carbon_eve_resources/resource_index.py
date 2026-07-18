@@ -24,7 +24,7 @@ METADATA_BASE_URL = "https://binaries.eveonline.com"
 INDEX_BASE_URL = "https://binaries.eveonline.com"
 APP_BASE_URL = "https://binaries.eveonline.com"
 RESOURCE_BASE_URL = "https://resources.eveonline.com"
-USER_AGENT = "CarbonEngineJS-tool-blender/0.2.2"
+USER_AGENT = "CarbonEngineJS-tools-blender/0.2.2"
 LATEST_BUILD_CHECK_INTERVAL_SECONDS = 12 * 60 * 60
 DETAIL_VARIANT_MARKERS = ("_lowdetail", "_mediumdetail")
 _MD5_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -245,9 +245,13 @@ def parse_index(text: str, default_root: str = "res") -> tuple[IndexEntry, ...]:
 
 
 def default_cache_root() -> Path:
-    override = os.environ.get("CARBONENGINEJS_TOOL_CACHE")
+    override = (
+        os.environ.get("CARBONENGINEJS_TOOLS_CACHE")
+        or os.environ.get("CARBONENGINEJS_TOOL_CACHE")
+    )
     if override:
         return Path(override).expanduser()
+    # Preserve the released cache location across the package rename.
     return Path.home() / ".cache" / "carbonenginejs" / "tool-core"
 
 

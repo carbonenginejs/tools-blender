@@ -1,9 +1,11 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ADDONS = Path(__file__).resolve().parents[1] / "addons"
@@ -19,6 +21,7 @@ from carbon_eve_resources.resource_index import (  # noqa: E402
     ResourceCatalog,
     ResourceIndexError,
     clear_payload_cache,
+    default_cache_root,
     ensure_latest_catalog,
     fetch_resource,
     materialize_resource,
@@ -65,6 +68,20 @@ class FakeOpener:
 
 
 class ResourceIndexTests(unittest.TestCase):
+    def test_cache_override_prefers_the_plural_name_and_accepts_the_legacy_name(self):
+        with patch.dict(
+            os.environ,
+            {
+                "CARBONENGINEJS_TOOLS_CACHE": "new-cache",
+                "CARBONENGINEJS_TOOL_CACHE": "legacy-cache",
+            },
+            clear=True,
+        ):
+            self.assertEqual(default_cache_root(), Path("new-cache"))
+
+        with patch.dict(os.environ, {"CARBONENGINEJS_TOOL_CACHE": "legacy-cache"}, clear=True):
+            self.assertEqual(default_cache_root(), Path("legacy-cache"))
+
     def test_parses_ccp_rows_and_rejects_unsafe_paths(self):
         payload = b"texture"
         entry = parse_index_line(index_row("res:/dx9/model/test.dds", "ab/hash_md5", payload))

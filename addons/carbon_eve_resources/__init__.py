@@ -8,7 +8,7 @@ bl_info = {
     "location": "3D View > Sidebar > CarbonEngineJS",
     "description": "Browse, validate, download, and preview EVE Online resources",
     "doc_url": "https://github.com/orgs/carbonenginejs/",
-    "tracker_url": "https://github.com/carbonenginejs/tool-blender/issues",
+    "tracker_url": "https://github.com/carbonenginejs/tools-blender/issues",
     "category": "System",
 }
 

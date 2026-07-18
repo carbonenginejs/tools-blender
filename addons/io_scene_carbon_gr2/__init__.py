@@ -8,7 +8,7 @@ bl_info = {
     "location": "File > Import > Granny GR2 (.gr2)",
     "description": "Import GR2 meshes, skeletons, skinning, morphs, and animations without Granny or Node.js",
     "doc_url": "https://github.com/orgs/carbonenginejs/",
-    "tracker_url": "https://github.com/carbonenginejs/tool-blender/issues",
+    "tracker_url": "https://github.com/carbonenginejs/tools-blender/issues",
     "category": "Import-Export",
 }
 

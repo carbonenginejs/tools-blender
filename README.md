@@ -13,6 +13,11 @@ sorry, we cannot save you from that part yet. <3
 Everything is pure Python for Blender 4.0 and newer. No Node.js,
 `granny2.dll`, or converter program is required.
 
+The source tree also contains a tested, pure-Python client boundary for the
+optional local `tools-core` Node service. It is not enabled by the current
+Blender UI or required by the released GR2 importer/resource browser; Node
+distribution and exact-build SOF bootstrap must be completed first.
+
 ## What it does not do yet
 
 These tools do not build a complete EVE ship. For now, they retrieve and load
@@ -28,12 +33,12 @@ later.
 
 Current downloads:
 
-- [GR2 Importer 0.1.2](https://github.com/carbonenginejs/tool-blender/releases/download/v0.2.2/io_scene_carbon_gr2-0.1.2.zip)
+- [GR2 Importer 0.1.2](https://github.com/carbonenginejs/tools-blender/releases/download/v0.2.2/io_scene_carbon_gr2-0.1.2.zip)
   — import Granny GR2 files.
-- [EVE Resource Browser 0.2.2](https://github.com/carbonenginejs/tool-blender/releases/download/v0.2.2/carbon_eve_resources-0.2.2.zip)
+- [EVE Resource Browser 0.2.2](https://github.com/carbonenginejs/tools-blender/releases/download/v0.2.2/carbon_eve_resources-0.2.2.zip)
   — browse and download EVE resources.
 
-Do not install GitHub's `tool-blender-main.zip`; it is the repository source,
+Do not install GitHub's `tools-blender-main.zip`; it is the repository source,
 not a Blender add-on package.
 
 ## Import a GR2
@@ -81,9 +86,11 @@ bundled notice.
   encodings, packed tangent frames, morphs, and GSF projection.
 - Authored normals and tangent frames are preserved as mesh data; the missing
   normal fallback uses a 30-degree smoothing angle.
-- Cached EVE payloads follow the tool-core layout under
+- Cached EVE payloads follow the tools-core layout under
   `ccp/builds/<build>/indexes/` and `ResFiles/<shard>/`. **Clear Cache** keeps
   indexes, the 12-hour check marker, and files copied into Downloads.
+- Existing installs retain the `carbonenginejs/tool-core` cache directory as
+  the shared v1 on-disk location; the directory name is not the package name.
 
 Reader API:
 

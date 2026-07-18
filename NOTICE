@@ -1,4 +1,4 @@
-carbonenginejs/tool-blender
+carbonenginejs/tools-blender
 ===========================
 
 A pure-Python Blender importer and reader for RAD Game Tools' Granny 3D (.gr2)
@@ -60,7 +60,7 @@ with the bundled reader while retaining its import controls and attribution.
 
 EVE resource index and cache behavior
   The Python browser is original code implementing the public CCP-style index
-  rows and CDN layout. CarbonEngineJS tool-core's indexing contracts were used
+  rows and CDN layout. CarbonEngineJS tools-core's indexing contracts were used
   as a behavioral interoperability reference; no JavaScript source was copied.
 
 Please retain this NOTICE, LICENSE, THIRD-PARTY-NOTICES.md, and the upstream
