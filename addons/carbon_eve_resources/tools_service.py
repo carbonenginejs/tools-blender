@@ -29,14 +29,13 @@ class ToolsServiceBootstrap:
     protocol_version: int
     host: str
     port: int
-    token: str
     pid: int
     cache_directory: Path
     capabilities: Mapping[str, bool]
 
 
 class ToolsServiceClient:
-    """Starts one tools-core sidecar and performs authenticated JSON requests."""
+    """Starts one tools-core sidecar and performs loopback JSON requests."""
 
     def __init__(
         self,
@@ -192,7 +191,6 @@ class ToolsServiceClient:
         data = None if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
         headers = {
             "Accept": "application/json",
-            "Authorization": f"Bearer {bootstrap.token}",
         }
         if data is not None:
             headers["Content-Type"] = "application/json"
@@ -247,14 +245,11 @@ def parse_bootstrap(line: str, expected_cache_root: Path) -> ToolsServiceBootstr
         raise ToolsServiceError("tools-core service did not bind to loopback")
     port = value.get("port")
     pid = value.get("pid")
-    token = value.get("token")
     capabilities = value.get("capabilities")
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
         raise ToolsServiceError("bootstrap port is invalid")
     if not isinstance(pid, int) or isinstance(pid, bool) or pid < 1:
         raise ToolsServiceError("bootstrap process id is invalid")
-    if not isinstance(token, str) or len(token) < 16:
-        raise ToolsServiceError("bootstrap bearer token is invalid")
     if not isinstance(capabilities, dict) or any(
         not isinstance(name, str) or not isinstance(enabled, bool)
         for name, enabled in capabilities.items()
@@ -269,7 +264,6 @@ def parse_bootstrap(line: str, expected_cache_root: Path) -> ToolsServiceBootstr
         protocol_version=PROTOCOL_VERSION,
         host=host,
         port=port,
-        token=token,
         pid=pid,
         cache_directory=cache_directory,
         capabilities=dict(capabilities),

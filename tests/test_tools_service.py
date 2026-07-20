@@ -53,7 +53,7 @@ class FakeResponse:
 
 
 class ToolsServiceTests(unittest.TestCase):
-    def test_starts_authenticated_sidecar_and_fetches_to_the_shared_cache(self):
+    def test_starts_loopback_sidecar_and_fetches_to_the_shared_cache(self):
         with tempfile.TemporaryDirectory() as temporary:
             cache = Path(temporary) / "cache"
             bootstrap = make_bootstrap(cache)
@@ -104,7 +104,7 @@ class ToolsServiceTests(unittest.TestCase):
             self.assertEqual(result["byteLength"], 42)
             self.assertEqual(commands[0][0][-2:], ["--cache", str(cache.resolve())])
             self.assertEqual(len(commands), 1, "subsequent requests must reuse the sidecar")
-            self.assertEqual(requests[0][0].get_header("Authorization"), "Bearer test-token-0123456789")
+            self.assertIsNone(requests[0][0].get_header("Authorization"))
             request_body = json.loads(requests[1][0].data.decode("utf-8"))
             self.assertEqual(request_body["logicalPath"], "res:/test.gr2")
             self.assertEqual(request_body["options"], {})
@@ -210,7 +210,6 @@ def make_bootstrap(cache):
         "protocolVersion": 1,
         "host": "127.0.0.1",
         "port": 43123,
-        "token": "test-token-0123456789",
         "pid": 1234,
         "cacheDirectory": str(cache.resolve()),
         "capabilities": {"resources": True, "sofDocument": False},
