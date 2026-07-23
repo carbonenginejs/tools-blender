@@ -3,7 +3,7 @@
 bl_info = {
     "name": "CarbonEngineJS EVE Resource Browser",
     "author": "CarbonengineJS",
-    "version": (0, 2, 2),
+    "version": (0, 2, 3),
     "blender": (4, 0, 0),
     "location": "3D View > Sidebar > CarbonEngineJS",
     "description": "Browse, validate, download, and preview EVE Online resources",
