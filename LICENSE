@@ -1,27 +1,21 @@
-tools-blender is currently licensed under the European Union Public Licence
-version 1.2 (EUPL-1.2).
+MIT License
 
-SPDX-License-Identifier: EUPL-1.2
+Copyright (c) 2026 cppctamber / CarbonEngineJS contributors
 
-Current licensing posture
--------------------------
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-The current combined work includes `addons/io_scene_carbon_gr2/gr2/codecs.py`, whose
-BitKnit2 decoder derives from
-`neptuwunium/Knit` under EUPL-1.2. Until that implementation is replaced with a
-non-EUPL-derived implementation, distribute this repository and any package
-containing it under EUPL-1.2.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-The official English EUPL-1.2 text is published by the European Commission at:
-
-https://joinup.ec.europa.eu/sites/default/files/custom-page/attachment/eupl_v1.2_en.pdf
-
-Future MIT target
------------------
-
-CarbonEngineJS may re-license this package under MIT once the
-EUPL-derived BitKnit implementation is replaced or removed and the remaining
-code and dependencies permit MIT distribution.
-
-That future intent is not the current license. Treat EUPL-1.2 as the effective
-license until a later commit replaces this file and the package metadata.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

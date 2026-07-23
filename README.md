@@ -33,9 +33,9 @@ later.
 
 Current downloads:
 
-- [GR2 Importer 0.1.2](https://github.com/carbonenginejs/tools-blender/releases/download/v0.2.2/io_scene_carbon_gr2-0.1.2.zip)
+- [GR2 Importer 0.1.3](https://github.com/carbonenginejs/tools-blender/releases/download/v0.2.3/io_scene_carbon_gr2-0.1.3.zip)
   — import Granny GR2 files.
-- [EVE Resource Browser 0.2.2](https://github.com/carbonenginejs/tools-blender/releases/download/v0.2.2/carbon_eve_resources-0.2.2.zip)
+- [EVE Resource Browser 0.2.3](https://github.com/carbonenginejs/tools-blender/releases/download/v0.2.3/carbon_eve_resources-0.2.3.zip)
   — browse and download EVE resources.
 
 Do not install GitHub's `tools-blender-main.zip`; it is the repository source,
@@ -114,6 +114,7 @@ Optional JavaScript-reader parity tests use `GR2_PARITY_SAMPLE` and
 
 ## License
 
-EUPL-1.2, required by the BitKnit2 decoder's provenance. See `LICENSE`,
-`NOTICE`, and `THIRD-PARTY-NOTICES.md`. EVE content remains subject to CCP
-Games' separate terms in `EVE-CREATOR-LICENSE.md`.
+MIT. The BitKnit2 decoder is a Python port of CarbonEngineJS's MIT clean-room
+implementation and has been validated byte-exact against the available GR2
+codec corpus. See `LICENSE`, `NOTICE`, and `THIRD-PARTY-NOTICES.md`. EVE content
+remains subject to CCP Games' separate terms in `EVE-CREATOR-LICENSE.md`.

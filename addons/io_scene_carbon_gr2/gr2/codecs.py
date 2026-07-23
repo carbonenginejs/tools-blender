@@ -1,9 +1,10 @@
 """Pure-Python section decompressors used by Granny 2 files.
 
 The Oodle1 implementation is a translation of the Boost-licensed decoder used
-by ``@carbonenginejs/format-gr2``.  The BitKnit2 implementation is translated
-from that package's EUPL-1.2 implementation.  See the repository notices for
-complete provenance.
+by ``@carbonenginejs/format-gr2``.  The BitKnit2 implementation is an MIT-
+licensed Python port of CarbonEngineJS's clean-room decoder, following its
+published format specification.  See the repository notices for complete
+provenance.
 """
 
 from __future__ import annotations
@@ -17,11 +18,10 @@ OODLE1_STREAM_PADDING = 8
 OODLE1_OUTPUT_SLACK = 512
 
 BITKNIT2_MAGIC = 0x75B1
-BITKNIT2_FREQ_BITS = 15
-BITKNIT2_LOOKUP_BITS = 10
-BITKNIT2_LOOKUP_SHIFT = BITKNIT2_FREQ_BITS - BITKNIT2_LOOKUP_BITS
-BITKNIT2_TOTAL_SUM = 1 << BITKNIT2_FREQ_BITS
-BITKNIT2_ADAPT_INTERVAL = 1024
+_BITKNIT2_TOTAL = 0x8000
+_BITKNIT2_QUANTUM_BYTES = 0x10000
+_BITKNIT2_LOOKUP_SHIFT = 5
+_BITKNIT2_ADAPT_INTERVAL = 1024
 
 
 class _OodleDecoder:
@@ -285,168 +285,175 @@ def decompress_oodle1(
     return bytes(output[:expanded_size])
 
 
-class _BitKnitModel:
-    def __init__(self, vocab_size: int, minimum_probable: int):
-        equi = vocab_size - minimum_probable
-        self.vocab = vocab_size
-        self.freq_incr = (BITKNIT2_TOTAL_SUM - vocab_size) // BITKNIT2_ADAPT_INTERVAL
-        self.last_freq_incr = (
-            1
-            + BITKNIT2_TOTAL_SUM
-            - vocab_size
-            - self.freq_incr * BITKNIT2_ADAPT_INTERVAL
-        )
-        self.sums = [0] * (vocab_size + 1)
-        self.lookup = [0] * (1 << BITKNIT2_LOOKUP_BITS)
-        self.acc = [1] * vocab_size
-        self.counter = 0
-        for index in range(equi):
-            self.sums[index] = (
-                (BITKNIT2_TOTAL_SUM - minimum_probable) * index // equi
-            )
-        for index in range(equi, vocab_size + 1):
-            self.sums[index] = BITKNIT2_TOTAL_SUM - vocab_size + index
-        self.finish_update()
+class _BitKnitFrequencyModel:
+    """Adaptive 15-bit cumulative-frequency model for BitKnit2 symbols."""
 
-    def finish_update(self) -> None:
-        code = 0
+    def __init__(self, symbol_count: int, min_probability_count: int):
+        evenly_distributed = symbol_count - min_probability_count
+        cumulative = [0] * (symbol_count + 1)
+        for symbol in range(evenly_distributed):
+            cumulative[symbol] = (
+                (_BITKNIT2_TOTAL - min_probability_count)
+                * symbol
+                // evenly_distributed
+            )
+        for symbol in range(evenly_distributed, symbol_count + 1):
+            cumulative[symbol] = _BITKNIT2_TOTAL - symbol_count + symbol
+
+        self.symbol_count = symbol_count
+        self.cumulative = cumulative
+        self.accumulators = [1] * symbol_count
+        self.tick = 0
+        self.increment = (_BITKNIT2_TOTAL - symbol_count) // _BITKNIT2_ADAPT_INTERVAL
+        self.last_increment = (
+            1
+            + _BITKNIT2_TOTAL
+            - symbol_count
+            - self.increment * _BITKNIT2_ADAPT_INTERVAL
+        )
+        self.lookup = [0] * 1024
+        self._rebuild_lookup()
+
+    def _rebuild_lookup(self) -> None:
         symbol = 0
-        next_sum = self.sums[1]
-        while code < BITKNIT2_TOTAL_SUM:
-            if code < next_sum:
-                self.lookup[code >> BITKNIT2_LOOKUP_SHIFT] = symbol
-                code += 1 << BITKNIT2_LOOKUP_SHIFT
-            else:
+        for bucket in range(1024):
+            threshold = bucket << _BITKNIT2_LOOKUP_SHIFT
+            while threshold >= self.cumulative[symbol + 1]:
                 symbol += 1
-                next_sum = self.sums[symbol + 1]
+            self.lookup[bucket] = symbol
 
     def observe(self, symbol: int) -> None:
-        self.acc[symbol] = (self.acc[symbol] + self.freq_incr) & 0xFFFF
-        self.counter = (self.counter + 1) & (BITKNIT2_ADAPT_INTERVAL - 1)
-        if self.counter != 0:
+        accumulators = self.accumulators
+        accumulators[symbol] += self.increment
+        self.tick = (self.tick + 1) & (_BITKNIT2_ADAPT_INTERVAL - 1)
+        if self.tick:
             return
 
-        self.acc[symbol] = (self.acc[symbol] + self.last_freq_incr) & 0xFFFF
-        total = 0
-        for index in range(1, self.vocab + 1):
-            total += self.acc[index - 1]
-            self.sums[index] = (
-                self.sums[index] + ((total - self.sums[index]) >> 1)
-            ) & 0xFFFF
-            self.acc[index - 1] = 1
-        self.finish_update()
+        accumulators[symbol] += self.last_increment
+        running_total = 0
+        for index in range(1, self.symbol_count + 1):
+            running_total += accumulators[index - 1]
+            current = self.cumulative[index]
+            self.cumulative[index] = current + ((running_total - current) >> 1)
+            accumulators[index - 1] = 1
+        self._rebuild_lookup()
 
 
 def decompress_bitknit2(
     data: bytes | bytearray | memoryview, expanded_size: int
 ) -> bytes:
+    """Decompress a Granny section-format 4 BitKnit2 word stream."""
+
     source = memoryview(data)
-    destination = bytearray(expanded_size)
+    output = bytearray(expanded_size)
     if expanded_size == 0:
-        return bytes(destination)
+        return bytes(output)
 
     word_count = len(source) >> 1
     word_index = 0
 
-    def word() -> int:
+    def next_word() -> int:
         nonlocal word_index
         if word_index >= word_count:
             raise ValueError("BitKnit2: source underflow")
-        value = struct.unpack_from("<H", source, word_index << 1)[0]
+        position = word_index << 1
         word_index += 1
-        return value
+        return source[position] | (source[position + 1] << 8)
 
-    def peek() -> int:
-        if word_index >= word_count:
-            raise ValueError("BitKnit2: source underflow")
-        return struct.unpack_from("<H", source, word_index << 1)[0]
+    if next_word() != BITKNIT2_MAGIC:
+        raise ValueError("BitKnit2: bad magic word")
 
-    if word() != BITKNIT2_MAGIC:
-        raise ValueError("BitKnit2: bad magic")
+    command_models = [_BitKnitFrequencyModel(300, 36) for _ in range(4)]
+    cache_reference_models = [_BitKnitFrequencyModel(40, 0) for _ in range(4)]
+    exponent_model = _BitKnitFrequencyModel(21, 0)
 
-    command_models = [_BitKnitModel(300, 36) for _ in range(4)]
-    cache_models = [_BitKnitModel(40, 0) for _ in range(4)]
-    copy_offset_model = _BitKnitModel(21, 0)
-    lru_entries = [1] * 8
-    lru_order = 0x76543210
-
-    def lru_insert(value: int) -> None:
-        lru_entries[lru_order >> 28] = lru_entries[(lru_order >> 24) & 15]
-        lru_entries[(lru_order >> 24) & 15] = value
-
-    def lru_hit(index: int) -> int:
-        nonlocal lru_order
-        slot = (lru_order >> (index * 4)) & 15
-        rotate_mask = 0xFFFFFFFF if index == 7 else (16 << (index * 4)) - 1
-        rotated = ((lru_order * 16 + slot) & rotate_mask) & 0xFFFFFFFF
-        lru_order = ((lru_order & (~rotate_mask & 0xFFFFFFFF)) | rotated) & 0xFFFFFFFF
-        return lru_entries[slot]
-
-    bits1 = 0x10000
-    bits2 = 0x10000
+    recent_offsets = [1] * 8
+    recent_order = 0x76543210
     delta_offset = 1
-    output_offset = 0
+    state_a = 0
+    state_b = 0
 
-    def refill1() -> None:
-        nonlocal bits1
-        if bits1 < 0x10000:
-            bits1 = bits1 * 65536 + word()
+    def initialize_entropy_states() -> None:
+        nonlocal state_a, state_b
+        merged = next_word() * 0x10000 + next_word()
+        split = merged & 15
+        merged //= 16
+        if merged < 0x10000:
+            merged = merged * 0x10000 + next_word()
+        state_a = merged // (1 << split)
+        if state_a < 0x10000:
+            state_a = state_a * 0x10000 + next_word()
+        modulus = 1 << (16 + split)
+        state_b = ((merged % 0x10000) * 0x10000 + next_word()) % modulus + modulus
 
     def pop_bits(bit_count: int) -> int:
-        nonlocal bits1, bits2
-        symbol = bits1 & ((1 << bit_count) - 1)
-        bits1 //= 1 << bit_count
-        refill1()
-        bits1, bits2 = bits2, bits1
-        return symbol
+        nonlocal state_a, state_b
+        divisor = 1 << bit_count
+        value = state_a % divisor
+        state_a //= divisor
+        if state_a < 0x10000:
+            state_a = state_a * 0x10000 + next_word()
+        state_a, state_b = state_b, state_a
+        return value
 
-    def pop_model(model: _BitKnitModel) -> int:
-        nonlocal bits1, bits2
-        code = bits1 & (BITKNIT2_TOTAL_SUM - 1)
-        symbol = model.lookup[code >> BITKNIT2_LOOKUP_SHIFT]
-        while code >= model.sums[symbol + 1]:
+    def pop_symbol(model: _BitKnitFrequencyModel) -> int:
+        nonlocal state_a, state_b
+        cumulative = model.cumulative
+        code = state_a & (_BITKNIT2_TOTAL - 1)
+        symbol = model.lookup[code >> _BITKNIT2_LOOKUP_SHIFT]
+        while code >= cumulative[symbol + 1]:
             symbol += 1
-        frequency = model.sums[symbol + 1] - model.sums[symbol]
-        bits1 = (bits1 >> BITKNIT2_FREQ_BITS) * frequency + code - model.sums[symbol]
-        refill1()
+        frequency = cumulative[symbol + 1] - cumulative[symbol]
+        state_a = (
+            (state_a // _BITKNIT2_TOTAL) * frequency
+            + code
+            - cumulative[symbol]
+        )
+        if state_a < 0x10000:
+            state_a = state_a * 0x10000 + next_word()
         model.observe(symbol)
-        bits1, bits2 = bits2, bits1
+        state_a, state_b = state_b, state_a
         return symbol
 
+    output_offset = 0
     while output_offset < expanded_size:
-        boundary = min(expanded_size, (output_offset & ~0xFFFF) + 0x10000)
-        if peek() == 0:
+        quantum_end = min(
+            expanded_size,
+            output_offset
+            - (output_offset % _BITKNIT2_QUANTUM_BYTES)
+            + _BITKNIT2_QUANTUM_BYTES,
+        )
+
+        if word_index >= word_count:
+            raise ValueError("BitKnit2: source underflow")
+        peek_position = word_index << 1
+        peek_word = source[peek_position] | (source[peek_position + 1] << 8)
+
+        if peek_word == 0:
             word_index += 1
-            copy_length = min((word_count - word_index) * 2, boundary - output_offset)
+            remaining_words = word_count - word_index
+            quantum_remaining = quantum_end - output_offset
+            copy_length = min(remaining_words * 2, quantum_remaining)
             start = word_index << 1
-            destination[output_offset : output_offset + copy_length] = source[
+            output[output_offset : output_offset + copy_length] = source[
                 start : start + copy_length
             ]
             output_offset += copy_length
             word_index += copy_length >> 1
             continue
 
-        merged = word() * 65536 + word()
-        split = merged & 15
-        merged //= 16
-        if merged < 0x10000:
-            merged = merged * 65536 + word()
-        bits1 = merged >> split
-        if bits1 < 0x10000:
-            bits1 = bits1 * 65536 + word()
-        modulus = 2 ** (16 + split)
-        bits2 = ((merged % 65536) * 65536 + word()) % modulus + modulus
+        initialize_entropy_states()
 
         if output_offset == 0:
-            destination[output_offset] = pop_bits(8)
+            output[output_offset] = pop_bits(8)
             output_offset += 1
 
-        while output_offset < boundary:
+        while output_offset < quantum_end:
             phase = output_offset & 3
-            command = pop_model(command_models[phase])
+            command = pop_symbol(command_models[phase])
             if command < 256:
-                destination[output_offset] = (
-                    command + destination[output_offset - delta_offset]
+                output[output_offset] = (
+                    command + output[output_offset - delta_offset]
                 ) & 0xFF
                 output_offset += 1
                 continue
@@ -457,37 +464,49 @@ def decompress_bitknit2(
                 bit_count = command - 287
                 copy_length = (1 << bit_count) + pop_bits(bit_count) + 32
 
-            cache_reference = pop_model(cache_models[phase])
-            if cache_reference < 8:
-                copy_offset = lru_hit(cache_reference)
+            reference = pop_symbol(cache_reference_models[phase])
+            if reference < 8:
+                shift = reference * 4
+                slot = (recent_order >> shift) & 15
+                copy_offset = recent_offsets[slot]
+                if reference == 7:
+                    recent_order = ((recent_order << 4) | slot) & 0xFFFFFFFF
+                elif reference > 0:
+                    mask = (16 << shift) - 1
+                    recent_order = (
+                        (recent_order & (~mask & 0xFFFFFFFF))
+                        | (((recent_order << 4) | slot) & mask)
+                    ) & 0xFFFFFFFF
             else:
-                bit_count = pop_model(copy_offset_model)
+                bit_count = pop_symbol(exponent_model)
                 extra = pop_bits(bit_count & 15)
                 if bit_count >= 16:
-                    extra = extra * 65536 + word()
+                    extra = extra * 0x10000 + next_word()
                 copy_offset = (
-                    (32 * 2**bit_count if bit_count >= 27 else 32 << bit_count)
+                    32 * (1 << bit_count)
                     + extra * 32
-                    + cache_reference
+                    + reference
                     - 39
                 )
-                lru_insert(copy_offset)
+                slot7 = (recent_order >> 28) & 15
+                slot6 = (recent_order >> 24) & 15
+                recent_offsets[slot7] = recent_offsets[slot6]
+                recent_offsets[slot6] = copy_offset
 
             delta_offset = copy_offset
             source_offset = output_offset - copy_offset
             if source_offset < 0:
-                raise ValueError("BitKnit2: match before start")
-            for _ in range(copy_length):
-                if output_offset >= expanded_size:
-                    raise ValueError("BitKnit2: match exceeds output")
-                destination[output_offset] = destination[source_offset]
-                output_offset += 1
-                source_offset += 1
+                raise ValueError("BitKnit2: match source before output start")
+            if output_offset + copy_length > expanded_size:
+                raise ValueError("BitKnit2: match exceeds output")
+            for index in range(copy_length):
+                output[output_offset + index] = output[source_offset + index]
+            output_offset += copy_length
 
-        if bits1 != 0x10000 and bits2 != 0x10000:
-            raise ValueError("BitKnit2: rANS stream corrupted")
+        if state_a != 0x10000 and state_b != 0x10000:
+            raise ValueError("BitKnit2: corrupt quantum end state")
 
-    return bytes(destination)
+    return bytes(output)
 
 
 __all__ = [

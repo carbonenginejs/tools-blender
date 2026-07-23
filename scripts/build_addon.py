@@ -7,8 +7,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 ADDONS = ROOT / "addons"
 PACKAGES = (
-    ("io_scene_carbon_gr2", "0.1.2"),
-    ("carbon_eve_resources", "0.2.2"),
+    ("io_scene_carbon_gr2", "0.1.3"),
+    ("carbon_eve_resources", "0.2.3"),
 )
 PACKAGE_DOCUMENTS = (
     "LICENSE",

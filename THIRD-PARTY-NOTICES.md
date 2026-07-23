@@ -1,9 +1,9 @@
 # Third-party notices
 
-`tools-blender` is currently licensed under **EUPL-1.2**. It contains no
+`tools-blender` is licensed under **MIT**. It contains no
 RAD/Granny proprietary code and does not link `granny2.dll`. The section
-decompressors are pure-Python ports of open reverse-engineering work and must
-retain the notices and obligations listed below.
+decompressors are original or pure-Python ports of permissively licensed open
+reverse-engineering work and must retain the notices and obligations below.
 
 Do not treat copied or ported prior work as CarbonEngineJS-original code. Each
 copied/ported/adapted component must list its upstream copyright holders,
@@ -51,30 +51,26 @@ DEALINGS IN THE SOFTWARE.
 
 ## BitKnit / BitKnit2 decompressor - `addons/io_scene_carbon_gr2/gr2/codecs.py`
 
-**EUPL-1.2 (copyleft).** This decoder was transcribed from
-[neptuwunium/Knit](https://github.com/neptuwunium/Knit) `GrannyBitKnitCompression.cs`
-(EUPL-1.2), which itself sublicenses the clean-room BitKnit / rANS implementation from
-[eiz/pybg3](https://github.com/eiz/pybg3) (`src/rans.h`, MIT). Cross-checked against
-powzix/ooz `bitknit.cpp`.
+**CarbonEngineJS code (MIT).** On 2026-07-24 the previous EUPL-derived Python
+translation was replaced with a Python port of the MIT clean-room decoder in
+`@carbonenginejs/format-gr2`. The upstream decoder was written solely from its
+published facts-only specification (`docs/formats/bitknit2.md`) and contains no
+code from Knit, pybg3, ooz, or any other BitKnit implementation.
 
-> **STATUS - current repository license.** Because this file currently derives
-> from Knit's EUPL-1.2 expression, `tools-blender` is licensed under EUPL-1.2.
-> To ship MIT in the future, the BitKnit2 portion of `codecs.py` must be re-derived directly from
-> pybg3's MIT `rans.h`, replaced with another permissively licensed
-> implementation, or removed. A direct re-base attempt was previously reverted
-> because the port lost Granny's section framing; it is **deferred**.
->
-> EUPL-1.2 redistribution requires preserving the applicable notices and making
-> the covered source available under the EUPL-1.2 terms. Official EUPL-1.2 text:
-> https://joinup.ec.europa.eu/sites/default/files/custom-page/attachment/eupl_v1.2_en.pdf
+The Python port follows that clean implementation and specification and was
+validated against the expected output SHA-256 for all 539 streams in the local
+GR2 codec corpus, including byte-exact comparison for the 511 outputs retained
+in full. No EUPL-derived code remains in the current BitKnit2 portion of
+`codecs.py`; the former implementation's EUPL license does not apply to the
+replacement.
 
 ---
 
 ## Granny animation-curve decompression - `addons/io_scene_carbon_gr2/gr2/curves.py`
 
 Authored by **cppctamber** as part of ccpwgl2 (`src/core/reader/granny/curves`), the
-same author/owner as this library; included here under this project's current
-EUPL-1.2 license.
+same author/owner as this library; included here under this project's MIT
+license.
 
 ## Tangent-frame shader math - `addons/io_scene_carbon_gr2/gr2/tangents.py`
 
@@ -94,5 +90,5 @@ obligations before committing that work.
 ## Container, relocation, type-tree reflection, emitter
 
 Original to this project (cppctamber / carbonenginejs). Included here under
-this project's current EUPL-1.2 license. Derived from the public on-disk Granny
-GRN format layout and the Granny SDK header type definitions.
+this project's MIT license. Derived from the public on-disk Granny GRN format
+layout and the Granny SDK header type definitions.

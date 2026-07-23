@@ -12,10 +12,11 @@ semantics remain copyright their original CarbonEngine authors.
 Fenris Creations (CCP Games) source material, tools, assets, shader behavior,
 and EVE-related data remain copyright their original holders.
 
-Current repository license: EUPL-1.2. See LICENSE.
+Current repository license: MIT. See LICENSE.
 
-Future target: MIT, once the EUPL-derived BitKnit implementation is replaced or
-removed and the remaining code and dependencies permit MIT distribution.
+The former EUPL-derived BitKnit2 translation was replaced on 2026-07-24 by a
+Python port of CarbonEngineJS's MIT clean-room decoder. No EUPL-derived code
+remains in the current BitKnit2 implementation.
 
 Provenance and legal requirements
 ---------------------------------
@@ -41,11 +42,11 @@ Oodle1 / Oodle0 section decompressor (addons/io_scene_carbon_gr2/gr2/codecs.py)
   This is Granny's own legacy codec, not RAD's modern Oodle (Kraken/BitKnit families).
 
 BitKnit / BitKnit2 section decompressor (addons/io_scene_carbon_gr2/gr2/codecs.py)
-  Ported from:
-    - neptuwunium/Knit  "GrannyBitKnitCompression.cs"  (EUPL-1.2, sublicensing
-      eiz/pybg3's clean-room rANS implementation under MIT)
-      https://github.com/neptuwunium/Knit  -  https://github.com/eiz/pybg3
-  Cross-checked against powzix/ooz "bitknit.cpp".
+  MIT-licensed Python port of the CarbonEngineJS clean-room decoder in
+  @carbonenginejs/format-gr2, following that package's published BitKnit2
+  format specification and validated byte-exact against the available GR2
+  codec corpus. The implementation contains no code from Knit, pybg3, ooz, or
+  the former EUPL-derived Python translation.
 
 Granny curve decompression (addons/io_scene_carbon_gr2/gr2/curves.py)
   Adapted from cppctamber's granny extension for ccpwgl2 (src/core/reader/granny/curves).

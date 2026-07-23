@@ -3,7 +3,7 @@
 bl_info = {
     "name": "CarbonEngineJS GR2 Importer",
     "author": "CarbonengineJS",
-    "version": (0, 1, 2),
+    "version": (0, 1, 3),
     "blender": (4, 0, 0),
     "location": "File > Import > Granny GR2 (.gr2)",
     "description": "Import GR2 meshes, skeletons, skinning, morphs, and animations without Granny or Node.js",
