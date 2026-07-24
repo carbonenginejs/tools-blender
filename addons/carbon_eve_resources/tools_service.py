@@ -159,32 +159,6 @@ class ToolsServiceClient:
             request,
         )
 
-    def build_sof_values(
-        self,
-        dna: Optional[str] = None,
-        *,
-        selection: Optional[Mapping[str, object]] = None,
-        options: Optional[Mapping[str, object]] = None,
-    ) -> dict:
-        """Return one plain SOF model-values graph for a DNA string or selection.
-
-        The result is the ordinary nested JSON graph a hydrated root model
-        exports (``_type`` on polymorphic nodes, ``_id``/``_ref`` only for
-        shared identity). It needs no node-table/document machinery to read:
-        properties are plain keys, children are plain nested objects and
-        lists. The ``carbon.document`` format remains a separate,
-        compatibility-only service route that this client does not consume.
-        """
-        request = _sof_values_request(dna, selection, options)
-        if not self.supports("sofValues"):
-            raise ToolsServiceError("tools-core service does not advertise SOF values support")
-        values = self._request("POST", "/v1/sof/values", request)
-        if values.get("schema") == "carbon.document" or "nodes" in values or "roots" in values:
-            raise ToolsServiceError("tools-core service returned a carbon.document where model values were expected")
-        if not isinstance(values.get("_type"), str) or not values["_type"]:
-            raise ToolsServiceError("SOF model values must carry a root _type")
-        return values
-
     def _request(self, method: str, route: str, body: Optional[Mapping] = None) -> dict:
         bootstrap = self.start()
         host = f"[{bootstrap.host}]" if ":" in bootstrap.host else bootstrap.host
@@ -296,25 +270,6 @@ def _resource_request(
         "logicalPath": path,
         "options": dict(options or {}),
     }
-
-
-def _sof_values_request(
-    dna: Optional[str],
-    selection: Optional[Mapping[str, object]],
-    options: Optional[Mapping[str, object]],
-) -> dict:
-    if options is not None and not isinstance(options, Mapping):
-        raise TypeError("options must be a mapping")
-    if selection is not None:
-        if dna is not None:
-            raise ValueError("pass either dna or selection, not both")
-        if not isinstance(selection, Mapping):
-            raise TypeError("selection must be a mapping")
-        return {"selection": dict(selection), "options": dict(options or {})}
-    value = str(dna or "").strip()
-    if not value:
-        raise ValueError("dna is required when no selection is given")
-    return {"dna": value, "options": dict(options or {})}
 
 
 def _readline_with_timeout(stream, timeout: float) -> str:

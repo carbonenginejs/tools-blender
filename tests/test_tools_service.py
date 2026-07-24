@@ -100,7 +100,6 @@ class ToolsServiceTests(unittest.TestCase):
 
             self.assertTrue(client.running)
             self.assertTrue(client.supports("resources"))
-            self.assertFalse(client.supports("sofDocument"))
             self.assertEqual(result["byteLength"], 42)
             self.assertEqual(commands[0][0][-2:], ["--cache", str(cache.resolve())])
             self.assertEqual(len(commands), 1, "subsequent requests must reuse the sidecar")
@@ -111,70 +110,6 @@ class ToolsServiceTests(unittest.TestCase):
 
             client.stop()
             self.assertFalse(client.running)
-
-    def test_receives_plain_sof_model_values_without_document_machinery(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            cache = Path(temporary) / "cache"
-            bootstrap = make_bootstrap(cache)
-            bootstrap["capabilities"] = {"resources": False, "sofValues": True, "sofDocument": True}
-            requests = []
-
-            # A realistic values payload: nested objects, _type tags, and a
-            # shared child expressed with _id/_ref — no nodes/kind/fields/raw.
-            values_payload = {
-                "_type": "EveShip2",
-                "dna": "rifter:minmatar:minmatar",
-                "mesh": {
-                    "_type": "Tr2Mesh",
-                    "geometryResPath": "res:/model/rifter.gr2",
-                    "opaqueAreas": [
-                        {"_type": "Tr2MeshArea", "effect": {"_type": "Tr2Effect", "_id": 1}},
-                        {"_type": "Tr2MeshArea", "effect": {"_ref": 1}},
-                    ],
-                },
-            }
-
-            def opener(request, timeout=None):
-                requests.append(request)
-                return FakeResponse(values_payload)
-
-            client = ToolsServiceClient(
-                "node",
-                Path(temporary) / "cjs-tools-service.js",
-                cache,
-                process_factory=lambda command, **kwargs: FakeProcess(bootstrap),
-                opener=opener,
-            )
-
-            values = client.build_sof_values("rifter:minmatar:minmatar")
-
-            self.assertEqual(values["_type"], "EveShip2")
-            self.assertEqual(values["mesh"]["geometryResPath"], "res:/model/rifter.gr2")
-            areas = values["mesh"]["opaqueAreas"]
-            self.assertEqual(areas[0]["effect"]["_id"], 1)
-            self.assertEqual(areas[1]["effect"], {"_ref": 1})
-            body = json.loads(requests[-1].data.decode("utf-8"))
-            self.assertEqual(body, {"dna": "rifter:minmatar:minmatar", "options": {}})
-            self.assertTrue(requests[-1].full_url.endswith("/v1/sof/values"))
-
-    def test_rejects_a_document_shaped_values_response(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            cache = Path(temporary) / "cache"
-            bootstrap = make_bootstrap(cache)
-            bootstrap["capabilities"] = {"resources": False, "sofValues": True, "sofDocument": True}
-
-            client = ToolsServiceClient(
-                "node",
-                Path(temporary) / "cjs-tools-service.js",
-                cache,
-                process_factory=lambda command, **kwargs: FakeProcess(bootstrap),
-                opener=lambda request, timeout=None: FakeResponse(
-                    {"schema": "carbon.document", "nodes": [], "roots": {}}
-                ),
-            )
-
-            with self.assertRaisesRegex(ToolsServiceError, "carbon.document"):
-                client.build_sof_values("rifter:minmatar:minmatar")
 
     def test_requires_an_exact_resource_build(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -212,7 +147,7 @@ def make_bootstrap(cache):
         "port": 43123,
         "pid": 1234,
         "cacheDirectory": str(cache.resolve()),
-        "capabilities": {"resources": True, "sofDocument": False},
+        "capabilities": {"resources": True},
     }
 
 
