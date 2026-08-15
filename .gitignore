@@ -21,3 +21,5 @@ dist/
 *.gr2
 *.gsf
 *.cmf
+/AGENTS.md
+/CLAUDE.md
