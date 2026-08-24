@@ -83,7 +83,7 @@ bundled notice.
 ## Build a ship from DNA
 
 EVE ships are described by SOF/DNA, not by a single file. That composition
-lives in Node (`tools-core` with `runtime-sof`), so Blender drives it instead
+lives in Node (`tools-core` with the combined runtime SOF layer), so Blender drives it instead
 of reimplementing it.
 
 1. In preferences, set **tools-core checkout** to a `tools-core` directory
