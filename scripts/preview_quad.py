@@ -223,7 +223,10 @@ def build(args):
         applied = 0
         for constant in effect.get("constParameters", []):
             name, value = constant.get("name"), constant.get("value") or []
-            socket = group.inputs.get(name)
+            # Some constants are exposed under a clearer socket name, so a
+            # document's Carbon name has to be translated or it stops applying
+            # without saying so.
+            socket = group.inputs.get(nodes.socket_name(name))
             if socket is None or not value:
                 continue
             if socket.type == "RGBA":

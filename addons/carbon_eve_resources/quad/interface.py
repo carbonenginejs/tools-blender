@@ -212,6 +212,27 @@ class Family:
 
 PREFIXES = ("unpackedskinned_", "unpacked_", "skinned_", "static_")
 
+#: Constants exposed to a consumer under a clearer name than Carbon's own.
+#:
+#: `GeneralData` is a vec4 whose only read lane is `.x`, and Carbon's annotation
+#: names that lane -- as `PaintMapInfluence`. The spelling here is
+#: `PaintMaskInfluence` instead, to match the name the add-on already drives in
+#: `sof_shading.GROUP_INPUT_DEFAULTS`; one name that works with the existing
+#: wiring beats two that nearly agree.
+#:
+#: The Carbon name stays the key everywhere else, so a SOF document's constants
+#: still resolve. Anything applying authored values must translate through
+#: `socket_name`, or those values stop applying without saying so.
+SOCKET_RENAMES = {
+    "GeneralData": "PaintMaskInfluence",
+}
+
+
+def socket_name(constant: str) -> str:
+    """The name a Carbon constant is exposed under."""
+
+    return SOCKET_RENAMES.get(constant, constant)
+
 
 def normalize_shader_name(shader: str) -> str:
     """Reduces an authored effect name to the family member it selects."""

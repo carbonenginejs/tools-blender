@@ -482,3 +482,24 @@ class DirtBlendCurve(unittest.TestCase):
             factor = reference.dirt_blend_factor(mask)
             split = (0.8 + (0.2 - 0.8) * factor) * reference.dirt_energy(mask)
             self.assertAlmostEqual(direct, split, places=6, msg=f"mask={mask}")
+
+
+class SocketNaming(unittest.TestCase):
+
+    def test_general_data_is_exposed_as_paint_mask_influence(self):
+        # Only .x is read, and Carbon's annotation names that lane. The spelling
+        # matches sof_shading.GROUP_INPUT_DEFAULTS so existing wiring drives it.
+        from carbon_eve_resources.quad import socket_name
+        self.assertEqual(socket_name("GeneralData"), "PaintMaskInfluence")
+
+    def test_carbon_names_the_same_lane(self):
+        base = load_family().member("quadv5.fx")
+        self.assertEqual(base.annotation("GeneralData").component(1), "PaintMapInfluence")
+
+    def test_everything_else_keeps_its_carbon_name(self):
+        from carbon_eve_resources.quad import socket_name
+        base = load_family().member("quadv5.fx")
+        for name in base.constants:
+            if name == "GeneralData":
+                continue
+            self.assertEqual(socket_name(name), name)

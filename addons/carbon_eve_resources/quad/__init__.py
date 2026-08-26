@@ -5,6 +5,7 @@ them; the arithmetic and the interface data stay testable on their own.
 """
 
 from .interface import (
+    SOCKET_RENAMES,
     Annotation,
     Constant,
     Family,
@@ -12,10 +13,13 @@ from .interface import (
     QuadInterfaceError,
     load_family,
     normalize_shader_name,
+    socket_name,
 )
 from . import reference
 
 __all__ = [
+    "SOCKET_RENAMES",
+    "socket_name",
     "Annotation",
     "Constant",
     "Family",

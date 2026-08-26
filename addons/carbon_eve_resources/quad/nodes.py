@@ -39,7 +39,7 @@ from typing import Optional
 import bpy
 
 from . import reference
-from .interface import Member, load_family
+from .interface import Member, load_family, socket_name
 
 
 GROUP_PREFIX = "Carbon"
@@ -78,6 +78,7 @@ OBJECT_INPUTS = (
 #: The dust noise map's alpha is used separately from its colour, and Blender
 #: exposes those as different sockets, so it needs an input of its own.
 DUST_ALPHA = "DustNoiseAlpha"
+
 
 
 def _new_group(name: str) -> bpy.types.ShaderNodeTree:
@@ -151,13 +152,15 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
     for name, constant in member.constants.items():
         annotation = member.annotation(name)
         panel = _panel(tree, annotation.group or "Other", panels)
+        exposed = socket_name(name)
+        note = annotation.description or annotation.component(1)
+        if exposed != name:
+            note = f"{note}  (Carbon calls this {name}.{'xyzw'[0]})" if note else f"Carbon's {name}.x"
         if annotation.is_color:
-            _socket(tree, name, "NodeSocketColor",
-                    description=annotation.description,
+            _socket(tree, exposed, "NodeSocketColor", description=note,
                     default=tuple(constant.default[:3]) + (1.0,), panel=panel)
         else:
-            _socket(tree, name, "NodeSocketFloat",
-                    description=annotation.description or annotation.component(1),
+            _socket(tree, exposed, "NodeSocketFloat", description=note,
                     default=float(constant.default[0]), panel=panel)
 
     group_in = nodes.new("NodeGroupInput")
@@ -251,7 +254,8 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
     paint = None
     if has("PaintMaskMap"):
         paint_x = separate(value("PaintMaskMap"), (-1200, 200))[0]
-        influence = value("GeneralData") if has("GeneralData") else None
+        influence_socket = socket_name("GeneralData")
+        influence = value(influence_socket) if has(influence_socket) else None
         paint = math("MULTIPLY", paint_x, influence if influence else 1.0,
                      location=(-1000, 200), label="paint strength")
 
