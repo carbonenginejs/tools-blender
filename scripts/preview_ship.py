@@ -186,6 +186,89 @@ def ensure_projection(mnodes):
     return node
 
 
+def wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources):
+    """Displaces the glow lookup by the heat shimmer, for heat members.
+
+    The chain has to run through the material because each step needs a texture
+    sampled between groups: noise UVs, sample the noise twice, work out the
+    displacement, then sample the GLOW map at the displaced coordinate. A group
+    cannot feed a texture that feeds itself back.
+
+    Heat scales the glow map rather than adding a texture of its own, so this
+    replaces the glow the quad group would otherwise sample at a plain UV.
+    """
+
+    if "HeatGlowNoiseMap" not in member.textures or "GlowMap" not in group.inputs:
+        return
+
+    noise_path = effect.get("resources") or []
+    noise = next((r.get("resourcePath") for r in noise_path
+                  if r.get("name") == "HeatGlowNoiseMap"), None)
+    glow = next((r.get("resourcePath") for r in noise_path
+                 if r.get("name") == "GlowMap"), None)
+    noise_local, glow_local = resources.get(noise or ""), resources.get(glow or "")
+    if not noise_local or not glow_local:
+        return
+    if not (os.path.exists(noise_local) and os.path.exists(glow_local)):
+        return
+
+    lanes = {}
+    for constant in effect.get("constParameters", []):
+        name = str(constant.get("name", ""))
+        if "HeatGlowData" in name:
+            lanes[name] = tuple(constant.get("value") or (0.0, 0.0, 1.0, 0.0))
+
+    material_map = next((n for n in mnodes
+                         if n.bl_idname == "ShaderNodeTexImage" and n.label == "MaterialMap"), None)
+    if material_map is None:
+        return
+
+    separate = mnodes.new("ShaderNodeSeparateColor")
+    separate.location = (-1500, 600)
+    mlinks.new(material_map.outputs["Color"], separate.inputs[0])
+
+    uv_group = mnodes.new("ShaderNodeGroup")
+    uv_group.node_tree = nodes.build_heat_uv_group()
+    uv_group.location = (-1300, 500)
+    mlinks.new(separate.outputs["Red"], uv_group.inputs["MaterialMap"])
+
+    displace = mnodes.new("ShaderNodeGroup")
+    displace.node_tree = nodes.build_heat_displace_group()
+    displace.location = (-700, 500)
+    mlinks.new(separate.outputs["Red"], displace.inputs["MaterialMap"])
+
+    # Carbon's own component names, so the lanes land where they belong.
+    for layer in range(1, 5):
+        value = lanes.get(f"Mtl{layer}HeatGlowData")
+        if not value:
+            continue
+        for socket, index in (("Shimmer speed", 1), ("Shimmer size", 2)):
+            key = f"Mtl{layer}HeatGlow {socket}"
+            if key in uv_group.inputs:
+                uv_group.inputs[key].default_value = float(value[index])
+        for socket, index in (("Shimmer strength", 3), ("boosterGain influence", 0)):
+            key = f"Mtl{layer}HeatGlow {socket}"
+            if key in displace.inputs:
+                displace.inputs[key].default_value = float(value[index])
+
+    noise_image = bpy.data.images.load(noise_local, check_existing=True)
+    noise_image.colorspace_settings.name = "Non-Color"
+    for index in (1, 2):
+        node = mnodes.new("ShaderNodeTexImage")
+        node.image = noise_image
+        node.location = (-1000, 700 - index * 260)
+        node.label = f"HeatGlowNoiseMap {index}"
+        mlinks.new(uv_group.outputs[f"Noise UV {index}"], node.inputs["Vector"])
+        mlinks.new(node.outputs["Color"], displace.inputs[f"Noise {index}"])
+
+    glow_node = next((n for n in mnodes
+                      if n.bl_idname == "ShaderNodeTexImage" and n.label == "GlowMap"), None)
+    if glow_node is None:
+        return
+    mlinks.new(displace.outputs["Glow UV"], glow_node.inputs["Vector"])
+    print("  heat shimmer wired (glow sampled at a displaced UV)")
+
+
 def build_area_material(area, family, resources, index):
     """One material for one mesh area, from its own effect."""
 
@@ -266,6 +349,7 @@ def build_area_material(area, family, resources, index):
             mlinks.new(node.outputs["Alpha"], group.inputs[nodes.DUST_ALPHA])
         row -= 300
 
+    wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources)
     preview_quad.fill_unbound_textures(member, group, mnodes, mlinks, row)
 
     for constant in effect.get("constParameters", []):

@@ -1079,3 +1079,272 @@ def build_decal_projection_group() -> bpy.types.ShaderNodeTree:
 
     links.new(uv.outputs[0], output.inputs["UV"])
     return tree
+
+
+#: The two groups the heat shimmer needs, and why there are two.
+#:
+#: The shimmer displaces the GLOW lookup by a product of two noise taps, so the
+#: chain is: compute noise UVs, sample the noise, compute a displacement, sample
+#: the glow. Each sample has to happen in the material, between groups, because
+#: a group cannot feed a texture that feeds itself back.
+HEAT_UV_GROUP = "Carbon Heat Noise UV"
+HEAT_DISPLACE_GROUP = "Carbon Heat Displace"
+
+
+def _tent_weights(tree, material_socket, x=-600):
+    """The four material weights, inside a helper group.
+
+    The same tent as the quad group's, rebuilt here because the heat groups run
+    before it in the chain and cannot reach its weights without a cycle.
+    """
+
+    nodes, links = tree.nodes, tree.links
+    weights = []
+    for layer, centre in enumerate(reference.MATERIAL_TENT_CENTRES):
+        row = 300 - layer * 120
+        shifted = nodes.new("ShaderNodeMath")
+        shifted.operation = "SUBTRACT"
+        shifted.location = (x, row)
+        links.new(material_socket, shifted.inputs[0])
+        shifted.inputs[1].default_value = centre
+
+        scaled = nodes.new("ShaderNodeMath")
+        scaled.operation = "MULTIPLY"
+        scaled.location = (x + 160, row)
+        links.new(shifted.outputs[0], scaled.inputs[0])
+        scaled.inputs[1].default_value = reference.MATERIAL_TENT_SLOPE
+
+        absolute = nodes.new("ShaderNodeMath")
+        absolute.operation = "ABSOLUTE"
+        absolute.location = (x + 300, row)
+        links.new(scaled.outputs[0], absolute.inputs[0])
+
+        weight = nodes.new("ShaderNodeMath")
+        weight.operation = "SUBTRACT"
+        weight.location = (x + 440, row)
+        weight.use_clamp = True
+        weight.label = f"Mtl{layer + 1} weight"
+        weight.inputs[0].default_value = reference.MATERIAL_TENT_OFFSET
+        links.new(absolute.outputs[0], weight.inputs[1])
+        weights.append(weight.outputs[0])
+    return weights
+
+
+def _blend_lanes(tree, weights, sockets, x, y):
+    """Weighted sum of four per-layer scalars."""
+
+    nodes, links = tree.nodes, tree.links
+    total = None
+    for layer, (weight, socket) in enumerate(zip(weights, sockets)):
+        term = nodes.new("ShaderNodeMath")
+        term.operation = "MULTIPLY"
+        term.location = (x, y - layer * 60)
+        links.new(socket, term.inputs[0])
+        links.new(weight, term.inputs[1])
+        if total is None:
+            total = term.outputs[0]
+            continue
+        add = nodes.new("ShaderNodeMath")
+        add.operation = "ADD"
+        add.location = (x + 140, y - layer * 60)
+        links.new(total, add.inputs[0])
+        links.new(term.outputs[0], add.inputs[1])
+        total = add.outputs[0]
+    return total
+
+
+def _time_value(tree, location=(-900, -400)):
+    """A Value node driven by the scene clock, in seconds.
+
+    Shader trees have no clock, so the shimmer would otherwise be frozen. A
+    driver on `frame / fps` gives the same seconds Carbon passes as Time, and
+    evaluates through the depsgraph like any other driver.
+    """
+
+    node = tree.nodes.new("ShaderNodeValue")
+    node.location = location
+    node.label = "Time (seconds)"
+    curve = node.outputs[0].driver_add("default_value")
+    curve.driver.type = "SCRIPTED"
+    curve.driver.expression = "frame / fps"
+    variable = curve.driver.variables.new()
+    variable.name = "fps"
+    variable.type = "SINGLE_PROP"
+    variable.targets[0].id_type = "SCENE"
+    variable.targets[0].id = bpy.context.scene
+    variable.targets[0].data_path = "render.fps"
+    return node.outputs[0]
+
+
+def build_heat_uv_group() -> bpy.types.ShaderNodeTree:
+    """The two counter-scrolling noise coordinates.
+
+    `uv' = (uv +/- speed * time) * size`. The taps scroll in OPPOSITE
+    directions, which is what stops the shimmer reading as a texture sliding
+    past.
+    """
+
+    existing = bpy.data.node_groups.get(HEAT_UV_GROUP)
+    if existing is not None:
+        return existing
+
+    tree = _new_group(HEAT_UV_GROUP)
+    nodes, links = tree.nodes, tree.links
+    tree.interface.new_socket(name="MaterialMap", in_out="INPUT", socket_type="NodeSocketFloat")
+    for layer in range(1, 5):
+        for lane in ("Shimmer speed", "Shimmer size"):
+            socket = tree.interface.new_socket(
+                name=f"Mtl{layer}HeatGlow {lane}", in_out="INPUT", socket_type="NodeSocketFloat")
+            socket.default_value = 1.0 if lane == "Shimmer size" else 0.0
+    tree.interface.new_socket(name="Noise UV 1", in_out="OUTPUT", socket_type="NodeSocketVector")
+    tree.interface.new_socket(name="Noise UV 2", in_out="OUTPUT", socket_type="NodeSocketVector")
+
+    group_in = nodes.new("NodeGroupInput")
+    group_in.location = (-1200, 0)
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (700, 0)
+
+    weights = _tent_weights(tree, group_in.outputs["MaterialMap"], x=-1000)
+    speed = _blend_lanes(tree, weights,
+                         [group_in.outputs[f"Mtl{n}HeatGlow Shimmer speed"] for n in range(1, 5)],
+                         -300, 200)
+    size = _blend_lanes(tree, weights,
+                        [group_in.outputs[f"Mtl{n}HeatGlow Shimmer size"] for n in range(1, 5)],
+                        -300, -100)
+
+    coordinate = nodes.new("ShaderNodeTexCoord")
+    coordinate.location = (-1200, -300)
+    scroll = nodes.new("ShaderNodeMath")
+    scroll.operation = "MULTIPLY"
+    scroll.location = (100, -400)
+    scroll.label = "speed x time"
+    links.new(speed, scroll.inputs[0])
+    links.new(_time_value(tree), scroll.inputs[1])
+
+    for index, sign in ((1, 1.0), (2, -1.0)):
+        signed = nodes.new("ShaderNodeMath")
+        signed.operation = "MULTIPLY"
+        signed.location = (250, -300 - index * 120)
+        links.new(scroll.outputs[0], signed.inputs[0])
+        signed.inputs[1].default_value = sign
+
+        offset = nodes.new("ShaderNodeCombineXYZ")
+        offset.location = (380, -300 - index * 120)
+        links.new(signed.outputs[0], offset.inputs["X"])
+        links.new(signed.outputs[0], offset.inputs["Y"])
+
+        mapping = nodes.new("ShaderNodeMapping")
+        mapping.vector_type = "POINT"
+        mapping.location = (520, 200 - index * 260)
+        mapping.label = f"tap {index}"
+        links.new(coordinate.outputs["UV"], mapping.inputs["Vector"])
+        links.new(offset.outputs[0], mapping.inputs["Location"])
+        scale = nodes.new("ShaderNodeCombineXYZ")
+        scale.location = (380, 100 - index * 260)
+        scale.inputs["Z"].default_value = 1.0
+        links.new(size, scale.inputs["X"])
+        links.new(size, scale.inputs["Y"])
+        links.new(scale.outputs[0], mapping.inputs["Scale"])
+        links.new(mapping.outputs["Vector"], group_out.inputs[f"Noise UV {index}"])
+
+    return tree
+
+
+def build_heat_displace_group() -> bpy.types.ShaderNodeTree:
+    """Turns the two noise samples into the displaced glow coordinate.
+
+    `glowUv = uv + strength * amount * (n1 * n2 - 0.5)`. The product is centred
+    on 0.5, so average noise leaves the glow exactly where it is; the shimmer
+    only ever pushes it off centre.
+
+    The heat amount is recomputed here rather than passed in, because it comes
+    from the object's booster gain and this group runs before the quad group in
+    the chain. Both read the same property, so they cannot disagree.
+    """
+
+    existing = bpy.data.node_groups.get(HEAT_DISPLACE_GROUP)
+    if existing is not None:
+        return existing
+
+    tree = _new_group(HEAT_DISPLACE_GROUP)
+    nodes, links = tree.nodes, tree.links
+    tree.interface.new_socket(name="MaterialMap", in_out="INPUT", socket_type="NodeSocketFloat")
+    tree.interface.new_socket(name="Noise 1", in_out="INPUT", socket_type="NodeSocketColor")
+    tree.interface.new_socket(name="Noise 2", in_out="INPUT", socket_type="NodeSocketColor")
+    for layer in range(1, 5):
+        for lane, default in (("Shimmer strength", 0.0), ("boosterGain influence", 1.0)):
+            socket = tree.interface.new_socket(
+                name=f"Mtl{layer}HeatGlow {lane}", in_out="INPUT", socket_type="NodeSocketFloat")
+            socket.default_value = default
+    tree.interface.new_socket(name="Glow UV", in_out="OUTPUT", socket_type="NodeSocketVector")
+
+    group_in = nodes.new("NodeGroupInput")
+    group_in.location = (-1200, 0)
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (900, 0)
+
+    weights = _tent_weights(tree, group_in.outputs["MaterialMap"], x=-1000)
+    strength = _blend_lanes(tree, weights,
+                            [group_in.outputs[f"Mtl{n}HeatGlow Shimmer strength"] for n in range(1, 5)],
+                            -300, 200)
+    influence = _blend_lanes(tree, weights,
+                             [group_in.outputs[f"Mtl{n}HeatGlow boosterGain influence"] for n in range(1, 5)],
+                             -300, -100)
+
+    gain = nodes.new("ShaderNodeAttribute")
+    gain.attribute_type = "OBJECT"
+    gain.attribute_name = SHIP_PROPERTIES["BoosterGain"][0]
+    gain.location = (-1200, -400)
+    gain.label = gain.attribute_name
+
+    def math(op, a, b, location, clamp=False, label=""):
+        node = nodes.new("ShaderNodeMath")
+        node.operation = op
+        node.location = location
+        node.use_clamp = clamp
+        node.label = label
+        for index, operand in enumerate((a, b)):
+            if isinstance(operand, (int, float)):
+                node.inputs[index].default_value = operand
+            else:
+                links.new(operand, node.inputs[index])
+        return node.outputs[0]
+
+    shifted = math("SUBTRACT", gain.outputs["Factor"], reference.HEAT_GATE_START, (-150, -400))
+    gate = math("MULTIPLY", shifted, reference.HEAT_GATE_SCALE, (-10, -400), clamp=True,
+                label="booster gate")
+    below = math("SUBTRACT", gate, 1.0, (130, -400))
+    scaled = math("MULTIPLY", influence, below, (270, -400))
+    amount = math("ADD", scaled, 1.0, (410, -400), clamp=True, label="heat amount")
+
+    # n1 * n2 - 0.5, then scaled by strength and amount.
+    product = nodes.new("ShaderNodeVectorMath")
+    product.operation = "MULTIPLY"
+    product.location = (-150, 300)
+    links.new(group_in.outputs["Noise 1"], product.inputs[0])
+    links.new(group_in.outputs["Noise 2"], product.inputs[1])
+
+    centred = nodes.new("ShaderNodeVectorMath")
+    centred.operation = "SUBTRACT"
+    centred.location = (10, 300)
+    centred.label = "centre on 0.5"
+    links.new(product.outputs[0], centred.inputs[0])
+    centred.inputs[1].default_value = (reference.HEAT_NOISE_CENTRE,) * 3
+
+    push = math("MULTIPLY", strength, amount, (410, 100), label="displacement")
+    displaced = nodes.new("ShaderNodeVectorMath")
+    displaced.operation = "SCALE"
+    displaced.location = (560, 300)
+    links.new(centred.outputs[0], displaced.inputs[0])
+    links.new(push, displaced.inputs["Scale"])
+
+    coordinate = nodes.new("ShaderNodeTexCoord")
+    coordinate.location = (560, 500)
+    total = nodes.new("ShaderNodeVectorMath")
+    total.operation = "ADD"
+    total.location = (720, 400)
+    total.label = "uv + shimmer"
+    links.new(coordinate.outputs["UV"], total.inputs[0])
+    links.new(displaced.outputs[0], total.inputs[1])
+    links.new(total.outputs[0], group_out.inputs["Glow UV"])
+    return tree
