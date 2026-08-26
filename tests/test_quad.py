@@ -543,3 +543,21 @@ class PatternWrap(unittest.TestCase):
             for mode_v in modes:
                 self.assertEqual(
                     reference.pattern_coverage(0.5, 0.5, mode_u, mode_v), 1.0)
+
+
+class AnnotationExpressions(unittest.TestCase):
+
+    def test_uv_scale_can_be_an_authored_expression(self):
+        # quadheatv5's HeatGlowNoiseMap declares LodUvScale0 as
+        # min(Mtl1HeatGlowData.z, ... ), not a number.
+        heat = load_family().members["quadheatv5"]
+        annotation = heat.annotation("HeatGlowNoiseMap")
+        self.assertIn("min(", annotation.uv_scale_expression)
+        # ... and the numeric accessor stays usable rather than throwing.
+        self.assertEqual(annotation.uv_scale, 1.0)
+
+    def test_numeric_scales_report_no_expression(self):
+        base = load_family().member("quadv5.fx")
+        dust = base.annotation("DustNoiseMap")
+        self.assertEqual(dust.uv_scale, reference.DUST_TILING)
+        self.assertEqual(dust.uv_scale_expression, "")

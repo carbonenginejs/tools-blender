@@ -104,10 +104,33 @@ class Annotation:
 
     @property
     def uv_scale(self) -> float:
-        """Authored UV scale. `DustNoiseMap` declares 20, which is the same
-        tiling that appears as a literal in the emitted GLSL."""
+        """Authored UV scale, when it is a number.
 
-        return float(self.values.get("LodUvScale0", 1.0))
+        `DustNoiseMap` declares 20, the same tiling that appears as a literal in
+        the emitted GLSL. But the value is **not always numeric**:
+        `quadheatv5`'s `HeatGlowNoiseMap` declares
+
+            min(Mtl1HeatGlowData.z, ... , Mtl4HeatGlowData.z)
+
+        so an annotation can carry an authored expression over other constants.
+        This returns 1.0 for those, and `uv_scale_expression` returns the text,
+        so a consumer that cannot evaluate one is merely unscaled rather than
+        broken.
+        """
+
+        try:
+            return float(self.values.get("LodUvScale0", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+
+    @property
+    def uv_scale_expression(self) -> str:
+        """The UV scale as authored, when it is an expression rather than a number."""
+
+        value = self.values.get("LodUvScale0")
+        if isinstance(value, str) and value.strip():
+            return value
+        return ""
 
     @property
     def has_transparency(self) -> bool:
