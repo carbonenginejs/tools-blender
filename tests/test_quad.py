@@ -712,3 +712,38 @@ class KillCounterTests(unittest.TestCase):
     def test_alpha_squares_after_scaling(self):
         self.assertAlmostEqual(reference.kill_counter_alpha(0.5, 2.0, 1.0), 1.0)
         self.assertEqual(reference.kill_counter_alpha(0.5, 2.0, 0.0), 0.0)
+
+
+class HullBreachTests(unittest.TestCase):
+    """`decalholev5` fakes interior depth with a unit sphere."""
+
+    def test_looking_straight_in_exits_straight_ahead(self):
+        got = reference.hole_interior_direction((0.0, 0.0, -0.5), (0.0, 0.0, 1.0))
+        self.assertEqual(tuple(round(x, 6) for x in got), (0.0, 0.0, 1.0))
+
+    def test_the_exit_point_lies_on_the_unit_sphere(self):
+        for point, view in (((0.0, 0.0, -0.5), (0.0, 0.0, 1.0)),
+                            ((0.4, -0.2, 0.1), (0.3, 0.5, 1.0)),
+                            ((0.9, 0.0, 0.0), (0.0, 0.0, 1.0))):
+            got = reference.hole_interior_direction(point, view)
+            self.assertIsNotNone(got, point)
+            length = sum(axis * axis for axis in got) ** 0.5
+            self.assertAlmostEqual(length, 1.0, places=6)
+
+    def test_a_ray_that_misses_the_sphere_is_discarded(self):
+        self.assertIsNone(reference.hole_interior_direction((3.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
+
+    def test_the_view_direction_moves_the_interior(self):
+        # The parallax IS the effect: two angles must not sample the same place.
+        straight = reference.hole_interior_direction((0.0, 0.0, -0.5), (0.0, 0.0, 1.0))
+        oblique = reference.hole_interior_direction((0.0, 0.0, -0.5), (0.6, 0.0, 1.0))
+        self.assertNotEqual(tuple(round(x, 4) for x in straight),
+                            tuple(round(x, 4) for x in oblique))
+
+    def test_the_rim_blends_into_the_interior(self):
+        glow = (1.0, 0.5, 0.0)
+        rim_only = reference.hole_colour(1.0, 0.0, 0.0, glow)
+        interior_only = reference.hole_colour(0.0, 1.0, 1.0, glow)
+        self.assertEqual(tuple(round(x, 6) for x in rim_only), (1.0, 0.5, 0.0))
+        self.assertEqual(tuple(round(x, 6) for x in interior_only), (1.0, 0.5, 0.0))
+        self.assertEqual(reference.hole_colour(0.0, 0.5, 0.0, glow), (0.0, 0.0, 0.0))

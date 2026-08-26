@@ -701,7 +701,10 @@ def build_decal_material(decal, resources, obj=None):
     elif glow_colour:
         principled.inputs["Emission Color"].default_value = tuple(glow_colour[:3]) + (1.0,)
 
-    if decal.shader == "decalcounterv5.fx" and transparency is not None:
+    if decal.shader == "decalholev5.fx":
+        wire_hull_breach(decal, principled, sampled, projection, mnodes, mlinks,
+                         glow_colour, resources)
+    elif decal.shader == "decalcounterv5.fx" and transparency is not None:
         wire_kill_counter(decal, principled, transparency, projection,
                           mnodes, mlinks, glow_colour, intensity, obj)
     elif transparency is not None:
@@ -787,6 +790,90 @@ def wire_kill_counter(decal, principled, transparency, projection, mnodes, mlink
         variable.targets[0].id = obj
         variable.targets[0].data_path = f'["{nodes.SHIP_PROPERTIES["previewGlowScale"][0]}"]'
         driver.expression = "v"
+
+
+#: An interior cube, unwrapped so Blender can sample it by direction. The
+#: bundle flattens a cube to a single face, which throws five sixths of the
+#: interior away, so the equirect is built beside it by
+#: `scripts/prepare_cube_texture.mjs` and carries a `.source.json` recording
+#: what it came from -- a converted file otherwise goes stale in silence.
+EQUIRECT_SUFFIX = "_equirect.png"
+
+
+def wire_hull_breach(decal, principled, sampled, projection, mnodes, mlinks,
+                     glow_colour, resources):
+    """A breach that reads as a hole rather than as a sticker.
+
+    decalholev5 fakes depth: it rays the view through a UNIT SPHERE in decal
+    space and samples the interior cube along where the ray LEAVES it, so the
+    inside shifts as the camera moves.
+
+        colour = DecalGlowColor * mix(holeMap.x, interior.a, holeMap.w)
+        alpha  = DecalTransparencyMap.a
+
+    The interior lives in the cube's ALPHA channel, not its colour.
+    """
+
+    hole = sampled.get("DecalHoleMap")
+    transparency = sampled.get("DecalTransparencyMap")
+    if transparency is not None:
+        mlinks.new(transparency.outputs["Alpha"], principled.inputs["Alpha"])
+
+    interior = None
+    cube = decal.textures.get("DecalInsideCubeMap")
+    local = resources.get(cube or "")
+    if local:
+        equirect = os.path.splitext(local)[0] + EQUIRECT_SUFFIX
+        if os.path.exists(equirect):
+            ray = mnodes.new("ShaderNodeGroup")
+            ray.node_tree = nodes.build_hole_group()
+            ray.location = (-400, -400)
+            mlinks.new(projection.outputs["Position"], ray.inputs["Position"])
+            mlinks.new(projection.outputs["View"], ray.inputs["View"])
+
+            image = bpy.data.images.load(equirect, check_existing=True)
+            image.colorspace_settings.name = "Non-Color"
+            interior = mnodes.new("ShaderNodeTexEnvironment")
+            interior.image = image
+            interior.location = (-200, -400)
+            interior.label = "DecalInsideCubeMap"
+            mlinks.new(ray.outputs["Direction"], interior.inputs["Vector"])
+
+            # A ray that misses the sphere is discarded, so it contributes no
+            # interior rather than a smeared edge texel.
+            if transparency is not None:
+                gated = mnodes.new("ShaderNodeMath")
+                gated.operation = "MULTIPLY"
+                gated.location = (-60, -240)
+                gated.label = "discard where the ray misses"
+                mlinks.new(transparency.outputs["Alpha"], gated.inputs[0])
+                mlinks.new(ray.outputs["Hit"], gated.inputs[1])
+                mlinks.new(gated.outputs[0], principled.inputs["Alpha"])
+
+    # colour = glow * mix(rim, interior, blend)
+    mixed = mnodes.new("ShaderNodeMix")
+    mixed.data_type = "FLOAT"
+    mixed.location = (100, -400)
+    mixed.label = "rim -> interior"
+    if hole is not None:
+        mlinks.new(hole.outputs["Color"], mixed.inputs["A"])
+        mlinks.new(hole.outputs["Alpha"], mixed.inputs["Factor"])
+    else:
+        mixed.inputs["Factor"].default_value = 1.0
+    if interior is not None:
+        # The interior is the cube's ALPHA. Environment Texture has no alpha
+        # output, so the converter writes that channel into RGB as well and
+        # this reads it from Color.
+        mlinks.new(interior.outputs["Color"], mixed.inputs["B"])
+
+    emission = mnodes.new("ShaderNodeVectorMath")
+    emission.operation = "SCALE"
+    emission.location = (260, -400)
+    emission.inputs[0].default_value = tuple(glow_colour[:3]) if glow_colour else (1.0, 1.0, 1.0)
+    mlinks.new(mixed.outputs["Result"], emission.inputs["Scale"])
+    mlinks.new(emission.outputs[0], principled.inputs["Emission Color"])
+    principled.inputs["Emission Strength"].default_value = 1.0
+    principled.inputs["Base Color"].default_value = (0.0, 0.0, 0.0, 1.0)
 
 
 def main():

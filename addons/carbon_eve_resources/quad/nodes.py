@@ -1178,6 +1178,98 @@ DECAL_PROJECTION_GROUP = "Carbon Decal Projection"
 KILL_COUNTER_GROUP = "Carbon Kill Counter"
 
 
+
+#: The hull-breach interior group's name.
+HOLE_GROUP = "Carbon Decal Hole"
+
+
+def build_hole_group() -> bpy.types.ShaderNodeTree:
+    """Rays through a unit sphere so a breach reads as a hole, not a sticker.
+
+    `decalholev5` fakes interior depth with a UNIT SPHERE in decal space. It
+    walks the view ray to where it LEAVES that sphere and looks the interior up
+    along the exit direction, so the inside parallaxes as the camera moves.
+
+        t   = -dot(P, d) + sqrt(dot(P, d)^2 - |P|^2 + 1)
+        hit = normalize(P + t * d)
+
+    Where the discriminant is negative the ray misses the sphere and the shader
+    discards, so `Hit` is zero there and the caller drops the pixel.
+    """
+
+    existing = bpy.data.node_groups.get(HOLE_GROUP)
+    if existing is not None:
+        return existing
+
+    tree = _new_group(HOLE_GROUP)
+    nodes, links = tree.nodes, tree.links
+    tree.interface.new_socket(name="Position", in_out="INPUT", socket_type="NodeSocketVector")
+    tree.interface.new_socket(name="View", in_out="INPUT", socket_type="NodeSocketVector")
+    tree.interface.new_socket(
+        name="Direction", in_out="OUTPUT", socket_type="NodeSocketVector"
+    ).description = "Where the interior cube is sampled"
+    tree.interface.new_socket(
+        name="Hit", in_out="OUTPUT", socket_type="NodeSocketFloat"
+    ).description = "Zero where the ray misses the sphere, which the shader discards"
+
+    group_in = nodes.new("NodeGroupInput")
+    group_in.location = (-800, 0)
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (700, 0)
+
+    def vector(op, a, b=None, *, location=(0, 0), label="", scale=None):
+        node = nodes.new("ShaderNodeVectorMath")
+        node.operation = op
+        node.location = location
+        node.label = label
+        for index, operand in enumerate((a, b)):
+            if operand is None:
+                continue
+            links.new(operand, node.inputs[index])
+        if scale is not None:
+            links.new(scale, node.inputs["Scale"])
+        return node
+
+    def math(op, a, b=None, *, location=(0, 0), label="", clamp=False):
+        node = nodes.new("ShaderNodeMath")
+        node.operation = op
+        node.use_clamp = clamp
+        node.location = location
+        node.label = label
+        for index, operand in enumerate((a, b)):
+            if operand is None:
+                continue
+            if isinstance(operand, (int, float)):
+                node.inputs[index].default_value = operand
+            else:
+                links.new(operand, node.inputs[index])
+        return node.outputs[0]
+
+    direction = vector("NORMALIZE", group_in.outputs["View"], location=(-620, -160)).outputs[0]
+    along = vector("DOT_PRODUCT", group_in.outputs["Position"], direction,
+                   location=(-440, -60), label="dot(P, d)").outputs["Value"]
+    squared = vector("DOT_PRODUCT", group_in.outputs["Position"], group_in.outputs["Position"],
+                     location=(-440, 140), label="|P|^2").outputs["Value"]
+
+    discriminant = math("ADD", math("SUBTRACT", math("MULTIPLY", along, along, location=(-260, 40)),
+                                    squared, location=(-160, 40)),
+                        1.0, location=(-60, 40), label="discriminant")
+    # Negative means the ray misses the sphere entirely: the shader discards.
+    hit = math("GREATER_THAN", discriminant, 0.0, location=(60, 180), label="ray hits")
+    links.new(hit, group_out.inputs["Hit"])
+
+    distance = math("ADD", math("MULTIPLY", along, -1.0, location=(60, -60)),
+                    math("SQRT", math("MAXIMUM", discriminant, 0.0, location=(60, -140)),
+                         location=(160, -140)),
+                    location=(280, -60), label="distance to the far side")
+
+    step = vector("SCALE", direction, location=(400, -160), scale=distance).outputs[0]
+    exit_point = vector("ADD", group_in.outputs["Position"], step, location=(520, -60),
+                        label="where the ray leaves").outputs[0]
+    links.new(vector("NORMALIZE", exit_point, location=(620, -60)).outputs[0],
+              group_out.inputs["Direction"])
+    return tree
+
 def build_kill_counter_group() -> bpy.types.ShaderNodeTree:
     """Turns a kill count into tally marks, as `decalcounterv5` does.
 
@@ -1312,6 +1404,12 @@ def build_decal_projection_group() -> bpy.types.ShaderNodeTree:
     tree = _new_group(DECAL_PROJECTION_GROUP)
     nodes, links = tree.nodes, tree.links
     tree.interface.new_socket(name="UV", in_out="OUTPUT", socket_type="NodeSocketVector")
+    tree.interface.new_socket(
+        name="Position", in_out="OUTPUT", socket_type="NodeSocketVector"
+    ).description = "The shaded point in DECAL space, which decalholev5 rays through"
+    tree.interface.new_socket(
+        name="View", in_out="OUTPUT", socket_type="NodeSocketVector"
+    ).description = "The view direction in decal space, pointing away from the camera"
 
     output = nodes.new("NodeGroupOutput")
     output.location = (400, 0)
@@ -1338,6 +1436,36 @@ def build_decal_projection_group() -> bpy.types.ShaderNodeTree:
     parts = nodes.new("ShaderNodeSeparateXYZ")
     parts.location = (-160, 0)
     links.new(mapping.outputs["Vector"], parts.inputs[0])
+    links.new(mapping.outputs["Vector"], output.inputs["Position"])
+
+    # The view ray in the SAME space. `Incoming` points from the surface toward
+    # the camera, and the shader's ray runs the other way, so it is negated;
+    # then the decal's own inverse transform takes it out of world space. A
+    # Mapping set to TEXTURE with no location is that inverse for a direction.
+    incoming = nodes.new("ShaderNodeNewGeometry")
+    incoming.location = (-700, -260)
+    away = nodes.new("ShaderNodeVectorMath")
+    away.operation = "SCALE"
+    away.location = (-520, -260)
+    away.label = "away from the camera"
+    away.inputs["Scale"].default_value = -1.0
+    links.new(incoming.outputs["Incoming"], away.inputs[0])
+
+    to_object = nodes.new("ShaderNodeVectorTransform")
+    to_object.vector_type = "VECTOR"
+    to_object.convert_from = "WORLD"
+    to_object.convert_to = "OBJECT"
+    to_object.location = (-400, -260)
+    links.new(away.outputs[0], to_object.inputs[0])
+
+    view = nodes.new("ShaderNodeMapping")
+    view.vector_type = "TEXTURE"
+    view.location = (-220, -260)
+    view.label = "view, into decal space"
+    links.new(to_object.outputs[0], view.inputs["Vector"])
+    links.new(attribute("carbon_decal_rotation", 40), view.inputs["Rotation"])
+    links.new(attribute("carbon_decal_scaling", -140), view.inputs["Scale"])
+    links.new(view.outputs["Vector"], output.inputs["View"])
 
     # Rows 1 and 2, and V flipped for D3D texture space, exactly as the
     # patterns need.

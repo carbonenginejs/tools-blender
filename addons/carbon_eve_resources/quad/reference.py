@@ -694,3 +694,53 @@ def kill_counter_alpha(mark: float, intensity: float, coverage: float) -> float:
 
     scaled = mark * intensity
     return coverage * scaled * scaled
+
+
+def hole_interior_direction(point: Sequence[float], view: Sequence[float]) -> tuple:
+    """Where a hull breach's interior is sampled, or None if the ray misses.
+
+    `decalholev5` fakes depth with a UNIT SPHERE in decal space. It walks the
+    view ray to where it leaves that sphere and samples the interior cube along
+    the direction of the exit point -- so the interior parallaxes as the camera
+    moves and the breach reads as a hole rather than as a sticker.
+
+    The shader starts the ray at the eye; starting it at the surface point gives
+    the same exit, because both lie on the same line, so this takes the point as
+    the origin and the view direction as the ray.
+
+        t   = -dot(P, d) + sqrt(dot(P, d)^2 - |P|^2 + 1)
+        hit = normalize(P + t * d)
+
+    Returns None where the discriminant is negative, which is the shader's own
+    `discard`: the ray misses the sphere entirely.
+    """
+
+    px, py, pz = point[0], point[1], point[2]
+    length = math.sqrt(view[0] * view[0] + view[1] * view[1] + view[2] * view[2])
+    if length == 0.0:
+        return None
+    dx, dy, dz = view[0] / length, view[1] / length, view[2] / length
+    along = px * dx + py * dy + pz * dz
+    discriminant = along * along - (px * px + py * py + pz * pz) + 1.0
+    if discriminant < 0.0:
+        return None
+    distance = -along + math.sqrt(discriminant)
+    hit = (px + distance * dx, py + distance * dy, pz + distance * dz)
+    size = math.sqrt(hit[0] * hit[0] + hit[1] * hit[1] + hit[2] * hit[2])
+    if size == 0.0:
+        return None
+    return (hit[0] / size, hit[1] / size, hit[2] / size)
+
+
+def hole_colour(hole_rim: float, hole_blend: float, interior: float,
+                glow: Sequence[float]) -> tuple:
+    """The breach's colour: the rim, the interior, and the blend between them.
+
+        colour = DecalGlowColor * mix(holeMap.x, interiorCube.a, holeMap.w)
+
+    The interior lives in the cube's ALPHA channel, not its colour, which is
+    why a converter that keeps only RGB throws the interior away.
+    """
+
+    mixed = hole_rim + (interior - hole_rim) * hole_blend
+    return tuple(channel * mixed for channel in glow[:3])
