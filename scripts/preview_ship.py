@@ -389,6 +389,7 @@ def build_decals(document, hull, resources, family):
     source = hull.data
     built = []
     skipped = {}
+    boned = 0
 
     for decal in found:
         if not decal.triangles:
@@ -428,19 +429,55 @@ def build_decals(document, hull, resources, family):
 
         # The decal's transform lives on the decal object, so one projection
         # group serves every decal on every hull.
-        obj["carbon_decal_position"] = decal.position
-        obj["carbon_decal_scaling"] = decal.scaling
+        # A decal's transform may be relative to a BONE rather than the hull:
+        # nine of a Legion's seventeen are, and the vertex stage composes
+        # worldMatrix with parentBoneMatrix. Ignoring that leaves those decals
+        # somewhere else entirely -- often the far side of the hull, which reads
+        # as one showing through from underneath.
         x, y, z, w = decal.rotation
-        euler = mathutils.Quaternion((w, x, y, z)).to_euler()
-        obj["carbon_decal_rotation"] = (euler.x, euler.y, euler.z)
+        matrix = mathutils.Matrix.LocRotScale(
+            mathutils.Vector(decal.position),
+            mathutils.Quaternion((w, x, y, z)),
+            mathutils.Vector(decal.scaling),
+        )
+        bone = bone_rest_matrix(hull, decal.parent_bone)
+        if bone is not None:
+            matrix = bone @ matrix
+            boned += 1
+        position, rotation, scaling = matrix.decompose()
+        obj["carbon_decal_position"] = tuple(position)
+        obj["carbon_decal_scaling"] = tuple(scaling)
+        obj["carbon_decal_rotation"] = tuple(rotation.to_euler())
 
         mesh.materials.append(build_decal_material(decal, resources))
         built.append(obj)
 
     for reason, count in skipped.items():
         print(f"  ! {count} decal(s) skipped: {reason}")
-    print(f"  built {len(built)} decal object(s)")
+    print(f"  built {len(built)} decal object(s), {boned} placed on a bone")
     return built
+
+
+def bone_rest_matrix(hull, index):
+    """The rest matrix of one bone, by the index a decal names.
+
+    Decal bone indices address the GR2 skeleton, which the importer builds in
+    the same order, so the index selects directly. Returns None when there is no
+    armature or the index is out of range -- a decal is better placed in hull
+    space than not at all.
+    """
+
+    if index is None or index < 0:
+        return None
+    armature = next((child for child in hull.children if child.type == "ARMATURE"), None)
+    if armature is None:
+        armature = next((obj for obj in bpy.data.objects if obj.type == "ARMATURE"), None)
+    if armature is None:
+        return None
+    bones = armature.data.bones
+    if index >= len(bones):
+        return None
+    return bones[index].matrix_local
 
 
 def build_decal_material(decal, resources):
@@ -508,7 +545,18 @@ def build_decal_material(decal, resources):
 
     if transparency is not None:
         mlinks.new(transparency.outputs["Color"], principled.inputs["Alpha"])
-    material.blend_method = "BLEND" if hasattr(material, "blend_method") else material.blend_method
+
+    # The shader alpha-blends with ZWRITEENABLE off: decals are depth-TESTED
+    # against the hull but never depth-WRITING. That is exactly the case where
+    # EEVEE draws the far side of a transparent surface through the near one,
+    # so backfaces are culled and the transparent back is hidden.
+    if hasattr(material, "surface_render_method"):
+        material.surface_render_method = "BLENDED"
+    if hasattr(material, "blend_method"):
+        material.blend_method = "BLEND"
+    material.use_backface_culling = True
+    if hasattr(material, "show_transparent_back"):
+        material.show_transparent_back = False
 
     mlinks.new(principled.outputs["BSDF"], output.inputs["Surface"])
     return material
