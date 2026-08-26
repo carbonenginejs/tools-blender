@@ -42,6 +42,7 @@ OUTPUTS = (
     ("BSDF", "NodeSocketShader", "Ready-to-use surface"),
     ("Albedo", "NodeSocketColor", "Base colour after material, paint and dirt"),
     ("Roughness", "NodeSocketFloat", "Roughness derived from blended gloss"),
+    ("Fresnel", "NodeSocketColor", "F0 after material, paint and dirt"),
     ("Normal", "NodeSocketVector", "World-space normal"),
     ("Emission", "NodeSocketColor", "Glow, scaled by activation"),
 )
@@ -49,7 +50,11 @@ OUTPUTS = (
 #: Inputs the shader reads per object rather than per material.
 OBJECT_INPUTS = (
     ("Activation", 1.0, "Object activation; scales the glow (shipData.y)"),
-    ("DirtLevel", 0.0, "Object dirt level from weeks since cleaned (shipData.z)"),
+    ("DirtLevel", 0.0, "Object dirt level from weeks since cleaned (shipData.z). "
+                       "0 is clean; dirt also needs an authored MtlNDustDiffuseColor, "
+                       "which defaults to white and therefore looks clean"),
+    ("EmissionStrength", 1.0, "Carbon adds glow at full strength and the client blooms it; "
+                              "raise this to stand in for the bloom"),
 )
 
 #: The dust noise map's alpha is used separately from its colour, and Blender
@@ -114,7 +119,8 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
                 default=(0.0, 0.0, 0.0, 1.0), panel=textures)
     if "DustNoiseMap" in member.textures:
         _socket(tree, DUST_ALPHA, "NodeSocketFloat", panel=textures,
-                description="Dust noise alpha; drives the dirt mask")
+                description="Dust noise alpha; drives the dirt mask. "
+                            "The RGB channels drive the dusty albedo, F0 and roughness")
 
     # --- Object inputs ------------------------------------------------------
     object_panel = _panel(tree, "Object", panels)
@@ -250,30 +256,34 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
         fresnel = toward(fresnel, tuple(reference.PAINT_FRESNEL_COLOR) + (1.0,),
                          paint, (-140, 300), "paint -> dielectric")
 
+    # --- The dust noise's three colour channels, each biased by +0.5 --------
+    # x drives the dusty albedo, y its F0, z its roughness, and the alpha the
+    # mask. Each channel is used separately, which is why the bias matters on
+    # all four.
+    noise = [None, None, None]
+    if has("DustNoiseMap"):
+        channels = separate(value("DustNoiseMap"), (-1200, -160))
+        for index in range(3):
+            noise[index] = math("ADD", channels[index], reference.DUST_BIAS,
+                                location=(-1000, -120 - index * 70),
+                                label=f"noise.{'xyz'[index]} +0.5")
+
     # --- Albedo, clean and dusty --------------------------------------------
     albedo_map = value("AlbedoMap")
     clean = vector("MULTIPLY", diffuse, albedo_map, location=(60, 600), label="clean albedo")
-    dusty = vector("MULTIPLY", dust, albedo_map, location=(60, -100), label="dusty albedo") \
-        if dust is not None else None
-
-    # --- Dirt mask ----------------------------------------------------------
-    albedo = clean
-    if dusty is not None and has("DirtMap") and has(DUST_ALPHA):
-        dirt_x = separate(value("DirtMap"), (-1200, -300))[0]
-        biased = math("ADD", value(DUST_ALPHA), reference.DUST_BIAS, location=(-1000, -360),
-                      label="noise alpha +0.5")
-        masked = math("MULTIPLY", dirt_x, biased, location=(-840, -320))
-        divisor = math("SUBTRACT", 1.0, value("DirtLevel"), location=(-840, -420))
-        mask = math("DIVIDE", masked, divisor, location=(-680, -360), clamp=True,
-                    label="dirt mask")
-        # Production blends two LIT results with pow(1-mask, 3) on the clean
-        # side; with one lighting pass the parameters are blended instead.
-        albedo = toward(clean, dusty, mask, (260, 300), "clean -> dusty")
+    dusty = None
+    if dust is not None:
+        dusty = vector("MULTIPLY", dust, albedo_map, location=(60, -100), label="dusty albedo")
+        if noise[0] is not None:
+            scaled = vector("SCALE", dusty, None, location=(200, -100), label="* noise.x")
+            links.new(noise[0], scaled.node.inputs["Scale"])
+            dusty = scaled
 
     # --- Roughness: (1 - gloss * roughnessMap, paint -> 0.4) squared ---------
     roughness = None
-    if gloss is not None and has("RoughnessMap"):
-        roughness_x = separate(value("RoughnessMap"), (-1200, 0))[0]
+    dusty_roughness = None
+    roughness_x = separate(value("RoughnessMap"), (-1200, 0))[0] if has("RoughnessMap") else None
+    if gloss is not None and roughness_x is not None:
         combined = math("MULTIPLY", gloss, roughness_x, location=(-140, 100))
         if paint is not None:
             node = nodes.new("ShaderNodeMix")
@@ -286,6 +296,52 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
             combined = node.outputs[0]
         linear = math("SUBTRACT", 1.0, combined, location=(180, 100), clamp=True)
         roughness = math("MULTIPLY", linear, linear, location=(340, 100), label="roughness")
+
+    # The dusty side uses the BAKED dirt gloss, not the blended material gloss,
+    # and the paint mask does not enter it: dirt sits on top of paint.
+    if roughness_x is not None and noise[2] is not None:
+        dulled = math("MULTIPLY", roughness_x, noise[2], location=(-140, -300))
+        dulled = math("MULTIPLY", dulled, reference.DIRT_GLOSS, location=(20, -300))
+        dust_linear = math("SUBTRACT", 1.0, dulled, location=(180, -300), clamp=True)
+        dusty_roughness = math("MULTIPLY", dust_linear, dust_linear, location=(340, -300),
+                               label="dusty roughness")
+
+    # --- Dusty F0 is its own baked colour, not the material's ---------------
+    dusty_fresnel = None
+    if noise[1] is not None:
+        node = nodes.new("ShaderNodeVectorMath")
+        node.operation = "SCALE"
+        node.location = (-140, -500)
+        node.label = "dirt F0"
+        node.inputs[0].default_value = reference.DIRT_FRESNEL_COLOR
+        links.new(noise[1], node.inputs["Scale"])
+        dusty_fresnel = node.outputs[0]
+
+    # --- Dirt mask, then blend every surface parameter by it ----------------
+    albedo = clean
+    if has("DirtMap") and has(DUST_ALPHA):
+        dirt_x = separate(value("DirtMap"), (-1200, -700))[0]
+        biased = math("ADD", value(DUST_ALPHA), reference.DUST_BIAS, location=(-1000, -760),
+                      label="noise.w +0.5")
+        masked = math("MULTIPLY", dirt_x, biased, location=(-840, -720))
+        divisor = math("SUBTRACT", 1.0, value("DirtLevel"), location=(-840, -820))
+        mask = math("DIVIDE", masked, divisor, location=(-680, -760), clamp=True,
+                    label="dirt mask")
+        # Production blends two LIT results with pow(1-mask, 3) on the clean
+        # side; with one lighting pass the parameters are blended instead.
+        if dusty is not None:
+            albedo = toward(clean, dusty, mask, (500, 300), "clean -> dusty")
+        if fresnel is not None and dusty_fresnel is not None:
+            fresnel = toward(fresnel, dusty_fresnel, mask, (500, 0), "F0 clean -> dusty")
+        if roughness is not None and dusty_roughness is not None:
+            node = nodes.new("ShaderNodeMix")
+            node.data_type = "FLOAT"
+            node.location = (500, -300)
+            node.label = "roughness clean -> dusty"
+            links.new(mask, node.inputs["Factor"])
+            links.new(roughness, node.inputs[2])
+            links.new(dusty_roughness, node.inputs[3])
+            roughness = node.outputs[0]
 
     # --- Normal: two channels, +0.002, and an implicit Z of 1 ---------------
     # Blender's Normal Map node computes normalize(T*(2r-1) + B*(2g-1) + N*(2b-1)).
@@ -315,6 +371,7 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
         powered = math("POWER", glow_x, reference.GLOW_INNER_EXPONENT * reference.GLOW_OUTER_EXPONENT,
                        location=(-1000, -900), label="glow ^2.4")
         scaled = math("MULTIPLY", powered, value("Activation"), location=(-840, -900))
+        scaled = math("MULTIPLY", scaled, value("EmissionStrength"), location=(-760, -960))
         emission = vector("SCALE", value(glow_color), None, location=(-680, -900))
         links.new(scaled, emission.node.inputs["Scale"])
 
@@ -328,6 +385,19 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
     if roughness is not None:
         links.new(roughness, principled.inputs["Roughness"])
         links.new(roughness, group_out.inputs["Roughness"])
+    if fresnel is not None:
+        # Carbon carries an explicit F0 colour alongside the diffuse albedo.
+        # Principled expresses a dielectric's F0 as
+        # `0.08 * Specular IOR Level * Specular Tint`, so driving the tint with
+        # the fresnel colour at full level gives F0 = 0.08 * colour. That is the
+        # right hue and response, but Blender's dielectric range caps at 0.08
+        # while Carbon's authored values run far higher for metals, so strongly
+        # metallic materials are compressed. Blending Metallic would express
+        # them, but nothing measured says what that blend should be, so it is
+        # left as an input rather than invented.
+        principled.inputs["Specular IOR Level"].default_value = 1.0
+        links.new(fresnel, principled.inputs["Specular Tint"])
+        links.new(fresnel, group_out.inputs["Fresnel"])
     if normal is not None:
         links.new(normal, principled.inputs["Normal"])
         links.new(normal, group_out.inputs["Normal"])

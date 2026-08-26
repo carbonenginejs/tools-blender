@@ -413,3 +413,36 @@ class Annotations(unittest.TestCase):
 
     def test_paint_mask_declares_transparency(self):
         self.assertTrue(self.base.annotation("PaintMaskMap").has_transparency)
+
+
+class DustMaterial(unittest.TestCase):
+
+    def test_albedo_is_modulated_by_noise_x(self):
+        plain = reference.dusty_albedo((0.5, 0.5, 0.5), (1.0, 1.0, 1.0), 1.0)
+        noisy = reference.dusty_albedo((0.5, 0.5, 0.5), (1.0, 1.0, 1.0), 0.5)
+        self.assertAlmostEqual(plain[0], 0.5, places=6)
+        self.assertAlmostEqual(noisy[0], 0.25, places=6)
+
+    def test_white_dust_colour_leaves_the_albedo_untinted(self):
+        # Carbon's default is white, which is why a fully dirty hull on bare
+        # defaults shows the plain albedo and reads as clean.
+        albedo = (0.2, 0.4, 0.6)
+        self.assertEqual(reference.dusty_albedo(albedo, (1.0, 1.0, 1.0, 1.0), 1.0), albedo)
+
+    def test_dust_f0_is_its_own_baked_colour(self):
+        # Not derived from the material's fresnel colour at all.
+        self.assertEqual(reference.dusty_fresnel(1.0), reference.DIRT_FRESNEL_COLOR)
+        self.assertEqual(reference.dusty_fresnel(0.0), (0.0, 0.0, 0.0))
+
+    def test_dust_f0_is_much_darker_than_the_paint_dielectric(self):
+        for dust, paint in zip(reference.DIRT_FRESNEL_COLOR, reference.PAINT_FRESNEL_COLOR):
+            self.assertLess(dust, paint)
+
+    def test_dusty_roughness_uses_the_baked_gloss(self):
+        # Ignores the blended material gloss and the paint mask entirely.
+        value = reference.dusty_roughness(1.0, 1.0)
+        expected = (1.0 - reference.DIRT_GLOSS) ** 2
+        self.assertAlmostEqual(value, expected, places=6)
+
+    def test_dusty_roughness_is_rougher_without_the_map(self):
+        self.assertAlmostEqual(reference.dusty_roughness(0.0, 1.0), 1.0, places=6)

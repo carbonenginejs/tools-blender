@@ -84,6 +84,13 @@ GLOW_OUTER_EXPONENT = 1.2000000476837158
 #: Carbon's `EVE_SPACEOBJECT_DIRT_LEVEL_DEFAULT`.
 DIRT_LEVEL_DEFAULT = 0.0
 
+#: The dusty material's F0, baked into the shader like the paint one. Much
+#: darker than the paint dielectric, which is what makes dirt read as dull.
+DIRT_FRESNEL_COLOR: Vec3 = (0.01899999938905239, 0.017000000923871994, 0.014000000432133675)
+
+#: The dusty material's gloss. Same value as the paint gloss, different role.
+DIRT_GLOSS = 0.4000000059604645
+
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return low if value < low else high if value > high else value
@@ -268,6 +275,48 @@ def dust_diffuse_color(
     """
 
     return blend_layers(weights, dust_colors)[:3]  # type: ignore[return-value]
+
+
+def dusty_albedo(
+    albedo_map: Sequence[float],
+    dust_color: Sequence[float],
+    dust_noise_x: float,
+) -> Vec3:
+    """The dusty material's albedo: `AlbedoMap * dustColour * noise.x`.
+
+    The noise channel is what stops dirt being a flat tint. Note that
+    `MtlNDustDiffuseColor` defaults to **white**, so on Carbon's bare defaults a
+    fully dirty surface shows the untinted albedo and reads as *clean*. The
+    authored SOF value is what makes dirt look like dirt.
+    """
+
+    return tuple(  # type: ignore[return-value]
+        a * d * dust_noise_x for a, d in zip(albedo_map[:3], dust_color[:3])
+    )
+
+
+def dusty_fresnel(dust_noise_y: float) -> Vec3:
+    """The dusty material's F0: `noise.y * DIRT_FRESNEL_COLOR`.
+
+    Not derived from the material's own fresnel colour at all -- dirt has its
+    own baked, much darker F0, which is most of why a dirty surface stops
+    looking reflective.
+    """
+
+    return tuple(dust_noise_y * channel for channel in DIRT_FRESNEL_COLOR)  # type: ignore[return-value]
+
+
+def dusty_roughness(roughness_map: float, dust_noise_z: float) -> float:
+    """The dusty material's roughness.
+
+    Uses the baked `DIRT_GLOSS` rather than the blended material gloss, and the
+    paint mask does not enter: dirt sits on top of paint::
+
+        clamp(1 - RoughnessMap * noise.z * DIRT_GLOSS) ** 2
+    """
+
+    linear = clamp(1.0 - roughness_map * dust_noise_z * DIRT_GLOSS)
+    return linear * linear
 
 
 def dirt_mask(dirt_map: float, dust_noise_w: float, dirt_level: float) -> float:
