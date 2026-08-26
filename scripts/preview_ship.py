@@ -498,6 +498,7 @@ def drive_ship_sockets(objects, source):
                 if node.bl_idname != "ShaderNodeGroup" or not node.node_tree:
                     continue
                 count = nodes.drive_ship_values(node, source)
+                count += nodes.drive_mask_values(node, source)
                 if count:
                     driven += count
                     materials += 1

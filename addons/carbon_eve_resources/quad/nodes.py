@@ -225,6 +225,85 @@ def drive_ship_values(group_node, obj):
         driven += 1
     return driven
 
+
+#: Socket types for the per-mask values, by MASK_PROPERTIES key.
+MASK_SOCKET_TYPES = {
+    "position": "NodeSocketVector",
+    "rotation": "NodeSocketVector",
+    "scaling": "NodeSocketVector",
+    "wrap": "NodeSocketVector",
+    "targets": "NodeSocketVector",
+    "mirrored": "NodeSocketFloat",
+    "target4": "NodeSocketFloat",
+    "material": "NodeSocketFloat",
+}
+
+#: Sensible values for a mask that is not in use, so an unpatterned hull looks
+#: like an unpatterned hull rather than like a bug.
+MASK_SOCKET_DEFAULTS = {
+    "scaling": (1.0, 1.0, 1.0),
+}
+
+
+def mask_socket_name(index: int, key: str) -> str:
+    """The socket a per-mask value arrives on, e.g. ``mask0 position``."""
+
+    return f"mask{index} {key}"
+
+
+def new_mask_socket(tree, index: int, key: str):
+    """Adds one per-mask input socket, hidden and marked as driven."""
+
+    socket = tree.interface.new_socket(
+        name=mask_socket_name(index, key), in_out="INPUT",
+        socket_type=MASK_SOCKET_TYPES[key])
+    default = MASK_SOCKET_DEFAULTS.get(key)
+    if default is not None:
+        socket.default_value = default
+    socket.description = (
+        f"Driven from the object's {MASK_PROPERTIES[key].format(index)} property"
+    )
+    socket.hide_value = True
+    return socket
+
+
+def drive_mask_values(group_node, obj):
+    """Drives a node's per-mask sockets from an object's properties.
+
+    Same reason as `drive_ship_values`: EEVEE delivers only EIGHT object
+    attributes per material and silently returns zero beyond that. The two
+    pattern masks alone wanted fourteen, so some of them never reached the
+    shader at all -- which is the sort of fault that reads as "the wrap mode is
+    wrong" rather than as "this value is missing".
+
+    Returns the number of driver channels added.
+    """
+
+    added = 0
+    for index in (0, 1):
+        for key in MASK_PROPERTIES:
+            socket = group_node.inputs.get(mask_socket_name(index, key))
+            if socket is None:
+                continue
+            prop = MASK_PROPERTIES[key].format(index)
+            position = list(group_node.inputs).index(socket)
+            path = f'nodes["{group_node.name}"].inputs[{position}].default_value'
+            channels = 3 if socket.type == "VECTOR" else 1
+            for channel in range(channels):
+                group_node.id_data.driver_remove(path, channel if channels > 1 else -1)
+                driver = group_node.id_data.driver_add(
+                    path, channel if channels > 1 else -1).driver
+                driver.type = "SCRIPTED"
+                variable = driver.variables.new()
+                variable.name = "v"
+                variable.targets[0].id_type = "OBJECT"
+                variable.targets[0].id = obj
+                variable.targets[0].data_path = (
+                    f'["{prop}"][{channel}]' if channels > 1 else f'["{prop}"]')
+                driver.expression = "v"
+                added += 1
+    return added
+
 def build_projection_group() -> bpy.types.ShaderNodeTree:
     """Builds the shared pattern-projection group.
 
@@ -267,13 +346,25 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
     coordinate = nodes.new("ShaderNodeTexCoord")
     coordinate.location = (-1200, 0)
 
+    for index in (0, 1):
+        for key in ("position", "rotation", "scaling", "mirrored", "wrap"):
+            new_mask_socket(tree, index, key)
+
+    group_in = nodes.new("NodeGroupInput")
+    group_in.location = (-1400, 0)
+
     def attribute(name, row):
-        node = nodes.new("ShaderNodeAttribute")
-        node.attribute_type = "OBJECT"
-        node.attribute_name = name
-        node.location = (-1200, row)
-        node.label = name
-        return node
+        """The socket a per-mask value now arrives on.
+
+        Kept as a function so the reading code below is unchanged: it still asks
+        for a value by property name, it just no longer spends an attribute to
+        get one. `.outputs` mimics an Attribute node's Vector/Factor pair.
+        """
+
+        index = int(name.split("carbon_mask", 1)[1][0])
+        key = name.rsplit("_", 1)[1]
+        socket = group_in.outputs[mask_socket_name(index, key)]
+        return type("MaskValue", (), {"outputs": {"Vector": socket, "Factor": socket}})()
 
     for index in (0, 1):
         base = index * -900
@@ -779,20 +870,15 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         # ccpwgl binds mask 0 to PMtl1 and mask 1 to PMtl2; materialIndex can in
         # principle name a base material too, which is not implemented.
         prefix = f"PMtl{index}"
-        targets = nodes.new("ShaderNodeAttribute")
-        targets.attribute_type = "OBJECT"
-        targets.attribute_name = MASK_PROPERTIES["targets"].format(index - 1)
-        targets.location = (-1200, 700 - index * 120)
-        targets.label = targets.attribute_name
-        target_rgb = separate(targets.outputs["Color"], (-1040, 700 - index * 120))
-
-        target4 = nodes.new("ShaderNodeAttribute")
-        target4.attribute_type = "OBJECT"
-        target4.attribute_name = MASK_PROPERTIES["target4"].format(index - 1)
-        target4.location = (-1200, 640 - index * 120)
-        target4.label = target4.attribute_name
-
-        per_layer = [target_rgb[0], target_rgb[1], target_rgb[2], target4.outputs["Factor"]]
+        # Which of the four material layers this mask paints over. Sockets
+        # rather than Attribute nodes, driven from the object -- see
+        # `drive_mask_values`.
+        new_mask_socket(tree, index - 1, "targets")
+        new_mask_socket(tree, index - 1, "target4")
+        target_rgb = separate(group_in.outputs[mask_socket_name(index - 1, "targets")],
+                              (-1040, 700 - index * 120))
+        per_layer = [target_rgb[0], target_rgb[1], target_rgb[2],
+                     group_in.outputs[mask_socket_name(index - 1, "target4")]]
         patterns.append((prefix, sample, per_layer))
 
     def patterned(layer, socket, suffix, location, *, scalar=False):
