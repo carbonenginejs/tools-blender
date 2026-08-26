@@ -961,3 +961,73 @@ def build_all() -> list:
 
     family = load_family()
     return [build_group(member) for member in family.members.values()]
+
+
+#: The decal projection group; one per blend file, shared by every decal.
+DECAL_PROJECTION_GROUP = "Carbon Decal Projection"
+
+
+def build_decal_projection_group() -> bpy.types.ShaderNodeTree:
+    """Builds the decal projection, read from the decal object's own properties.
+
+    The same convention as the quad patterns -- rows 1 and 2 of the inverse
+    matrix over a `[-1, 1]` box -- so this is the pattern group with one
+    projection instead of two, and no wrap modes: every decal map clamps to a
+    black border, which Blender's CLIP extension does natively.
+
+    A decal's transform belongs to the decal, not the ship, so the properties
+    are read from the decal object being shaded. One group therefore serves
+    every decal on every hull.
+    """
+
+    existing = bpy.data.node_groups.get(DECAL_PROJECTION_GROUP)
+    if existing is not None:
+        return existing
+
+    tree = _new_group(DECAL_PROJECTION_GROUP)
+    nodes, links = tree.nodes, tree.links
+    tree.interface.new_socket(name="UV", in_out="OUTPUT", socket_type="NodeSocketVector")
+
+    output = nodes.new("NodeGroupOutput")
+    output.location = (400, 0)
+    coordinate = nodes.new("ShaderNodeTexCoord")
+    coordinate.location = (-700, 0)
+
+    def attribute(name, row):
+        node = nodes.new("ShaderNodeAttribute")
+        node.attribute_type = "OBJECT"
+        node.attribute_name = name
+        node.location = (-700, row)
+        node.label = name
+        return node.outputs["Vector"]
+
+    mapping = nodes.new("ShaderNodeMapping")
+    mapping.vector_type = "TEXTURE"
+    mapping.location = (-400, 0)
+    mapping.label = "inverse decal transform"
+    links.new(coordinate.outputs["Object"], mapping.inputs["Vector"])
+    links.new(attribute("carbon_decal_position", 240), mapping.inputs["Location"])
+    links.new(attribute("carbon_decal_rotation", 120), mapping.inputs["Rotation"])
+    links.new(attribute("carbon_decal_scaling", -60), mapping.inputs["Scale"])
+
+    parts = nodes.new("ShaderNodeSeparateXYZ")
+    parts.location = (-160, 0)
+    links.new(mapping.outputs["Vector"], parts.inputs[0])
+
+    # Rows 1 and 2, and V flipped for D3D texture space, exactly as the
+    # patterns need.
+    uv = nodes.new("ShaderNodeCombineXYZ")
+    uv.location = (200, 0)
+    uv.label = "[-1,1] -> [0,1], V flipped"
+
+    for axis, socket, sign in ((1, "X", 0.5), (2, "Y", -0.5)):
+        mapped = nodes.new("ShaderNodeMath")
+        mapped.operation = "MULTIPLY_ADD"
+        mapped.location = (20, -axis * 140)
+        links.new(parts.outputs[axis], mapped.inputs[0])
+        mapped.inputs[1].default_value = sign
+        mapped.inputs[2].default_value = 0.5
+        links.new(mapped.outputs[0], uv.inputs[socket])
+
+    links.new(uv.outputs[0], output.inputs["UV"])
+    return tree

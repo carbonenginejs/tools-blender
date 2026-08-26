@@ -39,7 +39,7 @@ if HERE not in sys.path:
 if ADDONS not in sys.path:
     sys.path.insert(0, ADDONS)
 
-from carbon_eve_resources.quad import load_family, nodes  # noqa: E402
+from carbon_eve_resources.quad import decals as decal_module, load_family, nodes  # noqa: E402
 import preview_quad  # noqa: E402
 
 BATCHES = ("opaqueAreas", "transparentAreas", "additiveAreas", "distortionAreas")
@@ -362,6 +362,158 @@ def hide_non_geometry():
         print(f"  hid {hidden} non-geometry object(s) from the render")
 
 
+def build_decals(document, hull, resources, family):
+    """Copies each decal's hull triangles into its own mesh and shades it.
+
+    A decal is a re-draw of part of the hull, not a surface of its own, so the
+    triangles come from `staticIndexBuffers` indexing the hull's vertices. They
+    are lifted very slightly along their normals because Carbon biases in depth
+    instead -- adding 1e-5 to clip-space z -- and Blender has no equivalent that
+    works the same way in both EEVEE and Cycles.
+    """
+
+    import bmesh
+    import mathutils
+
+    found = decal_module.read_decals(document)
+    if not found:
+        return []
+    print("")
+    print(f"{decal_module.summarise(found)}")
+
+    corners = [hull.matrix_world @ mathutils.Vector(c) for c in hull.bound_box]
+    centre = sum(corners, mathutils.Vector((0, 0, 0))) / 8
+    radius = max((c - centre).length for c in corners) or 1.0
+    lift = radius * decal_module.DECAL_LIFT_FRACTION / max(hull.scale.x, 1e-9)
+
+    source = hull.data
+    built = []
+    skipped = {}
+
+    for decal in found:
+        if not decal.triangles:
+            skipped["no triangles"] = skipped.get("no triangles", 0) + 1
+            continue
+
+        mesh = bpy.data.meshes.new(decal.name)
+        bm = bmesh.new()
+        made = {}
+        for triangle in decal.triangles:
+            try:
+                verts = []
+                for index in triangle:
+                    if index not in made:
+                        vertex = source.vertices[index]
+                        offset = mathutils.Vector(vertex.normal) * lift
+                        made[index] = bm.verts.new(mathutils.Vector(vertex.co) + offset)
+                    verts.append(made[index])
+                bm.faces.new(verts)
+            except (IndexError, ValueError):
+                # A repeated triangle, or an index past the hull -- neither is
+                # worth losing the rest of the decal over.
+                continue
+        bm.to_mesh(mesh)
+        bm.free()
+
+        if not mesh.polygons:
+            bpy.data.meshes.remove(mesh)
+            skipped["no faces"] = skipped.get("no faces", 0) + 1
+            continue
+
+        obj = bpy.data.objects.new(decal.name, mesh)
+        bpy.context.collection.objects.link(obj)
+        obj.matrix_world = hull.matrix_world
+        obj.parent = hull
+        obj.matrix_parent_inverse = hull.matrix_world.inverted()
+
+        # The decal's transform lives on the decal object, so one projection
+        # group serves every decal on every hull.
+        obj["carbon_decal_position"] = decal.position
+        obj["carbon_decal_scaling"] = decal.scaling
+        x, y, z, w = decal.rotation
+        euler = mathutils.Quaternion((w, x, y, z)).to_euler()
+        obj["carbon_decal_rotation"] = (euler.x, euler.y, euler.z)
+
+        mesh.materials.append(build_decal_material(decal, resources))
+        built.append(obj)
+
+    for reason, count in skipped.items():
+        print(f"  ! {count} decal(s) skipped: {reason}")
+    print(f"  built {len(built)} decal object(s)")
+    return built
+
+
+def build_decal_material(decal, resources):
+    """One decal's material, sampling its maps through the projection."""
+
+    material = bpy.data.materials.new(decal.name)
+    material.use_nodes = True
+    mnodes, mlinks = material.node_tree.nodes, material.node_tree.links
+    mnodes.clear()
+    output = mnodes.new("ShaderNodeOutputMaterial")
+    output.location = (500, 0)
+
+    projection = mnodes.new("ShaderNodeGroup")
+    projection.node_tree = nodes.build_decal_projection_group()
+    projection.location = (-900, 200)
+
+    principled = mnodes.new("ShaderNodeBsdfPrincipled")
+    principled.location = (200, 0)
+    principled.inputs["Metallic"].default_value = 0.0
+
+    row = 400
+    sampled = {}
+    for name, path in sorted(decal.textures.items()):
+        if not name.startswith("Decal"):
+            continue  # the hull's own maps; decalv5 reads them at the mesh UV
+        local = resources.get(path)
+        if not local or not os.path.exists(local):
+            continue
+        image = bpy.data.images.load(local, check_existing=True)
+        image.colorspace_settings.name = (
+            "sRGB" if decal_module.DECAL_TEXTURES.get(name) else "Non-Color"
+        )
+        node = mnodes.new("ShaderNodeTexImage")
+        node.image = image
+        node.location = (-600, row)
+        node.label = name
+        # Every decal map clamps to a black border, so a decal covers nothing
+        # outside its own projection. CLIP is exactly that.
+        node.extension = "CLIP"
+        mlinks.new(projection.outputs["UV"], node.inputs["Vector"])
+        sampled[name] = node
+        row -= 300
+
+    transparency = sampled.get("DecalTransparencyMap")
+    albedo = sampled.get("DecalAlbedoMap")
+    glow = sampled.get("DecalGlowMap")
+
+    if albedo is not None:
+        mlinks.new(albedo.outputs["Color"], principled.inputs["Base Color"])
+    if "DecalRoughnessMap" in sampled:
+        mlinks.new(sampled["DecalRoughnessMap"].outputs["Color"], principled.inputs["Roughness"])
+
+    glow_colour = decal.constants.get("DecalGlowColor")
+    intensity = decal.constants.get("DecalIntensityData")
+    if glow is not None:
+        strength = mnodes.new("ShaderNodeVectorMath")
+        strength.operation = "SCALE"
+        strength.location = (-200, 200)
+        mlinks.new(glow.outputs["Color"], strength.inputs[0])
+        strength.inputs["Scale"].default_value = float(intensity[0]) if intensity else 1.0
+        mlinks.new(strength.outputs[0], principled.inputs["Emission Color"])
+        principled.inputs["Emission Strength"].default_value = 1.0
+    elif glow_colour:
+        principled.inputs["Emission Color"].default_value = tuple(glow_colour[:3]) + (1.0,)
+
+    if transparency is not None:
+        mlinks.new(transparency.outputs["Color"], principled.inputs["Alpha"])
+    material.blend_method = "BLEND" if hasattr(material, "blend_method") else material.blend_method
+
+    mlinks.new(principled.outputs["BSDF"], output.inputs["Surface"])
+    return material
+
+
 def main():
     args = parse_args(sys.argv)
     primary = assemble(args)
@@ -369,6 +521,9 @@ def main():
     if primary is None:
         raise SystemExit("no geometry was assembled")
 
+    build_decals(load_document(args.sof), primary,
+                 json.load(open(os.path.join(args.resources, "manifest.json"), encoding="utf-8")),
+                 load_family())
     preview_quad.ENVIRONMENT[:] = [args.environment] if args.environment else []
     if args.sun_strength is not None:
         preview_quad.SUN_SCALE[0] = args.sun_strength
