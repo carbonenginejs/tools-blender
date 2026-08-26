@@ -544,3 +544,78 @@ def compose(
         material_weights=weights,
         paint_strength=paint,
     )
+
+
+# --- Heat glow -------------------------------------------------------------
+#
+# `quadheatv5` and `quadheatdetailv5` add a shimmer over the glow map, gated by
+# the object's booster gain. `MtlNHeatGlowData` is four separate quantities
+# rather than a colour, blended by the same four tent weights as everything
+# else: (gate influence, scroll speed, noise tiling, distortion strength).
+
+#: The booster gain window the heat gate opens across. Measured as a subtract
+#: of 0.005 followed by a multiply of 66.667, so heat is fully on by a gain of
+#: 0.02 -- a very narrow window just above zero, which is why heat reads as a
+#: switch rather than a fade.
+HEAT_GATE_START = 0.004999999888241291
+HEAT_GATE_SCALE = 66.66667175292969
+
+#: The noise product is centred here before it displaces the lookup, so an
+#: average noise leaves the glow where it is.
+HEAT_NOISE_CENTRE = 0.5
+
+
+def heat_gate(booster_gain: float, influence: float) -> float:
+    """How much heat shows, from the object's booster gain.
+
+    `influence` is `MtlNHeatGlowData.x` blended across the layers: at zero the
+    material ignores the gate and always glows, at one it follows the boosters
+    completely.
+    """
+
+    gate = clamp((booster_gain - HEAT_GATE_START) * HEAT_GATE_SCALE)
+    return clamp(influence * (gate - 1.0) + 1.0)
+
+
+def heat_offset(
+    uv: Sequence[float],
+    time: float,
+    data: Sequence[float],
+    amount: float,
+    sample_noise,
+) -> tuple[float, float]:
+    """How far the glow lookup is displaced by the shimmer.
+
+    Two taps of the noise map scroll in OPPOSITE directions and multiply, which
+    is what stops the shimmer looking like a texture sliding past. `data.y` is
+    the speed, `data.z` the tiling, `data.w` the displacement strength.
+    """
+
+    speed, tiling, strength = data[1], data[2], data[3]
+    forward = sample_noise(((uv[0] + speed * time) * tiling, (uv[1] + speed * time) * tiling))
+    backward = sample_noise(((uv[0] - speed * time) * tiling, (uv[1] - speed * time) * tiling))
+    scale = strength * amount
+    return (
+        scale * (forward[0] * backward[0] - HEAT_NOISE_CENTRE),
+        scale * (forward[1] * backward[1] - HEAT_NOISE_CENTRE),
+    )
+
+
+def heat_emissive(
+    glow_at,
+    uv: Sequence[float],
+    offset: Sequence[float],
+    colour: Sequence[float],
+    amount: float,
+    activation: float,
+) -> Vec3:
+    """The heat term, which distorts the GLOW map rather than adding a texture.
+
+    The same `pow(glow, 2.4)` and activation scaling as the base glow -- heat
+    reuses the glow map, sampled at a displaced coordinate, which is why a hull
+    with no glow detail shows no heat however hot it is.
+    """
+
+    glow = glow_at((uv[0] + offset[0], uv[1] + offset[1]))
+    strength = amount * pow(glow * glow, GLOW_OUTER_EXPONENT) * activation
+    return tuple(channel * strength for channel in colour[:3])  # type: ignore[return-value]

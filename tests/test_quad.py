@@ -640,3 +640,48 @@ class DecalIndexBuffers(unittest.TestCase):
 
     def test_a_trailing_partial_triangle_is_dropped(self):
         self.assertEqual(self.decals.triangles_from_buffers([[0, 1, 2, 3]]), ((0, 1, 2),))
+
+
+class HeatGlow(unittest.TestCase):
+
+    def test_the_gate_is_a_narrow_window_just_above_zero(self):
+        # Fully on by a booster gain of 0.02, which is why heat reads as a
+        # switch rather than a fade.
+        self.assertAlmostEqual(reference.heat_gate(0.0, 1.0), 0.0, places=5)
+        self.assertAlmostEqual(reference.heat_gate(0.02, 1.0), 1.0, places=4)
+
+    def test_influence_zero_ignores_the_boosters(self):
+        # A material with HeatGlowData.x of zero always glows.
+        self.assertAlmostEqual(reference.heat_gate(0.0, 0.0), 1.0, places=6)
+
+    def test_influence_one_follows_the_boosters(self):
+        self.assertAlmostEqual(reference.heat_gate(0.0, 1.0), 0.0, places=6)
+        self.assertAlmostEqual(reference.heat_gate(1.0, 1.0), 1.0, places=6)
+
+    def test_the_two_noise_taps_scroll_opposite_ways(self):
+        seen = []
+        reference.heat_offset((0.0, 0.0), 1.0, (0.0, 2.0, 1.0, 1.0), 1.0,
+                              lambda uv: seen.append(uv) or (1.0, 1.0))
+        self.assertAlmostEqual(seen[0][0], 2.0, places=5)
+        self.assertAlmostEqual(seen[1][0], -2.0, places=5)
+
+    def test_average_noise_leaves_the_glow_where_it_is(self):
+        # The product is centred on 0.5, so noise of sqrt(0.5) displaces nothing.
+        root = 0.5 ** 0.5
+        offset = reference.heat_offset((0.3, 0.4), 1.0, (0.0, 1.0, 1.0, 1.0), 1.0,
+                                       lambda uv: (root, root))
+        self.assertAlmostEqual(offset[0], 0.0, places=6)
+
+    def test_no_heat_means_no_displacement(self):
+        offset = reference.heat_offset((0.3, 0.4), 5.0, (1.0, 1.0, 1.0, 1.0), 0.0,
+                                       lambda uv: (1.0, 1.0))
+        self.assertEqual(offset, (0.0, 0.0))
+
+    def test_heat_reuses_the_glow_map(self):
+        # A hull with no glow detail shows no heat however hot it is.
+        dark = reference.heat_emissive(lambda uv: 0.0, (0, 0), (0, 0), (1, 0.5, 0), 1.0, 1.0)
+        self.assertEqual(dark, (0.0, 0.0, 0.0))
+
+    def test_heat_uses_the_same_exponent_as_the_base_glow(self):
+        value = reference.heat_emissive(lambda uv: 0.5, (0, 0), (0, 0), (1, 1, 1), 1.0, 1.0)
+        self.assertAlmostEqual(value[0], pow(0.5, 2.4), places=6)
