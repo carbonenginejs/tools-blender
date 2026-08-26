@@ -722,7 +722,10 @@ def build_decal_material(decal, resources, obj=None):
     if hasattr(material, "show_transparent_back"):
         material.show_transparent_back = False
 
-    mlinks.new(principled.outputs["BSDF"], output.inputs["Surface"])
+    # A decal that drives the surface itself -- the emissive ones -- has already
+    # connected it, and relinking the BSDF here would silently overwrite that.
+    if not output.inputs["Surface"].is_linked:
+        mlinks.new(principled.outputs["BSDF"], output.inputs["Surface"])
     return material
 
 
@@ -800,6 +803,32 @@ def wire_kill_counter(decal, principled, transparency, projection, mnodes, mlink
 EQUIRECT_SUFFIX = "_equirect.png"
 
 
+def emissive_surface(mnodes, mlinks, output):
+    """An emissive, alpha-blended surface: what the glow decals actually are.
+
+    `decalholev5`, `decalglowv5` and `decalcounterv5` all write a colour and an
+    alpha and nothing else -- no diffuse, no specular, no normal. Running that
+    through a Principled BSDF adds a specular reflection the shader has no term
+    for, and against a bright nebula that sheen reads as a flat GREY panel
+    sitting where the decal is. An Emission mixed with Transparent has no such
+    term.
+
+    Returns (emission node, mix node); the caller sets the colour and the
+    factor.
+    """
+
+    transparent = mnodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (200, 120)
+    emission = mnodes.new("ShaderNodeEmission")
+    emission.location = (200, -60)
+    mix = mnodes.new("ShaderNodeMixShader")
+    mix.location = (380, 0)
+    mlinks.new(transparent.outputs[0], mix.inputs[1])
+    mlinks.new(emission.outputs[0], mix.inputs[2])
+    mlinks.new(mix.outputs[0], output.inputs["Surface"])
+    return emission, mix
+
+
 def wire_hull_breach(decal, principled, sampled, projection, mnodes, mlinks,
                      glow_colour, resources):
     """A breach that reads as a hole rather than as a sticker.
@@ -866,14 +895,20 @@ def wire_hull_breach(decal, principled, sampled, projection, mnodes, mlinks,
         # this reads it from Color.
         mlinks.new(interior.outputs["Color"], mixed.inputs["B"])
 
-    emission = mnodes.new("ShaderNodeVectorMath")
-    emission.operation = "SCALE"
-    emission.location = (260, -400)
-    emission.inputs[0].default_value = tuple(glow_colour[:3]) if glow_colour else (1.0, 1.0, 1.0)
-    mlinks.new(mixed.outputs["Result"], emission.inputs["Scale"])
-    mlinks.new(emission.outputs[0], principled.inputs["Emission Color"])
-    principled.inputs["Emission Strength"].default_value = 1.0
-    principled.inputs["Base Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+    colour = mnodes.new("ShaderNodeVectorMath")
+    colour.operation = "SCALE"
+    colour.location = (260, -400)
+    colour.inputs[0].default_value = tuple(glow_colour[:3]) if glow_colour else (1.0, 1.0, 1.0)
+    mlinks.new(mixed.outputs["Result"], colour.inputs["Scale"])
+
+    # No BSDF: the shader writes a colour and an alpha, and nothing else.
+    output = next(n for n in mnodes if n.bl_idname == "ShaderNodeOutputMaterial")
+    emission, mix = emissive_surface(mnodes, mlinks, output)
+    mlinks.new(colour.outputs[0], emission.inputs["Color"])
+    for link in list(principled.outputs[0].links):
+        mlinks.remove(link)
+    if principled.inputs["Alpha"].is_linked:
+        mlinks.new(principled.inputs["Alpha"].links[0].from_socket, mix.inputs["Fac"])
 
 
 def main():
