@@ -84,6 +84,14 @@ GLOW_OUTER_EXPONENT = 1.2000000476837158
 #: Carbon's `EVE_SPACEOBJECT_DIRT_LEVEL_DEFAULT`.
 DIRT_LEVEL_DEFAULT = 0.0
 
+#: The dirt-level-from-age curve. Named so the node graph and this reference
+#: cannot drift apart:
+#:
+#:     level = max(CEILING - 1 / (max(weeks, 0) ** EXPONENT + BIAS), 0)
+DIRT_AGE_CEILING = 0.7
+DIRT_AGE_EXPONENT = 0.65
+DIRT_AGE_BIAS = 1.0 / 2.7
+
 #: The dusty material's F0, baked into the shader like the paint one. Much
 #: darker than the paint dielectric, which is what makes dirt read as dull.
 DIRT_FRESNEL_COLOR: Vec3 = (0.01899999938905239, 0.017000000923871994, 0.014000000432133675)
@@ -118,7 +126,8 @@ def dirt_level_from_weeks(weeks: float, disabled: bool = False) -> float:
             return 0.0
     except TypeError:
         return 0.0
-    return max(0.7 - 1.0 / (pow(max(float(weeks), 0.0), 0.65) + (1.0 / 2.7)), 0.0)
+    aged = pow(max(float(weeks), 0.0), DIRT_AGE_EXPONENT) + DIRT_AGE_BIAS
+    return max(DIRT_AGE_CEILING - 1.0 / aged, 0.0)
 
 
 def material_weights(material_map: float) -> Vec4:

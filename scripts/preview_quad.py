@@ -52,6 +52,10 @@ SUFFIXES = {
 EXTENSIONS = (".png", ".dds", ".tga")
 
 #: Distinct enough to show which region each material layer owns.
+#: The glow map is a few tiny window strips and Carbon relies on the client's
+#: bloom, so the faithful pow(glow, 2.4) is far below anything visible at 1.0.
+DEMO_EMISSION_STRENGTH = 12.0
+
 DEMO_COLORS = {
     "Mtl1DiffuseColor": (0.05, 0.12, 0.30, 1.0),
     "Mtl2DiffuseColor": (0.55, 0.45, 0.20, 1.0),
@@ -68,9 +72,45 @@ def parse_args(argv):
     parser.add_argument("--mesh", default="")
     parser.add_argument("--object", default="")
     parser.add_argument("--member", default="quadv5.fx")
+    parser.add_argument("--sof", default="",
+                        help="A carbon.document JSON from tools-core, to drive the "
+                             "material from a real ship's authored values")
     parser.add_argument("--out", default="")
     parser.add_argument("--render", default="")
     return parser.parse_args(argv[argv.index("--") + 1:] if "--" in argv else [])
+
+
+def sof_effect(path, member_name):
+    """Finds the Tr2Effect for one family member in a SOF document.
+
+    Blender never composes SOF itself -- `tools-core` does that and emits the
+    document, which this only reads. Fetch one with::
+
+        curl "http://127.0.0.1:5510/eve/<build>/sof/dna/<dna>" -o ship.json
+
+    The constants live under `constParameters`, not `parameters`; the latter
+    exists and is empty, which reads as "this ship has no material values".
+    """
+
+    import json
+
+    with open(path, encoding="utf-8") as handle:
+        document = json.load(handle)
+
+    found = []
+
+    def walk(node):
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, dict):
+            if node.get("_type") == "Tr2Effect" and member_name in str(node.get("effectFilePath", "")):
+                found.append(node)
+            for value in node.values():
+                walk(value)
+
+    walk(document)
+    return found[0] if found else None
 
 
 def texture_prefix(directory, given):
@@ -170,9 +210,31 @@ def build(args):
             mlinks.new(node.outputs["Alpha"], group.inputs["DustNoiseAlpha"])
         print(f"  {os.path.basename(args.noise)} -> DustNoiseMap (UV x{scale:g})")
 
-    for name, colour in DEMO_COLORS.items():
-        if name in group.inputs:
-            group.inputs[name].default_value = colour
+    if "EmissionStrength" in group.inputs:
+        group.inputs["EmissionStrength"].default_value = DEMO_EMISSION_STRENGTH
+
+    effect = sof_effect(args.sof, member.name) if args.sof else None
+    if effect is None:
+        for name, colour in DEMO_COLORS.items():
+            if name in group.inputs:
+                group.inputs[name].default_value = colour
+        print("  using demo colours; pass --sof for a ship's authored values")
+    else:
+        applied = 0
+        for constant in effect.get("constParameters", []):
+            name, value = constant.get("name"), constant.get("value") or []
+            socket = group.inputs.get(name)
+            if socket is None or not value:
+                continue
+            if socket.type == "RGBA":
+                socket.default_value = tuple(value[:3]) + (1.0,)
+            else:
+                # Only .x is read; the remaining lanes are padding.
+                socket.default_value = float(value[0])
+            applied += 1
+        options = ", ".join(f"{o['name']}={o['value']}" for o in effect.get("options", []))
+        print(f"  applied {applied} authored constants from {os.path.basename(args.sof)}")
+        print(f"  the ship's own options: {options}")
 
     hull.data.materials.clear()
     hull.data.materials.append(material)
@@ -207,6 +269,61 @@ def frame(hull):
     world.use_nodes = True
     world.node_tree.nodes["Background"].inputs[0].default_value = (0.02, 0.025, 0.04, 1.0)
     bpy.context.scene.world = world
+    add_glare()
+
+
+def add_glare():
+    """Blooms the emissive windows in the compositor.
+
+    Carbon's glow is a handful of very small, very bright window strips -- the
+    glow map's mean is under 0.01 -- and the client blooms them. EEVEE has no
+    bloom setting any more, so without a compositor glare the emission is
+    present, correct, and effectively invisible against a lit hull. That looks
+    exactly like a disconnected glow, and was reported as one.
+    """
+
+    scene = bpy.context.scene
+
+    # Blender 5.0 moved compositing to a node group on the scene, and the Glare
+    # node's settings became input sockets rather than properties. Both differ
+    # from 4.x, so this is written against 5.0 and skipped elsewhere.
+    if not hasattr(scene, "compositing_node_group"):
+        print("  no compositor glare: this Blender predates compositing_node_group")
+        return
+
+    group = bpy.data.node_groups.new("Preview compositing", "CompositorNodeTree")
+    scene.compositing_node_group = group
+
+    # The render arrives through a Render Layers node inside the group, not
+    # through the group's own input. Wiring a bare group input instead yields
+    # its default -- white -- and blows the whole frame out, which looks like a
+    # runaway glare rather than an unconnected image.
+    group.interface.new_socket(name="Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+    render = group.nodes.new("CompositorNodeRLayers")
+    render.location = (-300, 0)
+    # 5.0 has no Composite node inside the group; it ends at a Group Output.
+    node_out = group.nodes.new("NodeGroupOutput")
+    node_out.location = (300, 0)
+    glare = group.nodes.new("CompositorNodeGlare")
+    glare.location = (0, 0)
+
+    # These are menu sockets taking the display string, not an enum identifier,
+    # and a wrong value fails silently and leaves the default -- which is
+    # Streaks, at a size that smears the frame to white. So report rather than
+    # swallow.
+    for socket, setting in (("Type", "Bloom"), ("Quality", "High"),
+                            ("Threshold", 0.4), ("Strength", 0.6), ("Size", 0.7)):
+        if socket not in glare.inputs:
+            print(f"  glare has no {socket!r} socket")
+            continue
+        try:
+            glare.inputs[socket].default_value = setting
+        except (TypeError, AttributeError) as error:
+            print(f"  glare {socket}={setting!r} rejected: {error}")
+
+    group.links.new(render.outputs["Image"], glare.inputs["Image"])
+    group.links.new(glare.outputs["Image"], node_out.inputs[0])
+    print("  compositor glare added (bloom)")
 
 
 def main():

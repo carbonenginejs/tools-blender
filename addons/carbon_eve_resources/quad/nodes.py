@@ -47,14 +47,24 @@ OUTPUTS = (
     ("Emission", "NodeSocketColor", "Glow, scaled by activation"),
 )
 
-#: Inputs the shader reads per object rather than per material.
+#: Inputs the shader reads per object rather than per material, as
+#: (name, default, minimum, maximum, description).
+#:
+#: `AgeInWeeks` rather than the raw 0-1 dirt level, because weeks is what is
+#: actually authored -- `EveShip2.weeksSinceCleaned` -- and the level is derived
+#: from it by a curve. The group applies that curve so the number a user types
+#: is the number the ship carries.
 OBJECT_INPUTS = (
-    ("Activation", 1.0, "Object activation; scales the glow (shipData.y)"),
-    ("DirtLevel", 0.0, "Object dirt level from weeks since cleaned (shipData.z). "
-                       "0 is clean; dirt also needs an authored MtlNDustDiffuseColor, "
-                       "which defaults to white and therefore looks clean"),
-    ("EmissionStrength", 1.0, "Carbon adds glow at full strength and the client blooms it; "
-                              "raise this to stand in for the bloom"),
+    ("Activation", 1.0, 0.0, 1.0,
+     "Object activation; scales the glow (shipData.y)"),
+    ("AgeInWeeks", 0.0, 0.0, 520.0,
+     "Weeks since the hull was last cleaned. Zero is clean, and the resulting "
+     "dirt level saturates toward 0.7 -- so past a few years more age changes "
+     "little. Dirt also needs an authored MtlNDustDiffuseColor: it defaults to "
+     "white, which looks clean however dirty the hull is"),
+    ("EmissionStrength", 1.0, 0.0, 1000.0,
+     "Carbon adds glow at full strength and the client blooms it; raise this "
+     "to stand in for the bloom"),
 )
 
 #: The dust noise map's alpha is used separately from its colour, and Blender
@@ -124,9 +134,10 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
 
     # --- Object inputs ------------------------------------------------------
     object_panel = _panel(tree, "Object", panels)
-    for name, default, description in OBJECT_INPUTS:
+    for name, default, minimum, maximum, description in OBJECT_INPUTS:
         _socket(tree, name, "NodeSocketFloat", description=description,
-                default=default, panel=object_panel, min_value=0.0, max_value=1.0)
+                default=default, panel=object_panel,
+                min_value=minimum, max_value=maximum)
 
     # --- Constants, grouped and defaulted exactly as Carbon declares them ---
     for name, constant in member.constants.items():
@@ -324,7 +335,17 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
         biased = math("ADD", value(DUST_ALPHA), reference.DUST_BIAS, location=(-1000, -760),
                       label="noise.w +0.5")
         masked = math("MULTIPLY", dirt_x, biased, location=(-840, -720))
-        divisor = math("SUBTRACT", 1.0, value("DirtLevel"), location=(-840, -820))
+        # Carbon's dirt level from weeks since cleaned:
+        #   max(0.7 - 1 / (max(weeks, 0) ** 0.65 + 1 / 2.7), 0)
+        # It is negative below about a week, so a fresh hull is clean, and it
+        # saturates toward 0.7.
+        aged = math("POWER", math("MAXIMUM", value("AgeInWeeks"), 0.0, location=(-1200, -900)),
+                    reference.DIRT_AGE_EXPONENT, location=(-1060, -900))
+        shifted = math("ADD", aged, reference.DIRT_AGE_BIAS, location=(-1000, -940))
+        falling = math("DIVIDE", 1.0, shifted, location=(-940, -900))
+        level = math("SUBTRACT", reference.DIRT_AGE_CEILING, falling, location=(-900, -940))
+        level = math("MAXIMUM", level, 0.0, location=(-870, -900), label="dirt level")
+        divisor = math("SUBTRACT", 1.0, level, location=(-840, -820))
         mask = math("DIVIDE", masked, divisor, location=(-680, -760), clamp=True,
                     label="dirt mask")
         # Production blends two LIT results with pow(1-mask, 3) on the clean
