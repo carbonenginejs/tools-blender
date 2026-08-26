@@ -78,6 +78,9 @@ def parse_args(argv):
     parser.add_argument("--out", default="")
     parser.add_argument("--environment", default="",
                         help="Equirectangular nebula for the world environment")
+    parser.add_argument("--sun-strength", type=float, default=SUN_SCALE[0],
+                        help="Scales the star's relative intensity into Blender sun energy; "
+                             "0 leaves the environment as the only light")
     parser.add_argument("--render", default="")
     return parser.parse_args(argv[argv.index("--") + 1:] if "--" in argv else [])
 
@@ -328,7 +331,7 @@ def frame(hull):
     bpy.context.collection.objects.link(light)
 
     image, manifest = read_environment(ENVIRONMENT[0] if ENVIRONMENT else "")
-    set_world(image)
+    set_world(image, scene_settings=(manifest or {}).get("scene"))
     if manifest:
         apply_sun(manifest)
     set_viewport_clipping(radius)
@@ -340,6 +343,16 @@ ENVIRONMENT = []
 
 #: The scene's sun, so a system's star can recolour it after framing.
 SUN_LIGHT = []
+
+#: How much of EVE's relative star intensity to give Blender's sun.
+#:
+#: EVE's `intensity` is a relative luminosity number, not the irradiance in
+#: W/m2 that Blender's sun strength means, so it cannot be used raw -- only the
+#: RATIO between two stars is meaningful. Kept deliberately low because the
+#: environment probe carries most of a quad surface's light: a sun strong
+#: enough to be the main light blows out the material and loses the nebula,
+#: which is what an earlier 3.0 here did.
+SUN_SCALE = [0.4]
 
 
 def apply_sun(manifest):
@@ -357,10 +370,25 @@ def apply_sun(manifest):
     intensity = float(sun.get("intensity") or 1.0)
     for data in SUN_LIGHT:
         data.color = tuple(colour[:3])
-        data.energy = 3.0 * intensity
+        data.energy = SUN_SCALE[0] * intensity
+
+    # sunDirection is the direction light TRAVELS -- GetPerFrameSunDirection
+    # negates it to get the shader's Sun.DirWorld, which points at the light.
+    # EVE is Y-up and Blender Z-up, the same quarter turn the GR2 importer
+    # applies, so (x, y, z) becomes (x, -z, y).
+    travel = sun.get("travel")
+    if travel and len(travel) >= 3:
+        import mathutils
+        direction = mathutils.Vector((travel[0], -travel[2], travel[1])).normalized()
+        for data in SUN_LIGHT:
+            for obj in bpy.data.objects:
+                if obj.data is data:
+                    obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+        print(f"  sun travels {tuple(round(v, 3) for v in direction)}")
     system = (manifest or {}).get("system") or {}
     print(f"  sun: {system.get('name', '?')} {sun.get('star') or ''} "
-          f"colour {[round(c, 3) for c in colour[:3]]} intensity {intensity:.3f}")
+          f"colour {[round(c, 3) for c in colour[:3]]} intensity {intensity:.3f} "
+          f"-> energy {SUN_SCALE[0] * intensity:.2f}")
 
 
 def read_environment(path):
@@ -393,7 +421,7 @@ def read_environment(path):
     return path, None
 
 
-def set_world(environment_path="", strength=1.0):
+def set_world(environment_path="", strength=1.0, scene_settings=None):
     """The scene's environment, from an EVE nebula when one is given.
 
     This is where most of a hull's light comes from. Carbon samples its
@@ -419,6 +447,7 @@ def set_world(environment_path="", strength=1.0):
 
     if environment_path and os.path.exists(environment_path):
         image = bpy.data.images.load(environment_path, check_existing=True)
+        image.colorspace_settings.name = "Linear Rec.709"
         texture = tree.nodes.new("ShaderNodeTexEnvironment")
         texture.image = image
         texture.location = (-300, 0)
@@ -432,6 +461,29 @@ def set_world(environment_path="", strength=1.0):
         tree.links.new(coordinate.outputs["Generated"], mapping.inputs["Vector"])
         tree.links.new(mapping.outputs["Vector"], texture.inputs["Vector"])
         tree.links.new(texture.outputs["Color"], background.inputs[0])
+
+        # Carbon scales the visible nebula and the environment samples by
+        # DIFFERENT amounts -- nebulaIntensity for the backdrop and
+        # reflectionIntensity, the shader's cb2[14].w, for both probe taps. One
+        # Blender world serves both, so Is Camera Ray picks which applies:
+        # what the camera sees directly against what surfaces reflect.
+        settings = scene_settings or {}
+        nebula = float(settings.get("nebulaIntensity") or strength)
+        reflection = float(settings.get("reflectionIntensity") or strength)
+        if nebula != reflection:
+            path = tree.nodes.new("ShaderNodeLightPath")
+            path.location = (-500, 300)
+            pick = tree.nodes.new("ShaderNodeMix")
+            pick.data_type = "FLOAT"
+            pick.location = (-300, 300)
+            pick.label = "camera vs reflected"
+            tree.links.new(path.outputs["Is Camera Ray"], pick.inputs["Factor"])
+            pick.inputs[2].default_value = reflection
+            pick.inputs[3].default_value = nebula
+            tree.links.new(pick.outputs[0], background.inputs[1])
+            print(f"  intensity: nebula {nebula:g} seen, {reflection:g} reflected")
+        else:
+            background.inputs[1].default_value = nebula
         print(f"  world environment: {os.path.basename(environment_path)}")
     else:
         background.inputs[0].default_value = (0.02, 0.025, 0.04, 1.0)

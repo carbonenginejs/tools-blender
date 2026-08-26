@@ -52,6 +52,9 @@ def parse_args(argv):
     parser.add_argument("--out", default="")
     parser.add_argument("--environment", default="",
                         help="Equirectangular nebula for the world environment")
+    parser.add_argument("--sun-strength", type=float, default=None,
+                        help="Scales the star's intensity into Blender sun energy; "
+                             "0 leaves the environment as the only light")
     parser.add_argument("--render", default="")
     return parser.parse_args(argv[argv.index("--") + 1:] if "--" in argv else [])
 
@@ -367,6 +370,8 @@ def main():
         raise SystemExit("no geometry was assembled")
 
     preview_quad.ENVIRONMENT[:] = [args.environment] if args.environment else []
+    if args.sun_strength is not None:
+        preview_quad.SUN_SCALE[0] = args.sun_strength
     preview_quad.frame(primary)
 
     scene = bpy.context.scene

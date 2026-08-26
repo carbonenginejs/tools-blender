@@ -230,6 +230,31 @@ const image = toEquirectangular(decodeFaces(cubeBytes, info, parsed.face), parse
 const environmentFile = join(parsed.out, "environment.hdr");
 writeFileSync(environmentFile, encodeRadiance(image.pixels, image.width, image.height));
 
+// The nebula's own EveSpaceScene carries the intensities the client applies.
+// nebulaIntensity is why the skybox exceeds one on screen even though the cube
+// itself tops out below it, and reflectionIntensity is the shader's cb2[14].w,
+// scaling both environment samples.
+let sceneSettings = {};
+try
+{
+    const blackResponse = await fetch(`${base}/resources/${nebulaPath.replace(/^res:\//, "")}?format=json`);
+    if (blackResponse.ok)
+    {
+        const black = await blackResponse.json();
+        const object = black.object ?? {};
+        sceneSettings = {
+            nebulaIntensity: object.nebulaIntensity ?? 1,
+            reflectionIntensity: object.reflectionIntensity ?? 1,
+            ambientColor: object.ambientColor ?? null,
+            envMap: object.envMapResPath ?? null,
+            envMapBlur: object.envMap2ResPath ?? null
+        };
+        console.log(`  nebulaIntensity ${sceneSettings.nebulaIntensity}`
+            + `, reflectionIntensity ${sceneSettings.reflectionIntensity}`);
+    }
+}
+catch { /* the intensities are a refinement, not a requirement */ }
+
 const sun = scene.sun ?? {};
 const manifest = {
     schema: "carbon.blender-environment",
@@ -243,8 +268,14 @@ const manifest = {
         // tools-core derives both: colour from the star's blackbody
         // temperature, intensity from its luminosity curve.
         derivedFrom: sun.derivedFrom ?? null,
-        star: system.derived?.star?.spectralClass ?? null
-    }
+        star: system.derived?.star?.spectralClass ?? null,
+        // ccpwgl's EveSpaceScene default. GetPerFrameSunDirection negates and
+        // normalises it, so this is the direction the light TRAVELS and the
+        // shader's Sun.DirWorld is its negation. It is a scene property, not
+        // something the nebula carries, so a caller may well want to set it.
+        travel: [ 1, -1, 1 ]
+    },
+    scene: sceneSettings
 };
 writeFileSync(join(parsed.out, "environment.json"), JSON.stringify(manifest, null, 1));
 

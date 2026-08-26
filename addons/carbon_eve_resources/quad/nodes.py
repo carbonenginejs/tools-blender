@@ -924,26 +924,25 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         links.new(roughness, principled.inputs["Roughness"])
         links.new(roughness, group_out.inputs["Roughness"])
     if fresnel is not None:
-        # Carbon carries an explicit F0 colour alongside the diffuse albedo.
-        # Principled expresses a dielectric's F0 as
-        # `0.08 * Specular IOR Level * Specular Tint`, so driving the tint with
-        # the fresnel colour at full level gives F0 = 0.08 * colour.
+        # Carbon's fresnel colour IS F0. Principled expresses a dielectric's F0
+        # as `0.08 * Specular IOR Level * Specular Tint`, so the colour is
+        # scaled by 1/0.08 at full level to land F0 = colour exactly.
         #
-        # That 0.08 looks like a hard ceiling and mostly is not one, because
-        # **EVE material colours are authored HDR** -- values above 1 are normal
-        # and 3x is common. A fresnel authored at 3 lands at F0 = 0.24, and
-        # 12.5 would reach a full mirror. So the mapping is not a faithful
-        # equality; it is a rescale that happens to put HDR-authored values in a
-        # sensible range. Whether it matches EVE's look cannot be judged until
-        # the environment probe exists, since F0 shows almost entirely through
-        # reflections.
+        # Feeding the colour straight in instead makes everything 12.5 times
+        # less reflective. That is survivable for the material layers, which are
+        # authored HDR and often around 3, but not for the BAKED constants: the
+        # dirt F0 of (0.019, 0.017, 0.014) and the paint dielectric are literal
+        # F0 values in the usual 0..1 range, and scaling them down leaves dirt
+        # barely reflective at all -- which is what it looked like.
         #
         # Nothing here clamps: Blender's sockets hold values above 1 and
         # preserve them through a .blend round-trip (verified). The one place
         # they are silently destroyed is the colour PICKER widget, which clamps
         # what a user drags even though typed values persist.
         principled.inputs["Specular IOR Level"].default_value = 1.0
-        links.new(fresnel, principled.inputs["Specular Tint"])
+        f0 = vector("SCALE", fresnel, None, location=(660, 0), label="F0 -> Specular Tint")
+        f0.node.inputs["Scale"].default_value = 1.0 / 0.08
+        links.new(f0, principled.inputs["Specular Tint"])
         links.new(fresnel, group_out.inputs["Fresnel"])
     if normal is not None:
         links.new(normal, principled.inputs["Normal"])
