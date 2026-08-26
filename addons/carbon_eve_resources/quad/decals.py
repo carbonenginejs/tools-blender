@@ -72,10 +72,36 @@ class Decal:
     triangles: tuple
     textures: dict
     constants: dict
+    #: The SOF's own name and visibility group, when the document carries them.
+    #:
+    #: A BUILT EveShip2 document does not: it keeps position, rotation, scaling,
+    #: the effect and the index buffers, and drops the identity the hull's
+    #: `decalSets` gave each one. So these are usually empty here and get filled
+    #: in when the source SOF is at hand -- the structure they feed is the same
+    #: either way, which is the point of carrying them rather than inventing a
+    #: name at the point of use.
+    sof_name: str = ""
+    visibility_group: str = ""
 
     @property
     def name(self) -> str:
+        """The object name: the SOF's if we have it, else index and shader."""
+
+        if self.sof_name:
+            return self.sof_name
         return f"decal{self.index:02d} {self.shader.replace('.fx', '')}"
+
+    @property
+    def group(self) -> str:
+        """The collection this decal belongs in, under `decals`.
+
+        The SOF's visibility group when the document names one -- that is what
+        an exporter needs, because it is how the client decides which decals to
+        show. Otherwise the shader family, which at least keeps damage, glows,
+        counters and hull decals apart.
+        """
+
+        return self.visibility_group or self.shader.replace(".fx", "")
 
     @property
     def is_lit(self) -> bool:
@@ -131,6 +157,8 @@ def read_decals(document) -> list:
         decals.append(Decal(
             index=index,
             shader=shader,
+            sof_name=str(node.get("name") or ""),
+            visibility_group=str(node.get("visibilityGroup") or ""),
             position=tuple(node.get("position") or (0.0, 0.0, 0.0)),
             rotation=tuple(node.get("rotation") or (0.0, 0.0, 0.0, 1.0)),
             scaling=tuple(node.get("scaling") or (1.0, 1.0, 1.0)),

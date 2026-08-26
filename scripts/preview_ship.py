@@ -505,6 +505,29 @@ def drive_ship_sockets(objects, source):
     print(f"  drove {driven} per-ship socket(s) across {materials} material group(s)")
 
 
+def decal_collection(group):
+    """`decals > {group}`, created on demand.
+
+    The tree matters beyond tidiness: an exporter walks collections, so the
+    structure here is the structure that leaves. Grouping by the SOF's
+    visibility group is what lets a consumer turn a whole set on or off the way
+    the client does.
+    """
+
+    scene = bpy.context.scene.collection
+    root = bpy.data.collections.get("decals")
+    if root is None:
+        root = bpy.data.collections.new("decals")
+        scene.children.link(root)
+    child = bpy.data.collections.get(group)
+    if child is None:
+        child = bpy.data.collections.new(group)
+        root.children.link(child)
+    elif child.name not in root.children:
+        root.children.link(child)
+    return child
+
+
 def build_decals(document, hull, resources, family):
     """Copies each decal's hull triangles into its own mesh and shades it.
 
@@ -567,7 +590,7 @@ def build_decals(document, hull, resources, family):
             continue
 
         obj = bpy.data.objects.new(decal.name, mesh)
-        bpy.context.collection.objects.link(obj)
+        decal_collection(decal.group).objects.link(obj)
         obj.matrix_world = hull.matrix_world
         obj.parent = hull
         obj.matrix_parent_inverse = hull.matrix_world.inverted()
