@@ -643,8 +643,13 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
                 name=name, in_out="INPUT", socket_type="NodeSocketFloat")
             socket.default_value = default
             socket.description = (
-                f"Per-ship value, driven from the object's {prop} property"
+                f"Driven from the object's {prop} property -- edit it under "
+                "Object Properties > Carbon Ship Values, not here"
             )
+            # Hide the widget. The socket is DRIVEN, so a slider here would
+            # take an edit, look like it worked, and be overwritten on the next
+            # frame -- which is how the dirt age appeared to stop working.
+            socket.hide_value = True
             ship[name] = group_in.outputs[name]
         return ship[name]
 
@@ -1093,6 +1098,9 @@ def build_kill_counter_group() -> bpy.types.ShaderNodeTree:
     count_socket = tree.interface.new_socket(
         name="KillCount", in_out="INPUT", socket_type="NodeSocketFloat")
     count_socket.default_value = SHIP_PROPERTIES["KillCount"][1]
+    count_socket.description = ("Driven from the object's kill count -- edit it "
+                                "under Object Properties > Carbon Ship Values")
+    count_socket.hide_value = True
     tree.interface.new_socket(
         name="Mark UV", in_out="OUTPUT", socket_type="NodeSocketVector"
     ).description = "Nine mark widths across the decal, one down"
@@ -1462,6 +1470,9 @@ def build_heat_displace_group() -> bpy.types.ShaderNodeTree:
     booster = tree.interface.new_socket(
         name="BoosterGain", in_out="INPUT", socket_type="NodeSocketFloat")
     booster.default_value = SHIP_PROPERTIES["BoosterGain"][1]
+    booster.description = ("Driven from the object's booster gain -- edit it "
+                           "under Object Properties > Carbon Ship Values")
+    booster.hide_value = True
     gain_socket = group_in.outputs["BoosterGain"]
 
     def math(op, a, b, location, clamp=False, label=""):
