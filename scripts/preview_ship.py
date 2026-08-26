@@ -866,6 +866,10 @@ def wire_hull_breach(decal, principled, sampled, projection, mnodes, mlinks,
             interior.image = image
             interior.location = (-200, -400)
             interior.label = "DecalInsideCubeMap"
+            # The interior is a few small, hard-edged lights on a dark ground.
+            # Linear filtering over an unwrapped 128-pixel cube smears those
+            # into a speckle; Closest keeps them as the windows they are.
+            interior.interpolation = "Closest"
             mlinks.new(ray.outputs["Direction"], interior.inputs["Vector"])
 
             # A ray that misses the sphere is discarded, so it contributes no
