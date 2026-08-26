@@ -3,10 +3,10 @@
 bl_info = {
     "name": "CarbonEngineJS EVE Resource Browser",
     "author": "CarbonengineJS",
-    "version": (0, 2, 3),
+    "version": (0, 3, 0),
     "blender": (4, 0, 0),
     "location": "3D View > Sidebar > CarbonEngineJS",
-    "description": "Browse, validate, download, and preview EVE Online resources",
+    "description": "Browse EVE Online resources and assemble pre-compiled SOF bundles",
     "doc_url": "https://github.com/orgs/carbonenginejs/",
     "tracker_url": "https://github.com/carbonenginejs/tools-blender/issues",
     "category": "System",

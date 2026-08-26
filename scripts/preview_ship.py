@@ -455,9 +455,25 @@ def apply_ship_globals(objects, overrides=None):
 
     values = {name: default for name, (_, default) in nodes.SHIP_PROPERTIES.items()}
     values.update(overrides or {})
+    limits = {
+        "carbon_ship_age_weeks": dict(min=0.0, max=10000.0, step=100, precision=1,
+                                      description="Weeks since the hull was cleaned; dirt saturates by about a year"),
+        "carbon_ship_activation": dict(min=0.0, max=1.0, step=5, precision=3,
+                                       description="Scales every glow on the ship"),
+        "carbon_ship_booster_gain": dict(min=0.0, max=1.0, step=5, precision=3,
+                                         description="Opens the heat gate; heat is fully on by 0.02"),
+        "carbon_ship_emission_strength": dict(min=0.0, max=1000.0, step=100, precision=2,
+                                              description="How hard the glows read against the nebula"),
+        "carbon_ship_kill_count": dict(min=0.0, max=999.0, step=100, precision=0,
+                                       description="Kill marks: whole kills, drawn as tally marks"),
+    }
     for obj in objects:
         for name, (prop, _) in nodes.SHIP_PROPERTIES.items():
             obj[prop] = float(values[name])
+            # Give each one a sane range and description, so the panel reads as
+            # a control rather than as a raw custom property.
+            if hasattr(obj, "id_properties_ui"):
+                obj.id_properties_ui(prop).update(**limits.get(prop, {}))
     listed = ", ".join(f"{name} {values[name]:g}" for name in sorted(values))
     print(f"  ship values on {len(objects)} object(s): {listed}")
 
@@ -578,7 +594,7 @@ def build_decals(document, hull, resources, family):
             boned += 1
 
         skin_like_hull(obj, hull, order)
-        mesh.materials.append(build_decal_material(decal, resources))
+        mesh.materials.append(build_decal_material(decal, resources, obj))
         built.append(obj)
 
     for reason, count in skipped.items():
@@ -623,7 +639,7 @@ def skin_like_hull(obj, hull, vertex_map):
     modifier.object = armature
 
 
-def build_decal_material(decal, resources):
+def build_decal_material(decal, resources, obj=None):
     """One decal's material, sampling its maps through the projection."""
 
     material = bpy.data.materials.new(decal.name)
@@ -688,7 +704,7 @@ def build_decal_material(decal, resources):
 
     if decal.shader == "decalcounterv5.fx" and transparency is not None:
         wire_kill_counter(decal, principled, transparency, projection,
-                          mnodes, mlinks, glow_colour, intensity)
+                          mnodes, mlinks, glow_colour, intensity, obj)
     elif transparency is not None:
         mlinks.new(transparency.outputs["Color"], principled.inputs["Alpha"])
 
@@ -709,7 +725,7 @@ def build_decal_material(decal, resources):
 
 
 def wire_kill_counter(decal, principled, transparency, projection, mnodes, mlinks,
-                      glow_colour, intensity):
+                      glow_colour, intensity, obj=None):
     """Draws a kill counter as tally marks driven by the ship's count.
 
     The counter decal carries no number of its own: the count arrives per
@@ -751,11 +767,27 @@ def wire_kill_counter(decal, principled, transparency, projection, mnodes, mlink
     mlinks.new(counter.outputs["Coverage"], alpha.inputs[1])
     mlinks.new(alpha.outputs[0], principled.inputs["Alpha"])
 
-    # The counter glows rather than reflecting: its colour is emissive.
+    # The counter GLOWS rather than reflecting, and it glows at the ship's own
+    # emission strength -- the shader scales it by the same per-object value the
+    # hull glows use, so a counter lit at 1.0 reads as paint, not as a light.
     if glow_colour:
         principled.inputs["Emission Color"].default_value = tuple(glow_colour[:3]) + (1.0,)
-        principled.inputs["Emission Strength"].default_value = 1.0
         principled.inputs["Base Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+        strength = principled.inputs["Emission Strength"]
+        strength.default_value = nodes.SHIP_PROPERTIES["EmissionStrength"][1]
+        if obj is None:
+            return
+        index = list(principled.inputs).index(strength)
+        path = f'nodes["{principled.name}"].inputs[{index}].default_value'
+        principled.id_data.driver_remove(path)
+        driver = principled.id_data.driver_add(path).driver
+        driver.type = "SCRIPTED"
+        variable = driver.variables.new()
+        variable.name = "v"
+        variable.targets[0].id_type = "OBJECT"
+        variable.targets[0].id = obj
+        variable.targets[0].data_path = f'["{nodes.SHIP_PROPERTIES["EmissionStrength"][0]}"]'
+        driver.expression = "v"
 
 
 def main():

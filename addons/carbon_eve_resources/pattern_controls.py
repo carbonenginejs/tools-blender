@@ -190,7 +190,54 @@ class CARBON_PT_pattern_projections(bpy.types.Panel):
                 targets.prop(settings, f"target_{layer + 1}", toggle=True)
 
 
-CLASSES = tuple(MASK_GROUPS) + (CARBON_PT_pattern_projections,)
+
+#: The per-ship values, in the order they belong on a panel, with the label the
+#: operator should see rather than the shader's own spelling.
+SHIP_VALUES = (
+    ("carbon_ship_age_weeks", "Age (weeks)"),
+    ("carbon_ship_activation", "Activation"),
+    ("carbon_ship_booster_gain", "Booster gain"),
+    ("carbon_ship_emission_strength", "Emission strength"),
+    ("carbon_ship_kill_count", "Kill count"),
+)
+
+
+class CARBON_PT_ship_values(bpy.types.Panel):
+    """The values Carbon holds once per SHIP, not once per material.
+
+    These have to be edited HERE. Every material carries a matching socket, but
+    those sockets are DRIVEN from these properties, so a number typed into the
+    shader editor is overwritten on the next frame and looks like the feature is
+    broken -- which is exactly how it looked when dirt stopped responding.
+
+    They live on the object because Carbon holds them per object: one age, one
+    activation, one kill count for a hull and every decal on it.
+    """
+
+    bl_label = "Carbon Ship Values"
+    bl_idname = "CARBON_PT_ship_values"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "object"
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and any(name in obj.keys() for name, _ in SHIP_VALUES)
+
+    def draw(self, context):
+        obj = context.object
+        layout = self.layout
+        layout.use_property_split = True
+        for name, label in SHIP_VALUES:
+            if name in obj.keys():
+                layout.prop(obj, f'["{name}"]', text=label)
+        layout.label(text="Drives every material and decal on this ship",
+                     icon="DRIVER")
+
+
+CLASSES = tuple(MASK_GROUPS) + (CARBON_PT_pattern_projections,
+                               CARBON_PT_ship_values)
 
 
 def register():

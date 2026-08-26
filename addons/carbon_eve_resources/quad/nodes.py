@@ -1144,7 +1144,12 @@ def build_kill_counter_group() -> bpy.types.ShaderNodeTree:
                           reference.KILL_COUNTER_LOG2_TEN, location=(-260, -140)),
                      location=(-180, -140), label="10 ^ (row + 1)")
 
-    share = math("DIVIDE", group_in.outputs["KillCount"], following, location=(-20, -70))
+    # Whole kills only. ccpwgl passes an integer (EveShip2.killCount), and a
+    # fractional count would light a partial mark, which the counter cannot
+    # mean -- so it is floored once, here, rather than at every reader.
+    whole = math("FLOOR", group_in.outputs["KillCount"], location=(-160, -220),
+                 label="whole kills")
+    share = math("DIVIDE", whole, following, location=(-20, -70))
     folded = math("FRACT", share, location=(120, -70))
     digit = math("TRUNC",
                  math("DIVIDE",
