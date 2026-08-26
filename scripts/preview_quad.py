@@ -269,7 +269,35 @@ def frame(hull):
     world.use_nodes = True
     world.node_tree.nodes["Background"].inputs[0].default_value = (0.02, 0.025, 0.04, 1.0)
     bpy.context.scene.world = world
+    set_viewport_clipping(radius)
     add_glare()
+
+
+#: EVE hulls run from tens of units to well over a thousand, and a station is
+#: larger again. Blender's 1000-unit default viewport far clip hides most of a
+#: battleship the moment you orbit out.
+VIEWPORT_CLIP_END = 10000.0
+
+
+def set_viewport_clipping(radius=0.0):
+    """Opens up the 3D viewport's clipping range in the saved file.
+
+    This is a SEPARATE setting from the camera's, and fixing only the camera
+    leaves renders correct while the interactive viewport still clips -- which
+    reads as a broken import rather than a view setting.
+    """
+
+    far = max(VIEWPORT_CLIP_END, radius * 20.0)
+    near = max(far / 1e6, 0.1)
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            if area.type != "VIEW_3D":
+                continue
+            for space in area.spaces:
+                if space.type == "VIEW_3D":
+                    space.clip_start = near
+                    space.clip_end = far
+    print(f"  viewport clipping {near:g} to {far:g}")
 
 
 def add_glare():
