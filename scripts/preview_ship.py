@@ -156,6 +156,12 @@ def apply_custom_masks(obj, masks, effects):
         obj[prefix + "targets"] = tuple(targets[:3]) + (1.0,)
         obj[prefix + "target4"] = float(targets[3]) if len(targets) > 3 else 1.0
         obj[prefix + "material"] = float(mask.get("materialIndex", 0))
+        # V only. D3D texture space has V increasing downward and Blender's
+        # increases upward, so the projected V needs the usual 1 - v; U needs
+        # nothing, which is what makes this a convention rather than a fudge.
+        # Established by testing all four combinations against a client render.
+        if prefix + "flip" not in obj.keys():
+            obj[prefix + "flip"] = (0.0, 1.0, 0.0)
 
         print(f"  mask {index}: wrap={obj[prefix + 'wrap'][:2]} "
               f"mirrored={obj[prefix + 'mirrored']:g} "

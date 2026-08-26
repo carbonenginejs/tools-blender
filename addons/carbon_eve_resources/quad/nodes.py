@@ -110,6 +110,7 @@ MASK_PROPERTIES = {
     "targets": "carbon_mask{}_targets",
     "target4": "carbon_mask{}_target4",
     "material": "carbon_mask{}_material",
+    "flip": "carbon_mask{}_flip",
 }
 
 #: The projection group's name; one per blend file, shared by every material.
@@ -263,14 +264,21 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
         links.new(attribute(props["scaling"], base - 60).outputs["Vector"],
                   mapping.inputs["Scale"])
 
-        # The [-1, 1] projection box onto [0, 1].
-        centred = nodes.new("ShaderNodeVectorMath")
-        centred.operation = "MULTIPLY_ADD"
-        centred.location = (-80, base)
-        centred.label = "[-1,1] -> [0,1]"
-        centred.inputs[1].default_value = (0.5, 0.5, 0.5)
-        centred.inputs[2].default_value = (0.5, 0.5, 0.5)
-        links.new(mapping.outputs["Vector"], centred.inputs[0])
+        # The [-1, 1] projection box onto [0, 1]. The per-axis flip is a live
+        # object property rather than a decision baked in here, because Carbon
+        # is row-vector and Blender column-vector and the resulting sign is
+        # easier to settle by looking than to derive.
+        #
+        # Flipping BOTH axes is a 180-degree rotation; flipping ONE is a mirror,
+        # and those are different transforms, so all four combinations are
+        # reachable. Multiplier per axis is `0.5 - flip`, giving +0.5 unflipped
+        # and -0.5 flipped.
+        flip = attribute(props["flip"], base - 440).outputs["Vector"]
+        flip_parts = nodes.new("ShaderNodeSeparateXYZ")
+        flip_parts.location = (-140, base - 440)
+        links.new(flip, flip_parts.inputs[0])
+
+        centred = mapping.outputs["Vector"]
 
         wrap = attribute(props["wrap"], base - 320).outputs["Vector"]
         wrap_parts = nodes.new("ShaderNodeSeparateXYZ")
@@ -279,7 +287,7 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
 
         uv_parts = nodes.new("ShaderNodeSeparateXYZ")
         uv_parts.location = (60, base)
-        links.new(centred.outputs[0], uv_parts.inputs[0])
+        links.new(centred, uv_parts.inputs[0])
 
         wrapped, coverage = [], None
         # The projection uses the transformed position's Y and Z, not X and Y.
@@ -293,9 +301,24 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
         # outside the projection, so a CLAMP_TO_EDGE axis smears one row of the
         # mask along the whole ship. That is what a wrong axis pair looks like.
         for axis in (1, 2):
-            value = uv_parts.outputs[axis]
             mode = wrap_parts.outputs[axis - 1]
             row = base - (axis - 1) * 140
+
+            # value = raw * (0.5 - flip) + 0.5
+            multiplier = nodes.new("ShaderNodeMath")
+            multiplier.operation = "SUBTRACT"
+            multiplier.location = (100, row - 560)
+            multiplier.inputs[0].default_value = 0.5
+            links.new(flip_parts.outputs[axis - 1], multiplier.inputs[1])
+
+            mapped = nodes.new("ShaderNodeMath")
+            mapped.operation = "MULTIPLY_ADD"
+            mapped.location = (160, row + 200)
+            mapped.label = f"[-1,1] -> [0,1] {'uv'[axis - 1]}"
+            links.new(uv_parts.outputs[axis], mapped.inputs[0])
+            links.new(multiplier.outputs[0], mapped.inputs[1])
+            mapped.inputs[2].default_value = 0.5
+            value = mapped.outputs[0]
 
             # REPEAT tiles; both clamping modes sample the edge. So the lookup
             # is two cases, chosen by whether the mode is REPEAT.
