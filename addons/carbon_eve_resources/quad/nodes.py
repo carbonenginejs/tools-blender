@@ -55,25 +55,25 @@ OUTPUTS = (
     ("Emission", "NodeSocketColor", "Glow, scaled by activation"),
 )
 
-#: Inputs the shader reads per object rather than per material, as
-#: (name, default, minimum, maximum, description).
+#: Values that belong to the SHIP, not to a material.
 #:
-#: `AgeInWeeks` rather than the raw 0-1 dirt level, because weeks is what is
-#: actually authored -- `EveShip2.weeksSinceCleaned` -- and the level is derived
-#: from it by a curve. The group applies that curve so the number a user types
-#: is the number the ship carries.
-OBJECT_INPUTS = (
-    ("Activation", 1.0, 0.0, 1.0,
-     "Object activation; scales the glow (shipData.y)"),
-    ("AgeInWeeks", 0.0, 0.0, 520.0,
-     "Weeks since the hull was last cleaned. Zero is clean, and the resulting "
-     "dirt level saturates toward 0.7 -- so past a few years more age changes "
-     "little. Dirt also needs an authored MtlNDustDiffuseColor: it defaults to "
-     "white, which looks clean however dirty the hull is"),
-    ("EmissionStrength", 1.0, 0.0, 1000.0,
-     "Carbon adds glow at full strength and the client blooms it; raise this "
-     "to stand in for the bloom"),
-)
+#: Age, activation, booster gain, emission strength and the kill count are one
+#: per object in Carbon -- they live in the per-object constant buffer -- so
+#: every area material and every decal on a hull must see the same value.
+#: Exposing them as material sockets meant editing a Legion's age four times
+#: and its decals seventeen more.
+#:
+#: They are read from the shaded object's custom properties through Attribute
+#: nodes, the same mechanism the pattern projections use, so one edit reaches
+#: everything. The per-MATERIAL heat lanes stay sockets: shimmer speed, size
+#: and strength are authored per material and differ between areas.
+SHIP_PROPERTIES = {
+    "AgeInWeeks": ("carbon_ship_age_weeks", 0.0),
+    "Activation": ("carbon_ship_activation", 1.0),
+    "BoosterGain": ("carbon_ship_booster_gain", 1.0),
+    "EmissionStrength": ("carbon_ship_emission_strength", 1.0),
+    "KillCount": ("carbon_ship_kill_count", 0.0),
+}
 
 #: The dust noise map's alpha is used separately from its colour, and Blender
 #: exposes those as different sockets, so it needs an input of its own.
@@ -530,13 +530,6 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
     # sit under them. Panels appear in creation order, so touching one early
     # would float it to the top.
 
-    # --- Object inputs ------------------------------------------------------
-    object_panel = _panel(tree, "Object", panels)
-    for name, default, minimum, maximum, description in OBJECT_INPUTS:
-        _socket(tree, name, "NodeSocketFloat", description=description,
-                default=default, panel=object_panel,
-                min_value=minimum, max_value=maximum)
-
     # --- Constants, grouped and defaulted exactly as Carbon declares them ---
     for name, constant in member.constants.items():
         annotation = member.annotation(name)
@@ -584,11 +577,26 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
     group_out = nodes.new("NodeGroupOutput")
     group_out.location = (1200, 0)
 
+    ship = {}
+
     def has(name):
-        return name in group_in.outputs
+        return name in group_in.outputs or name in SHIP_PROPERTIES
 
     def value(name):
-        return group_in.outputs[name] if has(name) else None
+        if name in group_in.outputs:
+            return group_in.outputs[name]
+        if name not in SHIP_PROPERTIES:
+            return None
+        # Read from the object, so a hull and all its decals share one value.
+        if name not in ship:
+            prop, default = SHIP_PROPERTIES[name]
+            node = nodes.new("ShaderNodeAttribute")
+            node.attribute_type = "OBJECT"
+            node.attribute_name = prop
+            node.location = (-1500, 600 - len(ship) * 120)
+            node.label = prop
+            ship[name] = node.outputs["Factor"]
+        return ship[name]
 
     def math(op, a, b=None, *, location=(0, 0), clamp=False, label=""):
         node = nodes.new("ShaderNodeMath")
@@ -917,6 +925,28 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         normal = normal_node.outputs[0]
 
     # --- Emission: pow(GlowMap.x, 2.4) * colour * activation ----------------
+    # --- Heat: a gate on booster gain, scaling the glow ---------------------
+    #
+    # quadheatv5 does not add a texture of its own: it scales the GLOW map by a
+    # gate on the object's booster gain, so a hull with no glow detail shows no
+    # heat however hot it is. The gate window is tiny -- subtract 0.005,
+    # multiply by 66.667 -- so heat is fully on by a gain of 0.02.
+    #
+    # `boosterGain influence` is Carbon's own name for the lane, and a material
+    # whose influence is zero ignores the boosters and always glows.
+    heat_amount = None
+    if has("BoosterGain") and has("Mtl1HeatGlow boosterGain influence"):
+        influence = blend4("Mtl", "HeatGlow boosterGain influence", -700, scalar=True)
+        if influence is not None:
+            shifted = math("SUBTRACT", value("BoosterGain"), reference.HEAT_GATE_START,
+                           location=(-1000, -700))
+            gate = math("MULTIPLY", shifted, reference.HEAT_GATE_SCALE,
+                        location=(-940, -700), clamp=True, label="booster gate")
+            below = math("SUBTRACT", gate, 1.0, location=(-880, -700))
+            scaled = math("MULTIPLY", influence, below, location=(-820, -700))
+            heat_amount = math("ADD", scaled, 1.0, location=(-760, -700),
+                               clamp=True, label="heat amount")
+
     emission = None
     glow_color = "GeneralGlowColor" if has("GeneralGlowColor") else "GeneralHeatGlowColor"
     if has("GlowMap") and has(glow_color):
@@ -924,6 +954,9 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         powered = math("POWER", glow_x, reference.GLOW_INNER_EXPONENT * reference.GLOW_OUTER_EXPONENT,
                        location=(-1000, -900), label="glow ^2.4")
         scaled = math("MULTIPLY", powered, value("Activation"), location=(-840, -900))
+        if heat_amount is not None:
+            scaled = math("MULTIPLY", scaled, heat_amount, location=(-800, -930),
+                          label="gated by boosters")
         scaled = math("MULTIPLY", scaled, value("EmissionStrength"), location=(-760, -960))
         emission = vector("SCALE", value(glow_color), None, location=(-680, -900))
         links.new(scaled, emission.node.inputs["Scale"])

@@ -278,9 +278,6 @@ def build_area_material(area, family, resources, index):
         else:
             socket.default_value = float(value[0])
 
-    if "EmissionStrength" in group.inputs:
-        group.inputs["EmissionStrength"].default_value = preview_quad.DEMO_EMISSION_STRENGTH
-
     return material, None
 
 
@@ -360,6 +357,25 @@ def hide_non_geometry():
             hidden += 1
     if hidden:
         print(f"  hid {hidden} non-geometry object(s) from the render")
+
+
+def apply_ship_globals(objects, overrides=None):
+    """Writes the per-ship values every material reads.
+
+    Age, activation, booster gain, emission strength and the kill count are one
+    per object in Carbon, so a hull's areas and all its decals must agree. They
+    live on the OBJECT and are read with Attribute nodes, which means the decals
+    need their own copy: an Attribute node reads the object being SHADED, and a
+    decal is its own object even though it is parented to the hull.
+    """
+
+    values = {name: default for name, (_, default) in nodes.SHIP_PROPERTIES.items()}
+    values.update(overrides or {})
+    for obj in objects:
+        for name, (prop, _) in nodes.SHIP_PROPERTIES.items():
+            obj[prop] = float(values[name])
+    listed = ", ".join(f"{name} {values[name]:g}" for name in sorted(values))
+    print(f"  ship values on {len(objects)} object(s): {listed}")
 
 
 def build_decals(document, hull, resources, family):
@@ -584,9 +600,12 @@ def main():
     if primary is None:
         raise SystemExit("no geometry was assembled")
 
-    build_decals(load_document(args.sof), primary,
-                 json.load(open(os.path.join(args.resources, "manifest.json"), encoding="utf-8")),
-                 load_family())
+    decal_objects = build_decals(
+        load_document(args.sof), primary,
+        json.load(open(os.path.join(args.resources, "manifest.json"), encoding="utf-8")),
+        load_family())
+    apply_ship_globals([primary] + list(decal_objects),
+                       {"EmissionStrength": preview_quad.DEMO_EMISSION_STRENGTH})
     preview_quad.ENVIRONMENT[:] = [args.environment] if args.environment else []
     if args.sun_strength is not None:
         preview_quad.SUN_SCALE[0] = args.sun_strength
