@@ -317,6 +317,43 @@ def combine_dirt(clean: Sequence[float], dusty: Sequence[float], mask: float) ->
     return tuple(c * clean_weight + d * mask for c, d in zip(clean, dusty))
 
 
+def sails_selector(
+    uv: Sequence[float],
+    material_map: float,
+    sails_sample_at,
+    sails_detail_data: Sequence[float],
+) -> float:
+    """`quadsailsv5`: the sail pattern re-selects which material layer is used.
+
+    The detail texture is tiled by ``SailsDetailData.x`` and rotated by
+    ``SailsDetailData.y`` radians, then blended over the `MaterialMap` selector
+    by the tent weight of **layer 1** -- so the sail pattern only takes effect
+    where the first material is selected, which is what makes that region "the
+    sail area"::
+
+        uv'      = rotate(uv * data.x, data.y)
+        selector = mix(MaterialMap.x, SailsDetailMap(uv').x, weight1)
+
+    The four material weights are then computed from `selector` rather than
+    from `MaterialMap.x` directly. It does not add a material; it changes which
+    one is chosen.
+
+    `sails_sample_at` is called with the rotated UV and returns the texture's
+    red channel, so the caller owns sampling.
+    """
+
+    import math
+
+    tiling, angle = sails_detail_data[0], sails_detail_data[1]
+    u, v = uv[0] * tiling, uv[1] * tiling
+    sin_a, cos_a = math.sin(angle), math.cos(angle)
+    rotated = (u * cos_a - v * sin_a, u * sin_a + v * cos_a)
+
+    sails = sails_sample_at(rotated)
+    weight1 = clamp(MATERIAL_TENT_OFFSET - abs(material_map * MATERIAL_TENT_SLOPE))
+    return material_map + weight1 * (sails - material_map)
+
+
 @dataclass(frozen=True, slots=True)
 class Surface:
     """What the material composition produces, for Blender to light."""

@@ -31,7 +31,7 @@ from typing import Mapping, Optional, Sequence
 
 
 SCHEMA = "carbon.quad-family-interface"
-SUPPORTED_VERSION = 1
+SUPPORTED_VERSION = 2
 DATA_NAME = "family.json"
 
 
@@ -49,6 +49,82 @@ class Constant:
 
 
 @dataclass(frozen=True, slots=True)
+class Annotation:
+    """Carbon's own authoring metadata for one parameter.
+
+    This is what lets a generated node group describe itself instead of
+    carrying labels someone invented. It is authoring metadata: right for
+    building an interface and for establishing intent, never something to make
+    rendering depend on.
+    """
+
+    parameter: str
+    values: Mapping[str, object]
+
+    @property
+    def group(self) -> str:
+        """Authored UI grouping, e.g. ``Material 1`` -- a natural panel."""
+
+        return str(self.values.get("Group", ""))
+
+    @property
+    def description(self) -> str:
+        return str(self.values.get("SasUiDescription", ""))
+
+    @property
+    def widget(self) -> str:
+        """``LinearColor`` for a colour, ``VectorMixed`` for packed scalars."""
+
+        return str(self.values.get("UIWidget", ""))
+
+    @property
+    def is_color(self) -> bool:
+        return self.widget == "LinearColor"
+
+    @property
+    def srgb(self) -> bool:
+        """Whether a texture is sRGB.
+
+        Only `AlbedoMap` and `EveSpaceSceneEnvMap` are. Nothing else states
+        this, and getting it wrong on a normal map is invisible until the
+        lighting looks subtly wrong.
+        """
+
+        return bool(self.values.get("Tr2sRGB", False))
+
+    @property
+    def auto_register(self) -> bool:
+        """True when the engine supplies this resource, not the material."""
+
+        return bool(self.values.get("AutoRegister", False))
+
+    @property
+    def ui_visible(self) -> bool:
+        return bool(self.values.get("SasUiVisible", True))
+
+    @property
+    def uv_scale(self) -> float:
+        """Authored UV scale. `DustNoiseMap` declares 20, which is the same
+        tiling that appears as a literal in the emitted GLSL."""
+
+        return float(self.values.get("LodUvScale0", 1.0))
+
+    @property
+    def has_transparency(self) -> bool:
+        return bool(self.values.get("HasTransparency", False))
+
+    def component(self, index: int) -> str:
+        """The authored name of one vec4 lane, 1-based, or an empty string.
+
+        ``GeneralData`` names lane 1 ``PaintMapInfluence`` and lane 2
+        ``UvSetSelector``; each ``MtlNGloss`` names lane 1 and leaves the rest,
+        which is consistent with only ``.x`` being read.
+        """
+
+        return str(self.values.get(f"Component{index}", ""))
+
+
+@dataclass(frozen=True, slots=True)
 class Member:
     """One member of the quad family at the production permutation."""
 
@@ -58,9 +134,30 @@ class Member:
     textures: tuple[str, ...]
     scene_textures: tuple[str, ...]
     constants: Mapping[str, Constant]
+    annotations: Mapping[str, Annotation]
 
     def constant(self, name: str) -> Optional[Constant]:
         return self.constants.get(name)
+
+    def annotation(self, parameter: str) -> Annotation:
+        """Carbon's metadata for a parameter; empty rather than None."""
+
+        return self.annotations.get(parameter) or Annotation(parameter=parameter, values={})
+
+    def groups(self) -> dict[str, list[str]]:
+        """Constants by their authored UI group, preserving declaration order.
+
+        This is the panel structure a generated node group should use: Carbon
+        already decided that `Mtl1DiffuseColor`, `Mtl1FresnelColor`,
+        `Mtl1Gloss` and `Mtl1DustDiffuseColor` belong together under
+        ``Material 1``.
+        """
+
+        grouped: dict[str, list[str]] = {}
+        for name in self.constants:
+            group = self.annotation(name).group or "Other"
+            grouped.setdefault(group, []).append(name)
+        return grouped
 
     def has(self, *names: str) -> bool:
         """True when every name is a constant or a texture this member binds."""
@@ -172,6 +269,10 @@ def _member(name: str, entry: Mapping) -> Member:
         )
         for constant_name, value in (entry.get("constants") or {}).items()
     }
+    annotations = {
+        parameter: Annotation(parameter=parameter, values=dict(values or {}))
+        for parameter, values in (entry.get("annotations") or {}).items()
+    }
     return Member(
         name=name,
         permutation_index=int(entry.get("permutationIndex", 0)),
@@ -179,6 +280,7 @@ def _member(name: str, entry: Mapping) -> Member:
         textures=tuple(_strings(entry.get("textures"))),
         scene_textures=tuple(_strings(entry.get("sceneTextures"))),
         constants=constants,
+        annotations=annotations,
     )
 
 

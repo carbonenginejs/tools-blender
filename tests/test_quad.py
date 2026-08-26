@@ -359,3 +359,57 @@ class Dirt(unittest.TestCase):
         dusty = reference.combine_dirt((0.8, 0.6, 0.4), (0.1, 0.2, 0.3), 1.0)
         self.assertEqual(clean, (0.8, 0.6, 0.4))
         self.assertEqual(dusty, (0.1, 0.2, 0.3))
+
+
+class Annotations(unittest.TestCase):
+
+    def setUp(self):
+        self.base = load_family().member("quadv5.fx")
+
+    def test_srgb_is_stated_not_guessed(self):
+        # Only the albedo map is sRGB among authored textures. Getting this
+        # wrong on a normal map is invisible until lighting looks flat.
+        self.assertTrue(self.base.annotation("AlbedoMap").srgb)
+        for linear in ("NormalMap", "RoughnessMap", "MaterialMap", "PaintMaskMap",
+                       "GlowMap", "DirtMap", "DustNoiseMap"):
+            self.assertFalse(self.base.annotation(linear).srgb, linear)
+
+    def test_engine_supplied_resources_are_separated_by_annotation(self):
+        # AutoRegister / SasUiVisible=false is Carbon saying "the engine
+        # provides this", which is how scene inputs are told from authored maps.
+        self.assertIn("EveSpaceSceneShadowMap", self.base.scene_textures)
+        self.assertIn("LightBuffer", self.base.scene_textures)
+        self.assertNotIn("AlbedoMap", self.base.scene_textures)
+        self.assertTrue(self.base.annotation("EveSpaceSceneShadowMap").auto_register)
+
+    def test_dust_uv_scale_matches_the_measured_literal(self):
+        # The annotation states 20 and the emitted GLSL multiplies UV by 20.0;
+        # two independent statements of one fact.
+        self.assertEqual(self.base.annotation("DustNoiseMap").uv_scale, reference.DUST_TILING)
+        self.assertEqual(self.base.annotation("AlbedoMap").uv_scale, 1.0)
+
+    def test_general_data_lanes_are_named(self):
+        general = self.base.annotation("GeneralData")
+        self.assertEqual(general.component(1), "PaintMapInfluence")
+        self.assertEqual(general.component(2), "UvSetSelector")
+
+    def test_gloss_names_only_its_first_lane(self):
+        # Consistent with only .x being read; the rest is padding.
+        gloss = self.base.annotation("Mtl1Gloss")
+        self.assertTrue(gloss.component(1))
+        self.assertFalse(gloss.component(2))
+
+    def test_widgets_separate_colours_from_scalars(self):
+        self.assertTrue(self.base.annotation("Mtl1DiffuseColor").is_color)
+        self.assertFalse(self.base.annotation("Mtl1Gloss").is_color)
+
+    def test_groups_give_the_panel_structure(self):
+        groups = self.base.groups()
+        self.assertIn("Material 1", groups)
+        self.assertIn("General", groups)
+        for name in ("Mtl1DiffuseColor", "Mtl1FresnelColor", "Mtl1Gloss",
+                     "Mtl1DustDiffuseColor"):
+            self.assertIn(name, groups["Material 1"])
+
+    def test_paint_mask_declares_transparency(self):
+        self.assertTrue(self.base.annotation("PaintMaskMap").has_transparency)

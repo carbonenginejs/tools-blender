@@ -5,6 +5,7 @@ them; the arithmetic and the interface data stay testable on their own.
 """
 
 from .interface import (
+    Annotation,
     Constant,
     Family,
     Member,
@@ -15,6 +16,7 @@ from .interface import (
 from . import reference
 
 __all__ = [
+    "Annotation",
     "Constant",
     "Family",
     "Member",

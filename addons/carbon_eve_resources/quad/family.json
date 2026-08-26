@@ -1,6 +1,6 @@
 {
  "schema": "carbon.quad-family-interface",
- "version": 1,
+ "version": 2,
  "build": "3478781",
  "tier": "sm_depth",
  "permutation": {
@@ -304,6 +304,277 @@
       1
      ]
     }
+   },
+   "annotations": {
+    "AlbedoMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "Detail1Data": {
+     "Component1": "scale",
+     "Component2": "intensity",
+     "Component3": "offset x",
+     "Component4": "offset y",
+     "Group": "Details",
+     "SasUiDescription": "Properties of the details level 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Detail1Map": {
+     "LodUvScale0": "Detail1Data.x",
+     "SasUiVisible": true
+    },
+    "Detail2Data": {
+     "Component1": "scale",
+     "Component2": "intensity",
+     "Component3": "offset x",
+     "Component4": "offset y",
+     "Group": "Details",
+     "SasUiDescription": "Properties of the details level 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Detail2Map": {
+     "LodUvScale0": "Detail2Data.x",
+     "SasUiVisible": true
+    },
+    "Detail3Data": {
+     "Component1": "scale",
+     "Component2": "intensity",
+     "Component3": "offset x",
+     "Component4": "offset y",
+     "Group": "Details",
+     "SasUiDescription": "Properties of the details level 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Detail3Map": {
+     "LodUvScale0": "Detail2Data.x",
+     "SasUiVisible": true
+    },
+    "DetailAlbedoColor": {
+     "Group": "Details",
+     "SasUiDescription": "Albedo color of all details",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "DetailFresnelColor": {
+     "Group": "Details",
+     "SasUiDescription": "Fresnel color of all details",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "DetailSelector": {
+     "Component1": "Material 1",
+     "Component2": "Material 2",
+     "Component3": "Material 3",
+     "Component4": "Material 4",
+     "Group": "Details",
+     "SasUiDescription": "Select detail strength per material",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "DirtMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "DustNoiseMap": {
+     "LodUvScale0": 20,
+     "SasUiVisible": true
+    },
+    "EveSpaceSceneEnvMap": {
+     "SasUiVisible": false,
+     "Tr2sRGB": true
+    },
+    "EveSpaceSceneShadowMap": {
+     "AutoRegister": true
+    },
+    "GeneralData": {
+     "Component1": "PaintMapInfluence",
+     "Component2": "UvSetSelector",
+     "Group": "General",
+     "SasUiDescription": "Various values for the whole shader",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "GeneralGlowColor": {
+     "Group": "General",
+     "SasUiDescription": "The main glow color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "GlowMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "LightBuffer": {
+     "AutoRegister": true
+    },
+    "LightIndexBuffer": {
+     "AutoRegister": true
+    },
+    "LightProfileArray": {
+     "AutoRegister": true
+    },
+    "MaterialMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "Mtl1DiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1DustDiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1FresnelColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1Gloss": {
+     "Component1": "The material 1 gloss factor",
+     "Group": "Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2DiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2DustDiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2FresnelColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2Gloss": {
+     "Component1": "The material 2 gloss factor",
+     "Group": "Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3DiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3DustDiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3FresnelColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3Gloss": {
+     "Component1": "The material 3 gloss factor",
+     "Group": "Material 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4DiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4DustDiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4FresnelColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4Gloss": {
+     "Component1": "The material 4 gloss factor",
+     "Group": "Material 4",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "NormalMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PMtl1DiffuseColor": {
+     "Group": "Pattern Material 1",
+     "SasUiDescription": "The pattern material 1 albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl1FresnelColor": {
+     "Group": "Pattern Material 1",
+     "SasUiDescription": "The pattern material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl1Gloss": {
+     "Component1": "The pattern material 1 gloss factor",
+     "Group": "Pattern Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "PMtl2DiffuseColor": {
+     "Group": "Pattern Material 2",
+     "SasUiDescription": "The pattern material 2 albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl2FresnelColor": {
+     "Group": "Pattern Material 2",
+     "SasUiDescription": "The pattern material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl2Gloss": {
+     "Component1": "The pattern material 2 gloss factor",
+     "Group": "Pattern Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "PaintMaskMap": {
+     "HasTransparency": true,
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PatternMask1Map": {
+     "SasUiVisible": true
+    },
+    "PatternMask2Map": {
+     "SasUiVisible": true
+    },
+    "RoughnessMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "SSAOMap": {
+     "SasUiVisible": false
+    }
    }
   },
   "quadenvironmentv5": {
@@ -554,13 +825,232 @@
       0
      ]
     }
+   },
+   "annotations": {
+    "AlbedoMap": {
+     "LodUvScale0": "GeneralTiling.y",
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "Detail1AlbedoColor": {
+     "Group": "Details",
+     "SasUiDescription": "Albedo color of detail 1",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Detail1FresnelColor": {
+     "Group": "Details",
+     "SasUiDescription": "Fresnel color of detail 1",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Detail1Map": {
+     "LodUvScale0": "DetailData.x",
+     "SasUiVisible": true
+    },
+    "Detail1Material": {
+     "Component1": "Material 1 Intensity",
+     "Component2": "Material 2 Intensity",
+     "Component3": "Material 3 Intensity",
+     "Component4": "Material 4 Intensity",
+     "Group": "Details",
+     "SasUiDescription": "Select materials for detail for 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Detail2AlbedoColor": {
+     "Group": "Details",
+     "SasUiDescription": "Albedo color of detail 2",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Detail2FresnelColor": {
+     "Group": "Details",
+     "SasUiDescription": "Fresnel color of detail 2",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Detail2Map": {
+     "LodUvScale0": "DetailData.x",
+     "SasUiVisible": true
+    },
+    "Detail2Material": {
+     "Component1": "Material 1 Intensity",
+     "Component2": "Material 2 Intensity",
+     "Component3": "Material 3 Intensity",
+     "Component4": "Material 4 Intensity",
+     "Group": "Details",
+     "SasUiDescription": "Select materials for detail for 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "DetailData": {
+     "Component1": "Detail 1 Scale",
+     "Component2": "Detail 2 Scale",
+     "Group": "Details",
+     "SasUiDescription": "Scaling of detail levels",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "DirtMap": {
+     "LodUvScale0": "GeneralTiling.y",
+     "SasUiVisible": true
+    },
+    "DustNoiseMap": {
+     "LodUvScale0": 20,
+     "SasUiVisible": true
+    },
+    "EveSpaceSceneEnvMap": {
+     "SasUiVisible": false,
+     "Tr2sRGB": true
+    },
+    "EveSpaceSceneShadowMap": {
+     "AutoRegister": true
+    },
+    "GeneralGlowColor": {
+     "Group": "General",
+     "SasUiDescription": "The main glow color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "GeneralTiling": {
+     "Component1": "Material Map",
+     "Component2": "Base Textures",
+     "Group": "General",
+     "SasUiDescription": "Tiling of main textures",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "GlowMap": {
+     "LodUvScale0": "GeneralTiling.y",
+     "SasUiVisible": true
+    },
+    "LightBuffer": {
+     "AutoRegister": true
+    },
+    "LightIndexBuffer": {
+     "AutoRegister": true
+    },
+    "LightProfileArray": {
+     "AutoRegister": true
+    },
+    "MaterialMap": {
+     "LodUvScale0": "GeneralTiling.x",
+     "SasUiVisible": true
+    },
+    "Mtl1DiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1DustDiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1FresnelColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1Gloss": {
+     "Component1": "The material 1 gloss factor",
+     "Group": "Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2DiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2DustDiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2FresnelColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2Gloss": {
+     "Component1": "The material 2 gloss factor",
+     "Group": "Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3DiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3DustDiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3FresnelColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3Gloss": {
+     "Component1": "The material 3 gloss factor",
+     "Group": "Material 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4DiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4DustDiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4FresnelColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4Gloss": {
+     "Component1": "The material 4 gloss factor",
+     "Group": "Material 4",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "NormalMap": {
+     "LodUvScale0": "GeneralTiling.y",
+     "SasUiVisible": true
+    },
+    "RoughnessMap": {
+     "LodUvScale0": "GeneralTiling.y",
+     "SasUiVisible": true
+    },
+    "SSAOMap": {
+     "SasUiVisible": false
+    }
    }
   },
   "quadglassv5": {
    "permutationIndex": 4,
    "constantBufferBytes": 288,
    "textures": [
-    "EveSceneFogVolumeMap",
     "NormalMap",
     "GlowMap",
     "DustNoiseMap",
@@ -572,6 +1062,7 @@
    ],
    "sceneTextures": [
     "EveSpaceSceneEnvMap",
+    "EveSceneFogVolumeMap",
     "LightIndexBuffer",
     "LightBuffer",
     "LightProfileArray"
@@ -729,6 +1220,160 @@
       1,
       1
      ]
+    }
+   },
+   "annotations": {
+    "AlbedoMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "DirtMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "DustNoiseMap": {
+     "LodUvScale0": 20,
+     "SasUiVisible": true
+    },
+    "EveSceneFogVolumeMap": {
+     "AutoRegister": true
+    },
+    "EveSpaceSceneEnvMap": {
+     "SasUiVisible": false,
+     "Tr2sRGB": true
+    },
+    "GeneralGlowColor": {
+     "Group": "General",
+     "SasUiDescription": "The main glow color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "GlowMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "LightBuffer": {
+     "AutoRegister": true
+    },
+    "LightIndexBuffer": {
+     "AutoRegister": true
+    },
+    "LightProfileArray": {
+     "AutoRegister": true
+    },
+    "MaterialMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "Mtl1DiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1DustDiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1FresnelColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1Gloss": {
+     "Component1": "The material 1 gloss factor",
+     "Group": "Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2DiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2DustDiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2FresnelColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2Gloss": {
+     "Component1": "The material 2 gloss factor",
+     "Group": "Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3DiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3DustDiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3FresnelColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3Gloss": {
+     "Component1": "The material 3 gloss factor",
+     "Group": "Material 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4DiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4DustDiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4FresnelColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4Gloss": {
+     "Component1": "The material 4 gloss factor",
+     "Group": "Material 4",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "NormalMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PaintMaskMap": {
+     "HasTransparency": true,
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "RoughnessMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
     }
    }
   },
@@ -1074,6 +1719,327 @@
       1
      ]
     }
+   },
+   "annotations": {
+    "AlbedoMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "Detail1Data": {
+     "Component1": "scale",
+     "Component2": "intensity",
+     "Component3": "offset x",
+     "Component4": "offset y",
+     "Group": "Details",
+     "SasUiDescription": "Properties of the details level 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Detail1Map": {
+     "LodUvScale0": "Detail1Data.x",
+     "SasUiVisible": true
+    },
+    "Detail2Data": {
+     "Component1": "scale",
+     "Component2": "intensity",
+     "Component3": "offset x",
+     "Component4": "offset y",
+     "Group": "Details",
+     "SasUiDescription": "Properties of the details level 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Detail2Map": {
+     "LodUvScale0": "Detail2Data.x",
+     "SasUiVisible": true
+    },
+    "Detail3Data": {
+     "Component1": "scale",
+     "Component2": "intensity",
+     "Component3": "offset x",
+     "Component4": "offset y",
+     "Group": "Details",
+     "SasUiDescription": "Properties of the details level 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "DetailAlbedoColor": {
+     "Group": "Details",
+     "SasUiDescription": "Albedo color of all details",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "DetailFresnelColor": {
+     "Group": "Details",
+     "SasUiDescription": "Fresnel color of all details",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "DetailSelector": {
+     "Component1": "Material 1",
+     "Component2": "Material 2",
+     "Component3": "Material 3",
+     "Component4": "Material 4",
+     "Group": "Details",
+     "SasUiDescription": "Select detail strength per material",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "DirtMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "DustNoiseMap": {
+     "LodUvScale0": 20,
+     "SasUiVisible": true
+    },
+    "EveSpaceSceneEnvMap": {
+     "SasUiVisible": false,
+     "Tr2sRGB": true
+    },
+    "EveSpaceSceneShadowMap": {
+     "AutoRegister": true
+    },
+    "GeneralData": {
+     "Component1": "PaintMapInfluence",
+     "Component2": "UvSetSelector",
+     "Group": "General",
+     "SasUiDescription": "Various values for the whole shader",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "GeneralHeatGlowColor": {
+     "Group": "General",
+     "SasUiDescription": "Heat exhaust color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "GlowMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "HeatGlowNoiseMap": {
+     "LodUvScale0": "min(Mtl1HeatGlowData.z, Mtl2HeatGlowData.z, Mtl3HeatGlowData.z, Mtl4HeatGlowData.z)",
+     "SasUiVisible": true
+    },
+    "LightBuffer": {
+     "AutoRegister": true
+    },
+    "LightIndexBuffer": {
+     "AutoRegister": true
+    },
+    "LightProfileArray": {
+     "AutoRegister": true
+    },
+    "MaterialMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "Mtl1DiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1DustDiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1FresnelColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1Gloss": {
+     "Component1": "The material 1 gloss factor",
+     "Group": "Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl1HeatGlowData": {
+     "Component1": "boosterGain influence",
+     "Component2": "Shimmer speed",
+     "Component3": "Shimmer size",
+     "Component4": "Shimmer strength",
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 heat glow data",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2DiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2DustDiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2FresnelColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2Gloss": {
+     "Component1": "The material 2 gloss factor",
+     "Group": "Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2HeatGlowData": {
+     "Component1": "boosterGain influence",
+     "Component2": "Shimmer speed",
+     "Component3": "Shimmer size",
+     "Component4": "Shimmer strength",
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 heat glow data",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3DiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3DustDiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3FresnelColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3Gloss": {
+     "Component1": "The material 3 gloss factor",
+     "Group": "Material 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3HeatGlowData": {
+     "Component1": "boosterGain influence",
+     "Component2": "Shimmer speed",
+     "Component3": "Shimmer size",
+     "Component4": "Shimmer strength",
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 heat glow data",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4DiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4DustDiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4FresnelColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4Gloss": {
+     "Component1": "The material 4 gloss factor",
+     "Group": "Material 4",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4HeatGlowData": {
+     "Component1": "boosterGain influence",
+     "Component2": "Shimmer speed",
+     "Component3": "Shimmer size",
+     "Component4": "Shimmer strength",
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 heat glow data",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "NormalMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PMtl1DiffuseColor": {
+     "Group": "Pattern Material 1",
+     "SasUiDescription": "The pattern material 1 albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl1FresnelColor": {
+     "Group": "Pattern Material 1",
+     "SasUiDescription": "The pattern material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl1Gloss": {
+     "Component1": "The pattern material 1 gloss factor",
+     "Group": "Pattern Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "PMtl2DiffuseColor": {
+     "Group": "Pattern Material 2",
+     "SasUiDescription": "The pattern material 2 albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl2FresnelColor": {
+     "Group": "Pattern Material 2",
+     "SasUiDescription": "The pattern material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl2Gloss": {
+     "Component1": "The pattern material 2 gloss factor",
+     "Group": "Pattern Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "PaintMaskMap": {
+     "HasTransparency": true,
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PatternMask1Map": {
+     "SasUiVisible": true
+    },
+    "PatternMask2Map": {
+     "SasUiVisible": true
+    },
+    "RoughnessMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "SSAOMap": {
+     "SasUiVisible": false
+    },
+    "SecondaryDetail2Data": {
+     "Component1": "scale",
+     "Component2": "intensity",
+     "Component3": "offset x",
+     "Component4": "offset y",
+     "Group": "Details",
+     "SasUiDescription": "Secondary scalar value for detail level 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    }
    }
   },
   "quadheatv5": {
@@ -1353,6 +2319,257 @@
       1
      ]
     }
+   },
+   "annotations": {
+    "AlbedoMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "DirtMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "DustNoiseMap": {
+     "LodUvScale0": 20,
+     "SasUiVisible": true
+    },
+    "EveSpaceSceneEnvMap": {
+     "SasUiVisible": false,
+     "Tr2sRGB": true
+    },
+    "EveSpaceSceneShadowMap": {
+     "AutoRegister": true
+    },
+    "GeneralData": {
+     "Component1": "PaintMapInfluence",
+     "Component2": "UvSetSelector",
+     "Group": "General",
+     "SasUiDescription": "Various values for the whole shader",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "GeneralHeatGlowColor": {
+     "Group": "General",
+     "SasUiDescription": "Heat exhaust color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "GlowMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "HeatGlowNoiseMap": {
+     "LodUvScale0": "min(Mtl1HeatGlowData.z, Mtl2HeatGlowData.z, Mtl3HeatGlowData.z, Mtl4HeatGlowData.z)",
+     "SasUiVisible": true
+    },
+    "LightBuffer": {
+     "AutoRegister": true
+    },
+    "LightIndexBuffer": {
+     "AutoRegister": true
+    },
+    "LightProfileArray": {
+     "AutoRegister": true
+    },
+    "MaterialMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "Mtl1DiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1DustDiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1FresnelColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1Gloss": {
+     "Component1": "The material 1 gloss factor",
+     "Group": "Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl1HeatGlowData": {
+     "Component1": "boosterGain influence",
+     "Component2": "Shimmer speed",
+     "Component3": "Shimmer size",
+     "Component4": "Shimmer strength",
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 heat glow data",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2DiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2DustDiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2FresnelColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2Gloss": {
+     "Component1": "The material 2 gloss factor",
+     "Group": "Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2HeatGlowData": {
+     "Component1": "boosterGain influence",
+     "Component2": "Shimmer speed",
+     "Component3": "Shimmer size",
+     "Component4": "Shimmer strength",
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 heat glow data",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3DiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3DustDiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3FresnelColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3Gloss": {
+     "Component1": "The material 3 gloss factor",
+     "Group": "Material 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3HeatGlowData": {
+     "Component1": "boosterGain influence",
+     "Component2": "Shimmer speed",
+     "Component3": "Shimmer size",
+     "Component4": "Shimmer strength",
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 heat glow data",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4DiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4DustDiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4FresnelColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4Gloss": {
+     "Component1": "The material 4 gloss factor",
+     "Group": "Material 4",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4HeatGlowData": {
+     "Component1": "boosterGain influence",
+     "Component2": "Shimmer speed",
+     "Component3": "Shimmer size",
+     "Component4": "Shimmer strength",
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 heat glow data",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "NormalMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PMtl1DiffuseColor": {
+     "Group": "Pattern Material 1",
+     "SasUiDescription": "The pattern material 1 albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl1FresnelColor": {
+     "Group": "Pattern Material 1",
+     "SasUiDescription": "The pattern material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl1Gloss": {
+     "Component1": "The pattern material 1 gloss factor",
+     "Group": "Pattern Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "PMtl2DiffuseColor": {
+     "Group": "Pattern Material 2",
+     "SasUiDescription": "The pattern material 2 albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl2FresnelColor": {
+     "Group": "Pattern Material 2",
+     "SasUiDescription": "The pattern material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl2Gloss": {
+     "Component1": "The pattern material 2 gloss factor",
+     "Group": "Pattern Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "PaintMaskMap": {
+     "HasTransparency": true,
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PatternMask1Map": {
+     "SasUiVisible": true
+    },
+    "PatternMask2Map": {
+     "SasUiVisible": true
+    },
+    "RoughnessMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "SSAOMap": {
+     "SasUiVisible": false
+    }
    }
   },
   "quadinstancedv5": {
@@ -1585,6 +2802,200 @@
       0
      ]
     }
+   },
+   "annotations": {
+    "AlbedoMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "DirtMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "DustNoiseMap": {
+     "LodUvScale0": 20,
+     "SasUiVisible": true
+    },
+    "EveSpaceSceneEnvMap": {
+     "SasUiVisible": false,
+     "Tr2sRGB": true
+    },
+    "EveSpaceSceneShadowMap": {
+     "AutoRegister": true
+    },
+    "GeneralGlowColor": {
+     "Group": "General",
+     "SasUiDescription": "The main glow color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "GlowMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "LightBuffer": {
+     "AutoRegister": true
+    },
+    "LightIndexBuffer": {
+     "AutoRegister": true
+    },
+    "LightProfileArray": {
+     "AutoRegister": true
+    },
+    "MaterialMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "Mtl1DiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1DustDiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1FresnelColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1Gloss": {
+     "Component1": "The material 1 gloss factor",
+     "Group": "Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2DiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2DustDiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2FresnelColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2Gloss": {
+     "Component1": "The material 2 gloss factor",
+     "Group": "Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3DiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3DustDiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3FresnelColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3Gloss": {
+     "Component1": "The material 3 gloss factor",
+     "Group": "Material 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4DiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4DustDiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4FresnelColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4Gloss": {
+     "Component1": "The material 4 gloss factor",
+     "Group": "Material 4",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "NormalMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PMtl1DiffuseColor": {
+     "Group": "Pattern Material 1",
+     "SasUiDescription": "The pattern material 1 albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl1FresnelColor": {
+     "Group": "Pattern Material 1",
+     "SasUiDescription": "The pattern material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl1Gloss": {
+     "Component1": "The pattern material 1 gloss factor",
+     "Group": "Pattern Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "PMtl2DiffuseColor": {
+     "Group": "Pattern Material 2",
+     "SasUiDescription": "The pattern material 2 albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl2FresnelColor": {
+     "Group": "Pattern Material 2",
+     "SasUiDescription": "The pattern material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl2Gloss": {
+     "Component1": "The pattern material 2 gloss factor",
+     "Group": "Pattern Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "PatternMask1Map": {
+     "SasUiVisible": true
+    },
+    "PatternMask2Map": {
+     "SasUiVisible": true
+    },
+    "RoughnessMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "SSAOMap": {
+     "SasUiVisible": false
+    }
    }
   },
   "quadoilv5": {
@@ -1772,6 +3183,175 @@
       1
      ]
     }
+   },
+   "annotations": {
+    "AlbedoMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "DirtMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "DustNoiseMap": {
+     "LodUvScale0": 20,
+     "SasUiVisible": true
+    },
+    "EveSpaceSceneEnvMap": {
+     "SasUiVisible": false,
+     "Tr2sRGB": true
+    },
+    "EveSpaceSceneShadowMap": {
+     "AutoRegister": true
+    },
+    "GeneralData": {
+     "Component1": "PaintMapInfluence",
+     "Component2": "UvSetSelector",
+     "Group": "General",
+     "SasUiDescription": "Various values for the whole shader",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "GeneralGlowColor": {
+     "Group": "General",
+     "SasUiDescription": "The main glow color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "GlowMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "LightBuffer": {
+     "AutoRegister": true
+    },
+    "LightIndexBuffer": {
+     "AutoRegister": true
+    },
+    "LightProfileArray": {
+     "AutoRegister": true
+    },
+    "MaterialMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "Mtl1DiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1DustDiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1FresnelColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1Gloss": {
+     "Component1": "The material 1 gloss factor",
+     "Group": "Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2DiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2DustDiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2FresnelColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2Gloss": {
+     "Component1": "The material 2 gloss factor",
+     "Group": "Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3DiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3DustDiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3FresnelColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3Gloss": {
+     "Component1": "The material 3 gloss factor",
+     "Group": "Material 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4DiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4DustDiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4FresnelColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4Gloss": {
+     "Component1": "The material 4 gloss factor",
+     "Group": "Material 4",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "NormalMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "OilFilmLookupMap": {
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "PaintMaskMap": {
+     "HasTransparency": true,
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "RoughnessMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "SSAOMap": {
+     "SasUiVisible": false
+    }
    }
   },
   "quadsailsv5": {
@@ -1958,6 +3538,176 @@
       0,
       0
      ]
+    }
+   },
+   "annotations": {
+    "AlbedoMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "DirtMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "DustNoiseMap": {
+     "LodUvScale0": 20,
+     "SasUiVisible": true
+    },
+    "EveSpaceSceneEnvMap": {
+     "SasUiVisible": false,
+     "Tr2sRGB": true
+    },
+    "EveSpaceSceneShadowMap": {
+     "AutoRegister": true
+    },
+    "GeneralGlowColor": {
+     "Group": "General",
+     "SasUiDescription": "The main glow color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "GlowMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "LightBuffer": {
+     "AutoRegister": true
+    },
+    "LightIndexBuffer": {
+     "AutoRegister": true
+    },
+    "LightProfileArray": {
+     "AutoRegister": true
+    },
+    "MaterialMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "Mtl1DiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1DustDiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1FresnelColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1Gloss": {
+     "Component1": "The material 1 gloss factor",
+     "Group": "Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2DiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2DustDiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2FresnelColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2Gloss": {
+     "Component1": "The material 2 gloss factor",
+     "Group": "Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3DiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3DustDiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3FresnelColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3Gloss": {
+     "Component1": "The material 3 gloss factor",
+     "Group": "Material 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4DiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4DustDiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4FresnelColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4Gloss": {
+     "Component1": "The material 4 gloss factor",
+     "Group": "Material 4",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "NormalMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PaintMaskMap": {
+     "HasTransparency": true,
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "RoughnessMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "SSAOMap": {
+     "SasUiVisible": false
+    },
+    "SailsDetailData": {
+     "Component1": "Scale",
+     "Component2": "Rotation",
+     "Component3": "Specular",
+     "Component4": "Alpha",
+     "Group": "Sails details",
+     "SasUiDescription": "Properties of the sails details (mostly for Minmatar)",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "SailsDetailMap": {
+     "SasUiVisible": true
     }
    }
   },
@@ -2201,6 +3951,213 @@
       0
      ]
     }
+   },
+   "annotations": {
+    "AlbedoMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "DirtMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "DustNoiseMap": {
+     "LodUvScale0": 20,
+     "SasUiVisible": true
+    },
+    "EveSpaceSceneEnvMap": {
+     "SasUiVisible": false,
+     "Tr2sRGB": true
+    },
+    "EveSpaceSceneShadowMap": {
+     "AutoRegister": true
+    },
+    "GeneralData": {
+     "Component1": "PaintMapInfluence",
+     "Component2": "UvSetSelector",
+     "Group": "General",
+     "SasUiDescription": "Various values for the whole shader",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "GeneralGlowColor": {
+     "Group": "General",
+     "SasUiDescription": "The main glow color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "GlowMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "LightBuffer": {
+     "AutoRegister": true
+    },
+    "LightIndexBuffer": {
+     "AutoRegister": true
+    },
+    "LightProfileArray": {
+     "AutoRegister": true
+    },
+    "MaterialMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "Mtl1DiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1DustDiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1FresnelColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1Gloss": {
+     "Component1": "The material 1 gloss factor",
+     "Group": "Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2DiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2DustDiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2FresnelColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2Gloss": {
+     "Component1": "The material 2 gloss factor",
+     "Group": "Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3DiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3DustDiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3FresnelColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3Gloss": {
+     "Component1": "The material 3 gloss factor",
+     "Group": "Material 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4DiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4DustDiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4FresnelColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4Gloss": {
+     "Component1": "The material 4 gloss factor",
+     "Group": "Material 4",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "NormalMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PMtl1DiffuseColor": {
+     "Group": "Pattern Material 1",
+     "SasUiDescription": "The pattern material 1 albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl1FresnelColor": {
+     "Group": "Pattern Material 1",
+     "SasUiDescription": "The pattern material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl1Gloss": {
+     "Component1": "The pattern material 1 gloss factor",
+     "Group": "Pattern Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "PMtl2DiffuseColor": {
+     "Group": "Pattern Material 2",
+     "SasUiDescription": "The pattern material 2 albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl2FresnelColor": {
+     "Group": "Pattern Material 2",
+     "SasUiDescription": "The pattern material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "PMtl2Gloss": {
+     "Component1": "The pattern material 2 gloss factor",
+     "Group": "Pattern Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "PaintMaskMap": {
+     "HasTransparency": true,
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PatternMask1Map": {
+     "SasUiVisible": true
+    },
+    "PatternMask2Map": {
+     "SasUiVisible": true
+    },
+    "RoughnessMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "SSAOMap": {
+     "SasUiVisible": false
+    }
    }
   },
   "quadwreckv5": {
@@ -2405,6 +4362,192 @@
       0,
       0
      ]
+    }
+   },
+   "annotations": {
+    "AlbedoMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "AlphaThresholdMap": {
+     "LodUvScale0": "WreckFactors.x",
+     "SasUiVisible": true,
+     "Tr2sRGB": true
+    },
+    "DirtMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "DustNoiseMap": {
+     "LodUvScale0": 20,
+     "SasUiVisible": true
+    },
+    "EveSpaceSceneEnvMap": {
+     "SasUiVisible": false,
+     "Tr2sRGB": true
+    },
+    "EveSpaceSceneShadowMap": {
+     "AutoRegister": true
+    },
+    "GeneralData": {
+     "Component1": "PaintMapInfluence",
+     "Component2": "UvSetSelector",
+     "Group": "General",
+     "SasUiDescription": "Various values for the whole shader",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "GeneralGlowColor": {
+     "Group": "General",
+     "SasUiDescription": "The main glow color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "GlowMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "LightBuffer": {
+     "AutoRegister": true
+    },
+    "LightIndexBuffer": {
+     "AutoRegister": true
+    },
+    "LightProfileArray": {
+     "AutoRegister": true
+    },
+    "MaterialMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "Mtl1DiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1DustDiffuseColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1FresnelColor": {
+     "Group": "Material 1",
+     "SasUiDescription": "The material 1 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl1Gloss": {
+     "Component1": "The material 1 gloss factor",
+     "Group": "Material 1",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl2DiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2DustDiffuseColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2FresnelColor": {
+     "Group": "Material 2",
+     "SasUiDescription": "The material 2 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl2Gloss": {
+     "Component1": "The material 2 gloss factor",
+     "Group": "Material 2",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl3DiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3DustDiffuseColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3FresnelColor": {
+     "Group": "Material 3",
+     "SasUiDescription": "The material 3 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl3Gloss": {
+     "Component1": "The material 3 gloss factor",
+     "Group": "Material 3",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Mtl4DiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 diffuse color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4DustDiffuseColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 dirt albedo color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4FresnelColor": {
+     "Group": "Material 4",
+     "SasUiDescription": "The material 4 fresnel color",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "Mtl4Gloss": {
+     "Component1": "The material 4 gloss factor",
+     "Group": "Material 4",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "NormalMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "PaintMaskMap": {
+     "HasTransparency": true,
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "RoughnessMap": {
+     "LodUvScale0": 1,
+     "SasUiVisible": true
+    },
+    "SSAOMap": {
+     "SasUiVisible": false
+    },
+    "WreckColor": {
+     "Group": "Wreck",
+     "SasUiDescription": "Color of the wreck spots",
+     "SasUiVisible": true,
+     "UIWidget": "LinearColor"
+    },
+    "WreckFactors": {
+     "Component1": "WreckMapScaleUV",
+     "Component2": "WreckMapSharpness",
+     "Component3": "WreckGlowIntensity",
+     "Component4": "WreckGlowFlickerSpeed",
+     "Group": "Wreck",
+     "SasUiDescription": "Parameters for the wrecking",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
     }
    }
   }
