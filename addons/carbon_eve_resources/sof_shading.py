@@ -60,7 +60,7 @@ SHADER_NODE_GROUPS: Mapping[str, str] = {
 # Carbon vector parameters are (x, y, z, w); a float input takes x.
 GROUP_SCALAR_INPUTS = frozenset({
     "Mtl1Gloss", "Mtl2Gloss", "Mtl3Gloss", "Mtl4Gloss",
-    "PaintMaskInfluence", "AgeInWeeks",
+    "PaintMaskInfluence", "dirtLevel",
 })
 
 # Authored groups do not always spell a Carbon parameter the way SOF does, so

@@ -68,11 +68,36 @@ OUTPUTS = (
 #: everything. The per-MATERIAL heat lanes stay sockets: shimmer speed, size
 #: and strength are authored per material and differ between areas.
 SHIP_PROPERTIES = {
-    "AgeInWeeks": ("carbon_ship_age_weeks", 0.0),
-    "Activation": ("carbon_ship_activation", 1.0),
-    "BoosterGain": ("carbon_ship_booster_gain", 1.0),
-    "EmissionStrength": ("carbon_ship_emission_strength", 1.0),
-    "KillCount": ("carbon_ship_kill_count", 0.0),
+    # Carbon's own spellings. `shipData` is
+    # ``[boosterGain, activationStrength, dirtLevel, boundingSphereRadius]``
+    # (ccpwgl EveShip2.js:2424) and the kill count arrives as ``displayData.x``,
+    # so these are the names the engine uses, not ones invented here.
+    #
+    # `dirtLevel` is what the SHADER receives. Weeks since cleaned is a CPU
+    # quantity that Carbon converts before packing, so the property is an age
+    # and the driver does the conversion -- which is why this socket is not
+    # called AgeInWeeks.
+    "dirtLevel": ("carbon_ship_age_weeks", 0.0),
+    "activationStrength": ("carbon_ship_activation_strength", 1.0),
+    "boosterGain": ("carbon_ship_booster_gain", 1.0),
+    "killCount": ("carbon_ship_kill_count", 0.0),
+    # NOT a Carbon value. The shader scales its glow by activationStrength and
+    # nothing else; EVE then blooms the result. Blender has no equivalent, so
+    # this is a preview-only multiplier, named so nobody mistakes it for one of
+    # Carbon's. See /docs/architecture/non-carbon-extensions.md.
+    "previewGlowScale": ("carbon_preview_glow_scale", 1.0),
+}
+
+#: How each per-ship property becomes its socket value. `v` is the property.
+#:
+#: Only the dirt level converts: Carbon turns weeks-since-cleaned into a level
+#: on the CPU and the shader only ever sees the level, so the same conversion
+#: belongs in the driver rather than in the node graph.
+SHIP_DRIVER_EXPRESSIONS = {
+    "dirtLevel": ("max({ceiling} - 1.0 / (max(v, 0.0) ** {exponent} + {bias}), 0.0)".format(
+        ceiling=reference.DIRT_AGE_CEILING,
+        exponent=reference.DIRT_AGE_EXPONENT,
+        bias=reference.DIRT_AGE_BIAS)),
 }
 
 #: The dust noise map's alpha is used separately from its colour, and Blender
@@ -110,7 +135,6 @@ MASK_PROPERTIES = {
     "targets": "carbon_mask{}_targets",
     "target4": "carbon_mask{}_target4",
     "material": "carbon_mask{}_material",
-    "flip": "carbon_mask{}_flip",
 }
 
 #: The projection group's name; one per blend file, shared by every material.
@@ -197,7 +221,7 @@ def drive_ship_values(group_node, obj):
         variable.targets[0].data_path = f'["{prop}"]'
         # A missing property leaves the socket at its own default rather than
         # failing the whole driver, which would render as black.
-        driver.expression = "v"
+        driver.expression = SHIP_DRIVER_EXPRESSIONS.get(name, "v")
         driven += 1
     return driven
 
@@ -312,10 +336,6 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
         # and those are different transforms, so all four combinations are
         # reachable. Multiplier per axis is `0.5 - flip`, giving +0.5 unflipped
         # and -0.5 flipped.
-        flip = attribute(props["flip"], base - 440).outputs["Vector"]
-        flip_parts = nodes.new("ShaderNodeSeparateXYZ")
-        flip_parts.location = (-140, base - 440)
-        links.new(flip, flip_parts.inputs[0])
 
         centred = mapping.outputs["Vector"]
 
@@ -343,12 +363,15 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
             mode = wrap_parts.outputs[axis - 1]
             row = base - (axis - 1) * 140
 
-            # value = raw * (0.5 - flip) + 0.5
-            multiplier = nodes.new("ShaderNodeMath")
-            multiplier.operation = "SUBTRACT"
+            # value = raw * (0.5 - flip) + 0.5, with the flip SETTLED: U is
+            # never flipped and V always is, because D3D's texture V origin is
+            # the opposite of Blender's. All four combinations were tested
+            # against a client render and only this one lines up, so it is a
+            # constant here rather than two more object properties.
+            multiplier = nodes.new("ShaderNodeValue")
             multiplier.location = (100, row - 560)
-            multiplier.inputs[0].default_value = 0.5
-            links.new(flip_parts.outputs[axis - 1], multiplier.inputs[1])
+            multiplier.label = f"{'uv'[axis - 1]} direction"
+            multiplier.outputs[0].default_value = 0.5 if axis == 1 else -0.5
 
             mapped = nodes.new("ShaderNodeMath")
             mapped.operation = "MULTIPLY_ADD"
@@ -912,16 +935,10 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         biased = math("ADD", value(DUST_ALPHA), reference.DUST_BIAS, location=(-1000, -760),
                       label="noise.w +0.5")
         masked = math("MULTIPLY", dirt_x, biased, location=(-840, -720))
-        # Carbon's dirt level from weeks since cleaned:
-        #   max(0.7 - 1 / (max(weeks, 0) ** 0.65 + 1 / 2.7), 0)
-        # It is negative below about a week, so a fresh hull is clean, and it
-        # saturates toward 0.7.
-        aged = math("POWER", math("MAXIMUM", value("AgeInWeeks"), 0.0, location=(-1200, -900)),
-                    reference.DIRT_AGE_EXPONENT, location=(-1060, -900))
-        shifted = math("ADD", aged, reference.DIRT_AGE_BIAS, location=(-1000, -940))
-        falling = math("DIVIDE", 1.0, shifted, location=(-940, -900))
-        level = math("SUBTRACT", reference.DIRT_AGE_CEILING, falling, location=(-900, -940))
-        level = math("MAXIMUM", level, 0.0, location=(-870, -900), label="dirt level")
+        # The level arrives ready-made, as it does in Carbon: weeks-since-cleaned
+        # is converted on the CPU (here, in the driver) and the shader reads
+        # only shipData.z.
+        level = value("dirtLevel")
         divisor = math("SUBTRACT", 1.0, level, location=(-840, -820))
         mask = math("DIVIDE", masked, divisor, location=(-680, -760), clamp=True,
                     label="dirt mask")
@@ -990,10 +1007,10 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
     # `boosterGain influence` is Carbon's own name for the lane, and a material
     # whose influence is zero ignores the boosters and always glows.
     heat_amount = None
-    if has("BoosterGain") and has("Mtl1HeatGlow boosterGain influence"):
+    if has("boosterGain") and has("Mtl1HeatGlow boosterGain influence"):
         influence = blend4("Mtl", "HeatGlow boosterGain influence", -700, scalar=True)
         if influence is not None:
-            shifted = math("SUBTRACT", value("BoosterGain"), reference.HEAT_GATE_START,
+            shifted = math("SUBTRACT", value("boosterGain"), reference.HEAT_GATE_START,
                            location=(-1000, -700))
             gate = math("MULTIPLY", shifted, reference.HEAT_GATE_SCALE,
                         location=(-940, -700), clamp=True, label="booster gate")
@@ -1008,11 +1025,11 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         glow_x = separate(value("GlowMap"), (-1200, -900))[0]
         powered = math("POWER", glow_x, reference.GLOW_INNER_EXPONENT * reference.GLOW_OUTER_EXPONENT,
                        location=(-1000, -900), label="glow ^2.4")
-        scaled = math("MULTIPLY", powered, value("Activation"), location=(-840, -900))
+        scaled = math("MULTIPLY", powered, value("activationStrength"), location=(-840, -900))
         if heat_amount is not None:
             scaled = math("MULTIPLY", scaled, heat_amount, location=(-800, -930),
                           label="gated by boosters")
-        scaled = math("MULTIPLY", scaled, value("EmissionStrength"), location=(-760, -960))
+        scaled = math("MULTIPLY", scaled, value("previewGlowScale"), location=(-760, -960))
         emission = vector("SCALE", value(glow_color), None, location=(-680, -900))
         links.new(scaled, emission.node.inputs["Scale"])
 
@@ -1096,8 +1113,8 @@ def build_kill_counter_group() -> bpy.types.ShaderNodeTree:
 
     tree.interface.new_socket(name="UV", in_out="INPUT", socket_type="NodeSocketVector")
     count_socket = tree.interface.new_socket(
-        name="KillCount", in_out="INPUT", socket_type="NodeSocketFloat")
-    count_socket.default_value = SHIP_PROPERTIES["KillCount"][1]
+        name="killCount", in_out="INPUT", socket_type="NodeSocketFloat")
+    count_socket.default_value = SHIP_PROPERTIES["killCount"][1]
     count_socket.description = ("Driven from the object's kill count -- edit it "
                                 "under Object Properties > Carbon Ship Values")
     count_socket.hide_value = True
@@ -1155,7 +1172,7 @@ def build_kill_counter_group() -> bpy.types.ShaderNodeTree:
     # Whole kills only. ccpwgl passes an integer (EveShip2.killCount), and a
     # fractional count would light a partial mark, which the counter cannot
     # mean -- so it is floored once, here, rather than at every reader.
-    whole = math("FLOOR", group_in.outputs["KillCount"], location=(-160, -220),
+    whole = math("FLOOR", group_in.outputs["killCount"], location=(-160, -220),
                  label="whole kills")
     share = math("DIVIDE", whole, following, location=(-20, -70))
     folded = math("FRACT", share, location=(120, -70))
@@ -1468,12 +1485,12 @@ def build_heat_displace_group() -> bpy.types.ShaderNodeTree:
     # A socket, driven from the object -- see `drive_ship_values` for why this
     # cannot be an Attribute node.
     booster = tree.interface.new_socket(
-        name="BoosterGain", in_out="INPUT", socket_type="NodeSocketFloat")
-    booster.default_value = SHIP_PROPERTIES["BoosterGain"][1]
+        name="boosterGain", in_out="INPUT", socket_type="NodeSocketFloat")
+    booster.default_value = SHIP_PROPERTIES["boosterGain"][1]
     booster.description = ("Driven from the object's booster gain -- edit it "
                            "under Object Properties > Carbon Ship Values")
     booster.hide_value = True
-    gain_socket = group_in.outputs["BoosterGain"]
+    gain_socket = group_in.outputs["boosterGain"]
 
     def math(op, a, b, location, clamp=False, label=""):
         node = nodes.new("ShaderNodeMath")

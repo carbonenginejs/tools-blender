@@ -194,11 +194,14 @@ class CARBON_PT_pattern_projections(bpy.types.Panel):
 #: The per-ship values, in the order they belong on a panel, with the label the
 #: operator should see rather than the shader's own spelling.
 SHIP_VALUES = (
-    ("carbon_ship_age_weeks", "Age (weeks)"),
-    ("carbon_ship_activation", "Activation"),
-    ("carbon_ship_booster_gain", "Booster gain"),
-    ("carbon_ship_emission_strength", "Emission strength"),
-    ("carbon_ship_kill_count", "Kill count"),
+    # Carbon's own names, so a value here and a value in the engine are
+    # obviously the same thing. Age is the exception and says so: Carbon packs
+    # a dirtLevel, and the weeks-to-level conversion happens on the CPU.
+    ("carbon_ship_age_weeks", "Age in weeks"),
+    ("carbon_ship_booster_gain", "boosterGain"),
+    ("carbon_ship_activation_strength", "activationStrength"),
+    ("carbon_ship_kill_count", "killCount"),
+    ("carbon_preview_glow_scale", "Glow scale (preview)"),
 )
 
 

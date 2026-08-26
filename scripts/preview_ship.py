@@ -165,8 +165,6 @@ def apply_custom_masks(obj, masks, effects):
         # increases upward, so the projected V needs the usual 1 - v; U needs
         # nothing, which is what makes this a convention rather than a fudge.
         # Established by testing all four combinations against a client render.
-        if prefix + "flip" not in obj.keys():
-            obj[prefix + "flip"] = (0.0, 1.0, 0.0)
 
         print(f"  mask {index}: wrap={obj[prefix + 'wrap'][:2]} "
               f"mirrored={obj[prefix + 'mirrored']:g} "
@@ -457,15 +455,15 @@ def apply_ship_globals(objects, overrides=None):
     values.update(overrides or {})
     limits = {
         "carbon_ship_age_weeks": dict(min=0.0, max=10000.0, step=100, precision=1,
-                                      description="Weeks since the hull was cleaned; dirt saturates by about a year"),
-        "carbon_ship_activation": dict(min=0.0, max=1.0, step=5, precision=3,
-                                       description="Scales every glow on the ship"),
+                                      description="Converted to shipData.z (dirtLevel); dirt saturates by about a year"),
+        "carbon_ship_activation_strength": dict(min=0.0, max=1.0, step=5, precision=3,
+                                       description="shipData.y: scales every glow on the ship"),
         "carbon_ship_booster_gain": dict(min=0.0, max=1.0, step=5, precision=3,
-                                         description="Opens the heat gate; heat is fully on by 0.02"),
-        "carbon_ship_emission_strength": dict(min=0.0, max=1000.0, step=100, precision=2,
-                                              description="How hard the glows read against the nebula"),
+                                         description="shipData.x: opens the heat gate; heat is fully on by 0.02"),
+        "carbon_preview_glow_scale": dict(min=0.0, max=1000.0, step=100, precision=2,
+                                         description="Preview only, not a Carbon value: EVE blooms its glows and Blender does not"),
         "carbon_ship_kill_count": dict(min=0.0, max=999.0, step=100, precision=0,
-                                       description="Kill marks: whole kills, drawn as tally marks"),
+                                       description="displayData.x: whole kills, drawn as tally marks"),
     }
     for obj in objects:
         for name, (prop, _) in nodes.SHIP_PROPERTIES.items():
@@ -774,7 +772,7 @@ def wire_kill_counter(decal, principled, transparency, projection, mnodes, mlink
         principled.inputs["Emission Color"].default_value = tuple(glow_colour[:3]) + (1.0,)
         principled.inputs["Base Color"].default_value = (0.0, 0.0, 0.0, 1.0)
         strength = principled.inputs["Emission Strength"]
-        strength.default_value = nodes.SHIP_PROPERTIES["EmissionStrength"][1]
+        strength.default_value = nodes.SHIP_PROPERTIES["previewGlowScale"][1]
         if obj is None:
             return
         index = list(principled.inputs).index(strength)
@@ -786,7 +784,7 @@ def wire_kill_counter(decal, principled, transparency, projection, mnodes, mlink
         variable.name = "v"
         variable.targets[0].id_type = "OBJECT"
         variable.targets[0].id = obj
-        variable.targets[0].data_path = f'["{nodes.SHIP_PROPERTIES["EmissionStrength"][0]}"]'
+        variable.targets[0].data_path = f'["{nodes.SHIP_PROPERTIES["previewGlowScale"][0]}"]'
         driver.expression = "v"
 
 
@@ -803,7 +801,7 @@ def main():
         load_family())
     ship_objects = [primary] + list(decal_objects)
     apply_ship_globals(ship_objects,
-                       {"EmissionStrength": preview_quad.DEMO_EMISSION_STRENGTH})
+                       {"previewGlowScale": preview_quad.DEMO_EMISSION_STRENGTH})
     drive_ship_sockets(ship_objects, primary)
     preview_quad.ENVIRONMENT[:] = [args.environment] if args.environment else []
     if args.sun_strength is not None:

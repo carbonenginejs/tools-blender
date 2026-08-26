@@ -217,8 +217,8 @@ def build(args):
 
     fill_unbound_textures(member, group, mnodes, mlinks, row)
 
-    if "EmissionStrength" in group.inputs:
-        group.inputs["EmissionStrength"].default_value = DEMO_EMISSION_STRENGTH
+    if "previewGlowScale" in group.inputs:
+        group.inputs["previewGlowScale"].default_value = DEMO_EMISSION_STRENGTH
 
     effect = sof_effect(args.sof, member.name) if args.sof else None
     if effect is None:
