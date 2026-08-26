@@ -321,9 +321,29 @@ def assemble(args):
     return primary
 
 
+def hide_non_geometry():
+    """Keeps armatures and empties out of the render.
+
+    The GR2 importer brings in a hull's skeleton, and a battleship's armature
+    is large enough to sit in front of the geometry from most angles. That
+    reads as the material being wrong -- it cost one diagnosis here, chasing a
+    pattern offset that turned out to be bone shapes over the hull.
+    """
+
+    hidden = 0
+    for obj in bpy.data.objects:
+        if obj.type in {"ARMATURE", "EMPTY"}:
+            obj.hide_viewport = True
+            obj.hide_render = True
+            hidden += 1
+    if hidden:
+        print(f"  hid {hidden} non-geometry object(s) from the render")
+
+
 def main():
     args = parse_args(sys.argv)
     primary = assemble(args)
+    hide_non_geometry()
     if primary is None:
         raise SystemExit("no geometry was assembled")
 
