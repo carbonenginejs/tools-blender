@@ -282,10 +282,20 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
         links.new(centred.outputs[0], uv_parts.inputs[0])
 
         wrapped, coverage = [], None
-        for axis in (0, 1):
+        # The projection uses the transformed position's Y and Z, not X and Y.
+        # `customMaskMatrix[2]` occupies vec4 16-23 of the vertex per-object
+        # buffer -- confirmed by customMaskData landing at 24-25, where the
+        # shader reads isMirrored -- and the vertex stage dots the position with
+        # cb3[17]/cb3[18] and cb3[21]/cb3[22], which are rows 1 and 2 of each
+        # matrix rather than 0 and 1.
+        #
+        # Using X and Y instead is not merely rotated: it puts most of the hull
+        # outside the projection, so a CLAMP_TO_EDGE axis smears one row of the
+        # mask along the whole ship. That is what a wrong axis pair looks like.
+        for axis in (1, 2):
             value = uv_parts.outputs[axis]
-            mode = wrap_parts.outputs[axis]
-            row = base - axis * 140
+            mode = wrap_parts.outputs[axis - 1]
+            row = base - (axis - 1) * 140
 
             # REPEAT tiles; both clamping modes sample the edge. So the lookup
             # is two cases, chosen by whether the mode is REPEAT.
@@ -379,11 +389,25 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
     return tree
 
 
-def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
-    """Builds (or rebuilds) the node group for one family member."""
+def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
+    """The node group for one family member, built once and then shared.
+
+    Reuse is not an optimisation, it is correctness. A hull can have SEVERAL
+    areas on one member -- a Legion has two `quadsailsv5` areas -- and rebuilding
+    on the second call removes the group the first material is using, leaving
+    that material with no node tree and an unlinked surface. It renders as
+    nothing, which looks like a missing area rather than a destroyed group.
+
+    Pass `rebuild=True` to force a fresh graph after changing this module.
+    """
 
     member = member or load_family().member("quadv5.fx")
-    tree = _new_group(f"{GROUP_PREFIX} {member.name}")
+    name = f"{GROUP_PREFIX} {member.name}"
+    if not rebuild:
+        existing = bpy.data.node_groups.get(name)
+        if existing is not None:
+            return existing
+    tree = _new_group(name)
     nodes, links = tree.nodes, tree.links
 
     for name, kind, description in OUTPUTS:
