@@ -1,0 +1,2412 @@
+{
+ "schema": "carbon.quad-family-interface",
+ "version": 1,
+ "build": "3478781",
+ "tier": "sm_depth",
+ "permutation": {
+  "SPACE_OBJECT_PPT_ENABLED": "SOPPT_ENABLED"
+ },
+ "members": {
+  "quaddetailv5": {
+   "permutationIndex": 4,
+   "constantBufferBytes": 608,
+   "textures": [
+    "NormalMap",
+    "GlowMap",
+    "DustNoiseMap",
+    "AlbedoMap",
+    "RoughnessMap",
+    "DirtMap",
+    "MaterialMap",
+    "PaintMaskMap",
+    "PatternMask1Map",
+    "PatternMask2Map",
+    "Detail1Map",
+    "Detail2Map",
+    "Detail3Map"
+   ],
+   "sceneTextures": [
+    "EveSpaceSceneEnvMap",
+    "SSAOMap",
+    "EveSpaceSceneShadowMap",
+    "LightIndexBuffer",
+    "LightBuffer",
+    "LightProfileArray"
+   ],
+   "constants": {
+    "GeneralData": {
+     "vec4": 0,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "GeneralGlowColor": {
+     "vec4": 1,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DiffuseColor": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DiffuseColor": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DiffuseColor": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DiffuseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1FresnelColor": {
+     "vec4": 6,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2FresnelColor": {
+     "vec4": 7,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3FresnelColor": {
+     "vec4": 8,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4FresnelColor": {
+     "vec4": 9,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1Gloss": {
+     "vec4": 10,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2Gloss": {
+     "vec4": 11,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3Gloss": {
+     "vec4": 12,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4Gloss": {
+     "vec4": 13,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DustDiffuseColor": {
+     "vec4": 14,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DustDiffuseColor": {
+     "vec4": 15,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DustDiffuseColor": {
+     "vec4": 16,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DustDiffuseColor": {
+     "vec4": 17,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1DiffuseColor": {
+     "vec4": 18,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1FresnelColor": {
+     "vec4": 19,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1Gloss": {
+     "vec4": 20,
+     "default": [
+      0.4000000059604645,
+      0,
+      0,
+      0
+     ]
+    },
+    "PMtl2DiffuseColor": {
+     "vec4": 21,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl2FresnelColor": {
+     "vec4": 22,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl2Gloss": {
+     "vec4": 23,
+     "default": [
+      0.4000000059604645,
+      0,
+      0,
+      0
+     ]
+    },
+    "Detail1Data": {
+     "vec4": 28,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "Detail2Data": {
+     "vec4": 29,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "Detail3Data": {
+     "vec4": 30,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "DetailAlbedoColor": {
+     "vec4": 31,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "DetailFresnelColor": {
+     "vec4": 32,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "DetailSelector": {
+     "vec4": 37,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    }
+   }
+  },
+  "quadenvironmentv5": {
+   "permutationIndex": 4,
+   "constantBufferBytes": 608,
+   "textures": [
+    "NormalMap",
+    "GlowMap",
+    "DustNoiseMap",
+    "AlbedoMap",
+    "RoughnessMap",
+    "DirtMap",
+    "MaterialMap",
+    "Detail1Map",
+    "Detail2Map"
+   ],
+   "sceneTextures": [
+    "EveSpaceSceneEnvMap",
+    "SSAOMap",
+    "EveSpaceSceneShadowMap",
+    "LightIndexBuffer",
+    "LightBuffer",
+    "LightProfileArray"
+   ],
+   "constants": {
+    "GeneralGlowColor": {
+     "vec4": 1,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DiffuseColor": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DiffuseColor": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DiffuseColor": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DiffuseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1FresnelColor": {
+     "vec4": 6,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2FresnelColor": {
+     "vec4": 7,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3FresnelColor": {
+     "vec4": 8,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4FresnelColor": {
+     "vec4": 9,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1Gloss": {
+     "vec4": 10,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2Gloss": {
+     "vec4": 11,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3Gloss": {
+     "vec4": 12,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4Gloss": {
+     "vec4": 13,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DustDiffuseColor": {
+     "vec4": 14,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DustDiffuseColor": {
+     "vec4": 15,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DustDiffuseColor": {
+     "vec4": 16,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DustDiffuseColor": {
+     "vec4": 17,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "GeneralTiling": {
+     "vec4": 28,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "DetailData": {
+     "vec4": 29,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Detail1AlbedoColor": {
+     "vec4": 32,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "Detail1FresnelColor": {
+     "vec4": 33,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "Detail2AlbedoColor": {
+     "vec4": 34,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "Detail2FresnelColor": {
+     "vec4": 35,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "Detail1Material": {
+     "vec4": 36,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "Detail2Material": {
+     "vec4": 37,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  "quadglassv5": {
+   "permutationIndex": 4,
+   "constantBufferBytes": 288,
+   "textures": [
+    "EveSceneFogVolumeMap",
+    "NormalMap",
+    "GlowMap",
+    "DustNoiseMap",
+    "AlbedoMap",
+    "RoughnessMap",
+    "DirtMap",
+    "MaterialMap",
+    "PaintMaskMap"
+   ],
+   "sceneTextures": [
+    "EveSpaceSceneEnvMap",
+    "LightIndexBuffer",
+    "LightBuffer",
+    "LightProfileArray"
+   ],
+   "constants": {
+    "GeneralGlowColor": {
+     "vec4": 1,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DiffuseColor": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DiffuseColor": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DiffuseColor": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DiffuseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1FresnelColor": {
+     "vec4": 6,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2FresnelColor": {
+     "vec4": 7,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3FresnelColor": {
+     "vec4": 8,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4FresnelColor": {
+     "vec4": 9,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1Gloss": {
+     "vec4": 10,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2Gloss": {
+     "vec4": 11,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3Gloss": {
+     "vec4": 12,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4Gloss": {
+     "vec4": 13,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DustDiffuseColor": {
+     "vec4": 14,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DustDiffuseColor": {
+     "vec4": 15,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DustDiffuseColor": {
+     "vec4": 16,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DustDiffuseColor": {
+     "vec4": 17,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    }
+   }
+  },
+  "quadheatdetailv5": {
+   "permutationIndex": 4,
+   "constantBufferBytes": 640,
+   "textures": [
+    "NormalMap",
+    "GlowMap",
+    "DustNoiseMap",
+    "AlbedoMap",
+    "RoughnessMap",
+    "DirtMap",
+    "MaterialMap",
+    "PaintMaskMap",
+    "PatternMask1Map",
+    "PatternMask2Map",
+    "HeatGlowNoiseMap",
+    "Detail1Map",
+    "Detail2Map"
+   ],
+   "sceneTextures": [
+    "EveSpaceSceneEnvMap",
+    "SSAOMap",
+    "EveSpaceSceneShadowMap",
+    "LightIndexBuffer",
+    "LightBuffer",
+    "LightProfileArray"
+   ],
+   "constants": {
+    "GeneralData": {
+     "vec4": 0,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "Mtl1DiffuseColor": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DiffuseColor": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DiffuseColor": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DiffuseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1FresnelColor": {
+     "vec4": 6,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2FresnelColor": {
+     "vec4": 7,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3FresnelColor": {
+     "vec4": 8,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4FresnelColor": {
+     "vec4": 9,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1Gloss": {
+     "vec4": 10,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2Gloss": {
+     "vec4": 11,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3Gloss": {
+     "vec4": 12,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4Gloss": {
+     "vec4": 13,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DustDiffuseColor": {
+     "vec4": 14,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DustDiffuseColor": {
+     "vec4": 15,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DustDiffuseColor": {
+     "vec4": 16,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DustDiffuseColor": {
+     "vec4": 17,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1DiffuseColor": {
+     "vec4": 18,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1FresnelColor": {
+     "vec4": 19,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1Gloss": {
+     "vec4": 20,
+     "default": [
+      0.4000000059604645,
+      0,
+      0,
+      0
+     ]
+    },
+    "PMtl2DiffuseColor": {
+     "vec4": 21,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl2FresnelColor": {
+     "vec4": 22,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl2Gloss": {
+     "vec4": 23,
+     "default": [
+      0.4000000059604645,
+      0,
+      0,
+      0
+     ]
+    },
+    "Mtl1HeatGlowData": {
+     "vec4": 24,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "Mtl2HeatGlowData": {
+     "vec4": 25,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "Mtl3HeatGlowData": {
+     "vec4": 26,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "Mtl4HeatGlowData": {
+     "vec4": 27,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "GeneralHeatGlowColor": {
+     "vec4": 28,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Detail1Data": {
+     "vec4": 29,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "Detail2Data": {
+     "vec4": 30,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "SecondaryDetail2Data": {
+     "vec4": 31,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "Detail3Data": {
+     "vec4": 32,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "DetailAlbedoColor": {
+     "vec4": 33,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "DetailFresnelColor": {
+     "vec4": 34,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "DetailSelector": {
+     "vec4": 39,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    }
+   }
+  },
+  "quadheatv5": {
+   "permutationIndex": 4,
+   "constantBufferBytes": 464,
+   "textures": [
+    "NormalMap",
+    "GlowMap",
+    "DustNoiseMap",
+    "AlbedoMap",
+    "RoughnessMap",
+    "DirtMap",
+    "MaterialMap",
+    "PaintMaskMap",
+    "PatternMask1Map",
+    "PatternMask2Map",
+    "HeatGlowNoiseMap"
+   ],
+   "sceneTextures": [
+    "EveSpaceSceneEnvMap",
+    "SSAOMap",
+    "EveSpaceSceneShadowMap",
+    "LightIndexBuffer",
+    "LightBuffer",
+    "LightProfileArray"
+   ],
+   "constants": {
+    "GeneralData": {
+     "vec4": 0,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "Mtl1DiffuseColor": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DiffuseColor": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DiffuseColor": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DiffuseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1FresnelColor": {
+     "vec4": 6,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2FresnelColor": {
+     "vec4": 7,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3FresnelColor": {
+     "vec4": 8,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4FresnelColor": {
+     "vec4": 9,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1Gloss": {
+     "vec4": 10,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2Gloss": {
+     "vec4": 11,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3Gloss": {
+     "vec4": 12,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4Gloss": {
+     "vec4": 13,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DustDiffuseColor": {
+     "vec4": 14,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DustDiffuseColor": {
+     "vec4": 15,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DustDiffuseColor": {
+     "vec4": 16,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DustDiffuseColor": {
+     "vec4": 17,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1DiffuseColor": {
+     "vec4": 18,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1FresnelColor": {
+     "vec4": 19,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1Gloss": {
+     "vec4": 20,
+     "default": [
+      0.4000000059604645,
+      0,
+      0,
+      0
+     ]
+    },
+    "PMtl2DiffuseColor": {
+     "vec4": 21,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl2FresnelColor": {
+     "vec4": 22,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl2Gloss": {
+     "vec4": 23,
+     "default": [
+      0.4000000059604645,
+      0,
+      0,
+      0
+     ]
+    },
+    "Mtl1HeatGlowData": {
+     "vec4": 24,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "Mtl2HeatGlowData": {
+     "vec4": 25,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "Mtl3HeatGlowData": {
+     "vec4": 26,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "Mtl4HeatGlowData": {
+     "vec4": 27,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "GeneralHeatGlowColor": {
+     "vec4": 28,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    }
+   }
+  },
+  "quadinstancedv5": {
+   "permutationIndex": 4,
+   "constantBufferBytes": 384,
+   "textures": [
+    "NormalMap",
+    "GlowMap",
+    "DustNoiseMap",
+    "AlbedoMap",
+    "RoughnessMap",
+    "DirtMap",
+    "MaterialMap",
+    "PatternMask1Map",
+    "PatternMask2Map"
+   ],
+   "sceneTextures": [
+    "EveSpaceSceneEnvMap",
+    "SSAOMap",
+    "EveSpaceSceneShadowMap",
+    "LightIndexBuffer",
+    "LightBuffer",
+    "LightProfileArray"
+   ],
+   "constants": {
+    "GeneralGlowColor": {
+     "vec4": 1,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DiffuseColor": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DiffuseColor": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DiffuseColor": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DiffuseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1FresnelColor": {
+     "vec4": 6,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2FresnelColor": {
+     "vec4": 7,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3FresnelColor": {
+     "vec4": 8,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4FresnelColor": {
+     "vec4": 9,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1Gloss": {
+     "vec4": 10,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2Gloss": {
+     "vec4": 11,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3Gloss": {
+     "vec4": 12,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4Gloss": {
+     "vec4": 13,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DustDiffuseColor": {
+     "vec4": 14,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DustDiffuseColor": {
+     "vec4": 15,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DustDiffuseColor": {
+     "vec4": 16,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DustDiffuseColor": {
+     "vec4": 17,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1DiffuseColor": {
+     "vec4": 18,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1FresnelColor": {
+     "vec4": 19,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1Gloss": {
+     "vec4": 20,
+     "default": [
+      0.4000000059604645,
+      0,
+      0,
+      0
+     ]
+    },
+    "PMtl2DiffuseColor": {
+     "vec4": 21,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl2FresnelColor": {
+     "vec4": 22,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl2Gloss": {
+     "vec4": 23,
+     "default": [
+      0.4000000059604645,
+      0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  "quadoilv5": {
+   "permutationIndex": 4,
+   "constantBufferBytes": 288,
+   "textures": [
+    "NormalMap",
+    "GlowMap",
+    "OilFilmLookupMap",
+    "DustNoiseMap",
+    "AlbedoMap",
+    "RoughnessMap",
+    "DirtMap",
+    "MaterialMap",
+    "PaintMaskMap"
+   ],
+   "sceneTextures": [
+    "EveSpaceSceneEnvMap",
+    "SSAOMap",
+    "EveSpaceSceneShadowMap",
+    "LightIndexBuffer",
+    "LightBuffer",
+    "LightProfileArray"
+   ],
+   "constants": {
+    "GeneralData": {
+     "vec4": 0,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "GeneralGlowColor": {
+     "vec4": 1,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DiffuseColor": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DiffuseColor": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DiffuseColor": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DiffuseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1FresnelColor": {
+     "vec4": 6,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2FresnelColor": {
+     "vec4": 7,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3FresnelColor": {
+     "vec4": 8,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4FresnelColor": {
+     "vec4": 9,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1Gloss": {
+     "vec4": 10,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2Gloss": {
+     "vec4": 11,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3Gloss": {
+     "vec4": 12,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4Gloss": {
+     "vec4": 13,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DustDiffuseColor": {
+     "vec4": 14,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DustDiffuseColor": {
+     "vec4": 15,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DustDiffuseColor": {
+     "vec4": 16,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DustDiffuseColor": {
+     "vec4": 17,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    }
+   }
+  },
+  "quadsailsv5": {
+   "permutationIndex": 4,
+   "constantBufferBytes": 464,
+   "textures": [
+    "NormalMap",
+    "GlowMap",
+    "DustNoiseMap",
+    "AlbedoMap",
+    "RoughnessMap",
+    "DirtMap",
+    "MaterialMap",
+    "PaintMaskMap",
+    "SailsDetailMap"
+   ],
+   "sceneTextures": [
+    "EveSpaceSceneEnvMap",
+    "SSAOMap",
+    "EveSpaceSceneShadowMap",
+    "LightIndexBuffer",
+    "LightBuffer",
+    "LightProfileArray"
+   ],
+   "constants": {
+    "GeneralGlowColor": {
+     "vec4": 1,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DiffuseColor": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DiffuseColor": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DiffuseColor": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DiffuseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1FresnelColor": {
+     "vec4": 6,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2FresnelColor": {
+     "vec4": 7,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3FresnelColor": {
+     "vec4": 8,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4FresnelColor": {
+     "vec4": 9,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1Gloss": {
+     "vec4": 10,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2Gloss": {
+     "vec4": 11,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3Gloss": {
+     "vec4": 12,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4Gloss": {
+     "vec4": 13,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DustDiffuseColor": {
+     "vec4": 14,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DustDiffuseColor": {
+     "vec4": 15,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DustDiffuseColor": {
+     "vec4": 16,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DustDiffuseColor": {
+     "vec4": 17,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "SailsDetailData": {
+     "vec4": 28,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  "quadv5": {
+   "permutationIndex": 4,
+   "constantBufferBytes": 384,
+   "textures": [
+    "NormalMap",
+    "GlowMap",
+    "DustNoiseMap",
+    "AlbedoMap",
+    "RoughnessMap",
+    "DirtMap",
+    "MaterialMap",
+    "PaintMaskMap",
+    "PatternMask1Map",
+    "PatternMask2Map"
+   ],
+   "sceneTextures": [
+    "EveSpaceSceneEnvMap",
+    "SSAOMap",
+    "EveSpaceSceneShadowMap",
+    "LightIndexBuffer",
+    "LightBuffer",
+    "LightProfileArray"
+   ],
+   "constants": {
+    "GeneralData": {
+     "vec4": 0,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "GeneralGlowColor": {
+     "vec4": 1,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DiffuseColor": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DiffuseColor": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DiffuseColor": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DiffuseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1FresnelColor": {
+     "vec4": 6,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2FresnelColor": {
+     "vec4": 7,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3FresnelColor": {
+     "vec4": 8,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4FresnelColor": {
+     "vec4": 9,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1Gloss": {
+     "vec4": 10,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2Gloss": {
+     "vec4": 11,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3Gloss": {
+     "vec4": 12,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4Gloss": {
+     "vec4": 13,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DustDiffuseColor": {
+     "vec4": 14,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DustDiffuseColor": {
+     "vec4": 15,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DustDiffuseColor": {
+     "vec4": 16,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DustDiffuseColor": {
+     "vec4": 17,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1DiffuseColor": {
+     "vec4": 18,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1FresnelColor": {
+     "vec4": 19,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl1Gloss": {
+     "vec4": 20,
+     "default": [
+      0.4000000059604645,
+      0,
+      0,
+      0
+     ]
+    },
+    "PMtl2DiffuseColor": {
+     "vec4": 21,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl2FresnelColor": {
+     "vec4": 22,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "PMtl2Gloss": {
+     "vec4": 23,
+     "default": [
+      0.4000000059604645,
+      0,
+      0,
+      0
+     ]
+    }
+   }
+  },
+  "quadwreckv5": {
+   "permutationIndex": 4,
+   "constantBufferBytes": 480,
+   "textures": [
+    "NormalMap",
+    "GlowMap",
+    "AlphaThresholdMap",
+    "DustNoiseMap",
+    "AlbedoMap",
+    "RoughnessMap",
+    "DirtMap",
+    "MaterialMap",
+    "PaintMaskMap"
+   ],
+   "sceneTextures": [
+    "EveSpaceSceneEnvMap",
+    "SSAOMap",
+    "EveSpaceSceneShadowMap",
+    "LightIndexBuffer",
+    "LightBuffer",
+    "LightProfileArray"
+   ],
+   "constants": {
+    "GeneralData": {
+     "vec4": 0,
+     "default": [
+      1,
+      0,
+      0,
+      0
+     ]
+    },
+    "GeneralGlowColor": {
+     "vec4": 1,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DiffuseColor": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DiffuseColor": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DiffuseColor": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DiffuseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1FresnelColor": {
+     "vec4": 6,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2FresnelColor": {
+     "vec4": 7,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3FresnelColor": {
+     "vec4": 8,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4FresnelColor": {
+     "vec4": 9,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1Gloss": {
+     "vec4": 10,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2Gloss": {
+     "vec4": 11,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3Gloss": {
+     "vec4": 12,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4Gloss": {
+     "vec4": 13,
+     "default": [
+      0.4000000059604645,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl1DustDiffuseColor": {
+     "vec4": 14,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl2DustDiffuseColor": {
+     "vec4": 15,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl3DustDiffuseColor": {
+     "vec4": 16,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "Mtl4DustDiffuseColor": {
+     "vec4": 17,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    },
+    "WreckColor": {
+     "vec4": 28,
+     "default": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "WreckFactors": {
+     "vec4": 29,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    }
+   }
+  }
+ }
+}
