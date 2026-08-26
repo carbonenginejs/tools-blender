@@ -79,6 +79,21 @@ OBJECT_INPUTS = (
 #: exposes those as different sockets, so it needs an input of its own.
 DUST_ALPHA = "DustNoiseAlpha"
 
+#: Where the pattern controls belong once they exist, decided with the operator.
+#:
+#: Each projection's own controls -- wrap mode U and V, mirror, the transform,
+#: and which base materials it may paint -- go in that projection's existing
+#: `Pattern Material 1` / `Pattern Material 2` panel, which comes from Carbon's
+#: own `Group` annotation. `Blend Mode` combines the two masks rather than
+#: belonging to either, so it goes in `General` or `Object`.
+#:
+#: Wrap mode is an integer input, 0 REPEAT / 1 EDGE / 2 BORDER: Blender 5.0 has
+#: menu sockets but shader trees have no switch node to consume one, and an
+#: image node's `extension` is a single setting for both axes while real data
+#: mixes them.
+PATTERN_PANELS = ("Pattern Material 1", "Pattern Material 2")
+PATTERN_SHARED_PANEL = "General"
+
 
 
 def _new_group(name: str) -> bpy.types.ShaderNodeTree:

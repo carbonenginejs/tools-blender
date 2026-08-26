@@ -210,6 +210,8 @@ def build(args):
             mlinks.new(node.outputs["Alpha"], group.inputs["DustNoiseAlpha"])
         print(f"  {os.path.basename(args.noise)} -> DustNoiseMap (UV x{scale:g})")
 
+    fill_unbound_textures(member, group, mnodes, mlinks, row)
+
     if "EmissionStrength" in group.inputs:
         group.inputs["EmissionStrength"].default_value = DEMO_EMISSION_STRENGTH
 
@@ -242,6 +244,60 @@ def build(args):
     hull.data.materials.clear()
     hull.data.materials.append(material)
     return hull
+
+
+BLACK_IMAGE = "carbon_black"
+
+
+def black_image():
+    """A shared 1x1 black image, for texture slots with nothing authored.
+
+    A SOF document with no SKIN resolves its pattern masks to
+    `res:/texture/global/black.dds`, so black is EVE's own neutral rather than a
+    stand-in: a mask of zero covers nothing. Generated rather than downloaded so
+    the preview works offline.
+    """
+
+    existing = bpy.data.images.get(BLACK_IMAGE)
+    if existing:
+        return existing
+    image = bpy.data.images.new(BLACK_IMAGE, width=1, height=1, alpha=True)
+    image.generated_color = (0.0, 0.0, 0.0, 1.0)
+    image.pixels = [0.0, 0.0, 0.0, 1.0]
+    image.colorspace_settings.name = "Non-Color"
+    return image
+
+
+def fill_unbound_textures(member, group, mnodes, mlinks, row):
+    """Gives every unfilled texture slot a labelled black image node.
+
+    The socket defaults are already black, so this changes nothing visually. It
+    makes the material self-describing instead: every map the shader binds is
+    present as a node a user can point at a file, which is the same reason the
+    add-on already creates unconnected nodes for Carbon-only maps.
+
+    Colourspace comes from Carbon's `Tr2sRGB` annotation, so the pattern masks
+    -- which do not carry it -- land as Non-Color, as do all the other masks.
+    """
+
+    filled = []
+    for texture in member.textures:
+        socket = group.inputs.get(texture)
+        if socket is None or socket.is_linked:
+            continue
+        node = mnodes.new("ShaderNodeTexImage")
+        node.image = black_image()
+        node.location = (-600, row)
+        node.label = texture
+        # Per-node, so pointing this at a real file keeps the right space.
+        node.image.colorspace_settings.name = (
+            "sRGB" if member.annotation(texture).srgb else "Non-Color"
+        )
+        mlinks.new(node.outputs["Color"], socket)
+        filled.append(texture)
+        row -= 300
+    if filled:
+        print(f"  black (Non-Color) for unauthored: {', '.join(filled)}")
 
 
 def frame(hull):
