@@ -21,6 +21,14 @@ Two consequences worth knowing before comparing against a client screenshot:
 * The final gamma and sRGB encode are Blender's view transform's job, so they
   are deliberately absent here.
 
+**Material colours are HDR.** EVE materials are authored with components above
+one -- three times a normal colour is common -- and nothing in this module
+clamps them. Blender's colour sockets hold values above one and preserve them
+through a ``.blend`` save and reload; the pipeline is float and linear
+throughout, and the view transform tone-maps only on output. Two things to know:
+the colour *picker* widget clamps what a user drags even though typed and
+scripted values persist, and no socket built here is given a maximum.
+
 This module imports ``bpy``; the arithmetic and the interface data do not.
 """
 
@@ -410,12 +418,21 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
         # Carbon carries an explicit F0 colour alongside the diffuse albedo.
         # Principled expresses a dielectric's F0 as
         # `0.08 * Specular IOR Level * Specular Tint`, so driving the tint with
-        # the fresnel colour at full level gives F0 = 0.08 * colour. That is the
-        # right hue and response, but Blender's dielectric range caps at 0.08
-        # while Carbon's authored values run far higher for metals, so strongly
-        # metallic materials are compressed. Blending Metallic would express
-        # them, but nothing measured says what that blend should be, so it is
-        # left as an input rather than invented.
+        # the fresnel colour at full level gives F0 = 0.08 * colour.
+        #
+        # That 0.08 looks like a hard ceiling and mostly is not one, because
+        # **EVE material colours are authored HDR** -- values above 1 are normal
+        # and 3x is common. A fresnel authored at 3 lands at F0 = 0.24, and
+        # 12.5 would reach a full mirror. So the mapping is not a faithful
+        # equality; it is a rescale that happens to put HDR-authored values in a
+        # sensible range. Whether it matches EVE's look cannot be judged until
+        # the environment probe exists, since F0 shows almost entirely through
+        # reflections.
+        #
+        # Nothing here clamps: Blender's sockets hold values above 1 and
+        # preserve them through a .blend round-trip (verified). The one place
+        # they are silently destroyed is the colour PICKER widget, which clamps
+        # what a user drags even though typed values persist.
         principled.inputs["Specular IOR Level"].default_value = 1.0
         links.new(fresnel, principled.inputs["Specular Tint"])
         links.new(fresnel, group_out.inputs["Fresnel"])
