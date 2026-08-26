@@ -347,6 +347,49 @@ def dirt_mask(dirt_map: float, dust_noise_w: float, dirt_level: float) -> float:
     return clamp((dirt_map * dust_noise_w) / divisor)
 
 
+def dirt_weights(mask: float) -> tuple[float, float]:
+    """The authored clean and dusty weights: `((1 - mask) ** 3, mask)`.
+
+    They deliberately do not sum to one.
+    """
+
+    inverse = 1.0 - mask
+    return (inverse * inverse * inverse, mask)
+
+
+def dirt_blend_factor(mask: float) -> float:
+    """How dusty a surface-parameter blend should be, for a given mask.
+
+    A consumer that lights once cannot blend two lit results, but it can carry
+    the authored *balance* across. Production weights the clean side by
+    `(1 - mask) ** 3` and the dusty side by `mask`, so the dusty share of the
+    total is::
+
+        mask / ((1 - mask) ** 3 + mask)
+
+    That is much dirtier than the mask alone: at a mask of 0.5 the surface is
+    80% dusty, not 50%. Using the raw mask as a mix factor -- the obvious thing
+    -- makes dirt far too weak, which is exactly how it first looked.
+    """
+
+    clean, dusty = dirt_weights(mask)
+    total = clean + dusty
+    return dusty / total if total > 0.0 else 0.0
+
+
+def dirt_energy(mask: float) -> float:
+    """The overall dimming the authored weights apply: `(1 - mask) ** 3 + mask`.
+
+    Below one across the mid-range -- 0.625 at a mask of 0.5 -- so a half-dirty
+    texel is genuinely darker than either side. Splitting the authored weights
+    into a blend factor and this scale reproduces the production result exactly
+    wherever the lighting is linear in the quantity, which the diffuse term is.
+    """
+
+    clean, dusty = dirt_weights(mask)
+    return clean + dusty
+
+
 def combine_dirt(clean: Sequence[float], dusty: Sequence[float], mask: float) -> tuple[float, ...]:
     """Blend a clean and a dusty result by the dirt mask.
 

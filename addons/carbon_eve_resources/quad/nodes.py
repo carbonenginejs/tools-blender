@@ -356,18 +356,36 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
         divisor = math("SUBTRACT", 1.0, level, location=(-840, -820))
         mask = math("DIVIDE", masked, divisor, location=(-680, -760), clamp=True,
                     label="dirt mask")
-        # Production blends two LIT results with pow(1-mask, 3) on the clean
-        # side; with one lighting pass the parameters are blended instead.
+
+        # Production weights the CLEAN side by (1 - mask)^3 and the dusty side
+        # by mask, then blends two lit results. Lighting once, the balance is
+        # carried across as the dusty share of the total, and the total itself
+        # is applied to the albedo as a dimming.
+        #
+        # Using the raw mask as a mix factor instead -- the obvious thing --
+        # makes dirt far too weak: at a mask of 0.5 the surface should be 80%
+        # dusty, not 50%.
+        inverse = math("SUBTRACT", 1.0, mask, location=(-620, -820))
+        cubed = math("POWER", inverse, 3.0, location=(-560, -820), label="(1-mask)^3")
+        total = math("ADD", cubed, mask, location=(-500, -790), label="dirt energy")
+        factor = math("DIVIDE", mask, total, location=(-440, -760), clamp=True,
+                      label="dusty share")
+
         if dusty is not None:
-            albedo = toward(clean, dusty, mask, (500, 300), "clean -> dusty")
+            albedo = toward(clean, dusty, factor, (500, 300), "clean -> dusty")
+            # The authored weights sum to less than one across the mid-range, so
+            # a half-dirty texel really is darker than either side.
+            dimmed = vector("SCALE", albedo, None, location=(620, 300), label="* dirt energy")
+            links.new(total, dimmed.node.inputs["Scale"])
+            albedo = dimmed
         if fresnel is not None and dusty_fresnel is not None:
-            fresnel = toward(fresnel, dusty_fresnel, mask, (500, 0), "F0 clean -> dusty")
+            fresnel = toward(fresnel, dusty_fresnel, factor, (500, 0), "F0 clean -> dusty")
         if roughness is not None and dusty_roughness is not None:
             node = nodes.new("ShaderNodeMix")
             node.data_type = "FLOAT"
             node.location = (500, -300)
             node.label = "roughness clean -> dusty"
-            links.new(mask, node.inputs["Factor"])
+            links.new(factor, node.inputs["Factor"])
             links.new(roughness, node.inputs[2])
             links.new(dusty_roughness, node.inputs[3])
             roughness = node.outputs[0]

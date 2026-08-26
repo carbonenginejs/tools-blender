@@ -446,3 +446,39 @@ class DustMaterial(unittest.TestCase):
 
     def test_dusty_roughness_is_rougher_without_the_map(self):
         self.assertAlmostEqual(reference.dusty_roughness(0.0, 1.0), 1.0, places=6)
+
+
+class DirtBlendCurve(unittest.TestCase):
+
+    def test_authored_weights_do_not_sum_to_one(self):
+        clean, dusty = reference.dirt_weights(0.5)
+        self.assertAlmostEqual(clean, 0.125, places=6)
+        self.assertAlmostEqual(dusty, 0.5, places=6)
+
+    def test_a_half_mask_is_eighty_percent_dusty(self):
+        # The raw mask as a mix factor gives 50% and makes dirt far too weak.
+        self.assertAlmostEqual(reference.dirt_blend_factor(0.5), 0.8, places=6)
+
+    def test_the_curve_is_dirtier_than_the_mask_everywhere_between(self):
+        for step in range(1, 100):
+            mask = step / 100.0
+            self.assertGreater(reference.dirt_blend_factor(mask), mask, f"mask={mask}")
+
+    def test_the_ends_still_pin(self):
+        self.assertAlmostEqual(reference.dirt_blend_factor(0.0), 0.0, places=6)
+        self.assertAlmostEqual(reference.dirt_blend_factor(1.0), 1.0, places=6)
+
+    def test_energy_dips_in_the_middle_and_returns_at_the_ends(self):
+        self.assertAlmostEqual(reference.dirt_energy(0.0), 1.0, places=6)
+        self.assertAlmostEqual(reference.dirt_energy(1.0), 1.0, places=6)
+        self.assertAlmostEqual(reference.dirt_energy(0.5), 0.625, places=6)
+
+    def test_the_split_reproduces_the_authored_combine(self):
+        # factor + energy together must equal the production weighting wherever
+        # the lighting is linear in the quantity.
+        for step in range(0, 101):
+            mask = step / 100.0
+            direct = reference.combine_dirt((0.8,), (0.2,), mask)[0]
+            factor = reference.dirt_blend_factor(mask)
+            split = (0.8 + (0.2 - 0.8) * factor) * reference.dirt_energy(mask)
+            self.assertAlmostEqual(direct, split, places=6, msg=f"mask={mask}")
