@@ -607,3 +607,36 @@ class Sails(unittest.TestCase):
         flat = reference.sails_selector((0.3, 0.4), 0.0, self._sampler(0.5), (55.0, 0.0))
         turned = reference.sails_selector((0.3, 0.4), 0.0, self._sampler(0.5), (55.0, 1.6))
         self.assertAlmostEqual(flat, turned, places=6)
+
+
+class DecalIndexBuffers(unittest.TestCase):
+
+    def setUp(self):
+        from carbon_eve_resources.quad import decals
+        self.decals = decals
+
+    def test_the_buffers_are_alternatives_not_parts(self):
+        # A Legion decal's seven buffers run 48, 45, 39, ... -- a LOD chain.
+        # Taking them all draws every level at once, which scatters stray faces
+        # across the hull because the coarser ones index different triangles.
+        buffers = [[0, 1, 2, 3, 4, 5], [6, 7, 8]]
+        self.assertEqual(len(self.decals.triangles_from_buffers(buffers)), 2)
+
+    def test_level_zero_is_the_most_detailed(self):
+        buffers = [[0, 1, 2, 3, 4, 5], [6, 7, 8]]
+        self.assertEqual(self.decals.triangles_from_buffers(buffers, lod=0),
+                         ((0, 1, 2), (3, 4, 5)))
+        self.assertEqual(self.decals.triangles_from_buffers(buffers, lod=1),
+                         ((6, 7, 8),))
+
+    def test_a_missing_level_falls_back_to_the_coarsest(self):
+        buffers = [[0, 1, 2], [3, 4, 5]]
+        self.assertEqual(self.decals.triangles_from_buffers(buffers, lod=9),
+                         ((3, 4, 5),))
+
+    def test_no_buffers_is_no_triangles(self):
+        self.assertEqual(self.decals.triangles_from_buffers(None), ())
+        self.assertEqual(self.decals.triangles_from_buffers([]), ())
+
+    def test_a_trailing_partial_triangle_is_dropped(self):
+        self.assertEqual(self.decals.triangles_from_buffers([[0, 1, 2, 3]]), ((0, 1, 2),))

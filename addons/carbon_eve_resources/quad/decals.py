@@ -84,20 +84,27 @@ class Decal:
         return self.shader == "decalv5.fx"
 
 
-def triangles_from_buffers(buffers: Optional[Sequence]) -> tuple:
-    """Flattens `staticIndexBuffers` into triangles.
+def triangles_from_buffers(buffers: Optional[Sequence], lod: int = 0) -> tuple:
+    """The triangles of ONE level of detail from `staticIndexBuffers`.
 
-    The buffers are index runs into the hull's own vertices, three per triangle.
-    A decal carries several -- a Legion's first has seven -- and they are taken
-    together rather than as alternatives.
+    The buffers are alternatives, not parts: each is a complete index run for
+    one LOD, and they shrink down the chain -- a Legion decal's seven run
+    48, 45, 39, 36, 33, 24, 21 indices. ccpwgl selects one with
+    `GetCurrentIndexBuffer`, and level 0 is the most detailed.
+
+    Taking them all together draws every LOD at once, and because the coarser
+    ones index different triangles the result is a scatter of stray faces across
+    the hull rather than a decal.
     """
 
-    triangles = []
-    for buffer in buffers or []:
-        indices = list(buffer or [])
-        for start in range(0, len(indices) - 2, 3):
-            triangles.append((indices[start], indices[start + 1], indices[start + 2]))
-    return tuple(triangles)
+    available = list(buffers or [])
+    if not available:
+        return ()
+    indices = list(available[min(lod, len(available) - 1)] or [])
+    return tuple(
+        (indices[start], indices[start + 1], indices[start + 2])
+        for start in range(0, len(indices) - 2, 3)
+    )
 
 
 def read_decals(document) -> list:
