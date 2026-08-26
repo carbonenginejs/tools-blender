@@ -408,16 +408,10 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
                 description="Dust noise alpha; drives the dirt mask. "
                             "The RGB channels drive the dusty albedo, F0 and roughness")
 
-    # Coverage comes from the projection group rather than from a texture: only
-    # a CLAMP_TO_BORDER axis can leave a texel uncovered, and that is decided by
-    # the projected coordinate, not by the mask image.
-    for index in (1, 2):
-        if f"PatternMask{index}Map" in member.textures:
-            _socket(tree, f"Pattern{index}Coverage", "NodeSocketFloat",
-                    panel=_panel(tree, PATTERN_PANELS[index - 1], panels),
-                    default=1.0, min_value=0.0, max_value=1.0,
-                    description=f"From the {PROJECTION_GROUP} group's Coverage {index}; "
-                                "zero outside a bordered projection")
+    # Pattern coverage sockets are added AFTER the constants below, so the
+    # Pattern Material panels are created after the Material ones and therefore
+    # sit under them. Panels appear in creation order, so touching one early
+    # would float it to the top.
 
     # --- Object inputs ------------------------------------------------------
     object_panel = _panel(tree, "Object", panels)
@@ -440,6 +434,18 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
         else:
             _socket(tree, exposed, "NodeSocketFloat", description=note,
                     default=float(constant.default[0]), panel=panel)
+
+    # Now that the Material panels exist, the Pattern Material ones land under
+    # them. Coverage comes from the projection group rather than from a texture:
+    # only a CLAMP_TO_BORDER axis can leave a texel uncovered, and that is
+    # decided by the projected coordinate, not by the mask image.
+    for index in (1, 2):
+        if f"PatternMask{index}Map" in member.textures:
+            _socket(tree, f"Pattern{index}Coverage", "NodeSocketFloat",
+                    panel=_panel(tree, PATTERN_PANELS[index - 1], panels),
+                    default=1.0, min_value=0.0, max_value=1.0,
+                    description=f"From the {PROJECTION_GROUP} group's Coverage {index}; "
+                                "zero outside a bordered projection")
 
     group_in = nodes.new("NodeGroupInput")
     group_in.location = (-1400, 0)
