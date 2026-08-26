@@ -94,6 +94,40 @@ DUST_ALPHA = "DustNoiseAlpha"
 PATTERN_PANELS = ("Pattern Material 1", "Pattern Material 2")
 PATTERN_SHARED_PANEL = "General"
 
+#: Object custom properties holding one ship's pattern projections.
+#:
+#: An `EveCustomMask` is per SHIP, not per area -- all four of a Legion's areas
+#: share the same two projections -- and in Carbon it lands in the per-object
+#: constant buffer. So it lives on the Blender OBJECT and is read with Attribute
+#: nodes, which keeps one source of truth for every material on that object and
+#: matches where Carbon puts it. `{}` is the mask index.
+MASK_PROPERTIES = {
+    "position": "carbon_mask{}_position",
+    "rotation": "carbon_mask{}_rotation",
+    "scaling": "carbon_mask{}_scaling",
+    "mirrored": "carbon_mask{}_mirrored",
+    "wrap": "carbon_mask{}_wrap",
+    "targets": "carbon_mask{}_targets",
+    "target4": "carbon_mask{}_target4",
+    "material": "carbon_mask{}_material",
+}
+
+#: The projection group's name; one per blend file, shared by every material.
+PROJECTION_GROUP = "Carbon Pattern Projection"
+
+#: `materialIndex` selects which material a projection paints with. Measured
+#: from the pixel stage's comparisons against 2, 3, 4 and 5:
+#:
+#:     < 1  Mtl1      3..4  Mtl4
+#:     1..2 Mtl2      4..5  PMtl1
+#:     2..3 Mtl3      >= 5  PMtl2
+#:
+#: Real SKINs use 4 and 5 -- a Legion's two masks are exactly that -- so only
+#: the pattern materials are implemented here; picking a base material as a
+#: pattern source is a documented gap rather than a silent wrong answer.
+MATERIAL_INDEX_PMTL1 = 4
+MATERIAL_INDEX_PMTL2 = 5
+
 
 
 def _new_group(name: str) -> bpy.types.ShaderNodeTree:
@@ -127,6 +161,224 @@ def _socket(tree, name, kind, *, description="", default=None, panel=None,
     return socket
 
 
+def build_projection_group() -> bpy.types.ShaderNodeTree:
+    """Builds the shared pattern-projection group.
+
+    It is a SEPARATE group from the material, and has to be: the projected UV
+    has to reach an Image Texture node whose colour then feeds the material, and
+    routing that through one group node would be a cycle. So this produces
+    coordinates and coverage, the material samples the masks with them, and the
+    result goes into the quad group.
+
+    It takes no inputs. Every value comes from the shaded object's custom
+    properties through Attribute nodes, so all of a ship's materials read one
+    source and a second ship with different masks needs no new material.
+
+    The projection, measured from the vertex stage::
+
+        p  = position, with x folded to |x| when the mask is mirrored
+        uv = (dot(p, row0), dot(p, row1)) * 0.5 + 0.5
+
+    which is the mask's inverse transform applied to the object-space position,
+    with the resulting [-1, 1] box mapped onto [0, 1].
+    """
+
+    tree = _new_group(PROJECTION_GROUP)
+    nodes, links = tree.nodes, tree.links
+
+    for index in (1, 2):
+        tree.interface.new_socket(
+            name=f"UV {index}", in_out="OUTPUT", socket_type="NodeSocketVector"
+        ).description = f"Projected coordinates for pattern mask {index}"
+        tree.interface.new_socket(
+            name=f"Coverage {index}", in_out="OUTPUT", socket_type="NodeSocketFloat"
+        ).description = (
+            "Zero where a CLAMP_TO_BORDER axis falls outside the projection, "
+            "which is the only wrap mode that can cover nothing"
+        )
+
+    output = nodes.new("NodeGroupOutput")
+    output.location = (900, 0)
+
+    coordinate = nodes.new("ShaderNodeTexCoord")
+    coordinate.location = (-1200, 0)
+
+    def attribute(name, row):
+        node = nodes.new("ShaderNodeAttribute")
+        node.attribute_type = "OBJECT"
+        node.attribute_name = name
+        node.location = (-1200, row)
+        node.label = name
+        return node
+
+    for index in (0, 1):
+        base = index * -900
+        props = {key: pattern.format(index) for key, pattern in MASK_PROPERTIES.items()}
+
+        mirrored = attribute(props["mirrored"], base - 200).outputs["Factor"]
+
+        # Mirroring folds the projection about the object's X = 0 plane: the
+        # shader adds (|x| - x), which leaves x alone when positive and negates
+        # it when not.
+        separate = nodes.new("ShaderNodeSeparateXYZ")
+        separate.location = (-1000, base)
+        links.new(coordinate.outputs["Object"], separate.inputs[0])
+
+        absolute = nodes.new("ShaderNodeMath")
+        absolute.operation = "ABSOLUTE"
+        absolute.location = (-840, base + 60)
+        links.new(separate.outputs["X"], absolute.inputs[0])
+
+        difference = nodes.new("ShaderNodeMath")
+        difference.operation = "SUBTRACT"
+        difference.location = (-700, base + 60)
+        links.new(absolute.outputs[0], difference.inputs[0])
+        links.new(separate.outputs["X"], difference.inputs[1])
+
+        folded = nodes.new("ShaderNodeMath")
+        folded.operation = "MULTIPLY_ADD"
+        folded.location = (-560, base + 60)
+        folded.label = "mirror fold"
+        links.new(difference.outputs[0], folded.inputs[0])
+        links.new(mirrored, folded.inputs[1])
+        links.new(separate.outputs["X"], folded.inputs[2])
+
+        combine = nodes.new("ShaderNodeCombineXYZ")
+        combine.location = (-420, base)
+        links.new(folded.outputs[0], combine.inputs["X"])
+        links.new(separate.outputs["Y"], combine.inputs["Y"])
+        links.new(separate.outputs["Z"], combine.inputs["Z"])
+
+        # TEXTURE mapping applies the INVERSE transform, which is what turns an
+        # object-space position into the mask's own space.
+        mapping = nodes.new("ShaderNodeMapping")
+        mapping.vector_type = "TEXTURE"
+        mapping.location = (-260, base)
+        mapping.label = f"mask {index} inverse transform"
+        links.new(combine.outputs[0], mapping.inputs["Vector"])
+        links.new(attribute(props["position"], base + 240).outputs["Vector"],
+                  mapping.inputs["Location"])
+        links.new(attribute(props["rotation"], base + 120).outputs["Vector"],
+                  mapping.inputs["Rotation"])
+        links.new(attribute(props["scaling"], base - 60).outputs["Vector"],
+                  mapping.inputs["Scale"])
+
+        # The [-1, 1] projection box onto [0, 1].
+        centred = nodes.new("ShaderNodeVectorMath")
+        centred.operation = "MULTIPLY_ADD"
+        centred.location = (-80, base)
+        centred.label = "[-1,1] -> [0,1]"
+        centred.inputs[1].default_value = (0.5, 0.5, 0.5)
+        centred.inputs[2].default_value = (0.5, 0.5, 0.5)
+        links.new(mapping.outputs["Vector"], centred.inputs[0])
+
+        wrap = attribute(props["wrap"], base - 320).outputs["Vector"]
+        wrap_parts = nodes.new("ShaderNodeSeparateXYZ")
+        wrap_parts.location = (60, base - 320)
+        links.new(wrap, wrap_parts.inputs[0])
+
+        uv_parts = nodes.new("ShaderNodeSeparateXYZ")
+        uv_parts.location = (60, base)
+        links.new(centred.outputs[0], uv_parts.inputs[0])
+
+        wrapped, coverage = [], None
+        for axis in (0, 1):
+            value = uv_parts.outputs[axis]
+            mode = wrap_parts.outputs[axis]
+            row = base - axis * 140
+
+            # REPEAT tiles; both clamping modes sample the edge. So the lookup
+            # is two cases, chosen by whether the mode is REPEAT.
+            fract = nodes.new("ShaderNodeMath")
+            fract.operation = "FRACT"
+            fract.location = (220, row + 70)
+            links.new(value, fract.inputs[0])
+
+            clamped = nodes.new("ShaderNodeClamp")
+            clamped.location = (220, row - 70)
+            links.new(value, clamped.inputs["Value"])
+
+            is_repeat = nodes.new("ShaderNodeMath")
+            is_repeat.operation = "LESS_THAN"
+            is_repeat.location = (220, row - 210)
+            is_repeat.inputs[1].default_value = 0.5
+            is_repeat.label = "mode == REPEAT"
+            links.new(mode, is_repeat.inputs[0])
+
+            pick = nodes.new("ShaderNodeMix")
+            pick.data_type = "FLOAT"
+            pick.location = (380, row)
+            links.new(is_repeat.outputs[0], pick.inputs["Factor"])
+            links.new(clamped.outputs[0], pick.inputs[2])
+            links.new(fract.outputs[0], pick.inputs[3])
+            wrapped.append(pick.outputs[0])
+
+            # Only BORDER can cover nothing, and only outside [0, 1].
+            is_border = nodes.new("ShaderNodeMath")
+            is_border.operation = "GREATER_THAN"
+            is_border.location = (380, row - 210)
+            is_border.inputs[1].default_value = 1.5
+            is_border.label = "mode == BORDER"
+            links.new(mode, is_border.inputs[0])
+
+            above = nodes.new("ShaderNodeMath")
+            above.operation = "GREATER_THAN"
+            above.location = (380, row - 350)
+            above.inputs[1].default_value = 0.0
+            links.new(value, above.inputs[0])
+
+            below = nodes.new("ShaderNodeMath")
+            below.operation = "LESS_THAN"
+            below.location = (380, row - 490)
+            below.inputs[1].default_value = 1.0
+            links.new(value, below.inputs[0])
+
+            inside = nodes.new("ShaderNodeMath")
+            inside.operation = "MULTIPLY"
+            inside.location = (540, row - 420)
+            links.new(above.outputs[0], inside.inputs[0])
+            links.new(below.outputs[0], inside.inputs[1])
+
+            # covered = 1 - isBorder * (1 - inside)
+            missing = nodes.new("ShaderNodeMath")
+            missing.operation = "SUBTRACT"
+            missing.location = (700, row - 420)
+            missing.inputs[0].default_value = 1.0
+            links.new(inside.outputs[0], missing.inputs[1])
+
+            lost = nodes.new("ShaderNodeMath")
+            lost.operation = "MULTIPLY"
+            lost.location = (700, row - 280)
+            links.new(is_border.outputs[0], lost.inputs[0])
+            links.new(missing.outputs[0], lost.inputs[1])
+
+            covered = nodes.new("ShaderNodeMath")
+            covered.operation = "SUBTRACT"
+            covered.location = (760, row - 140)
+            covered.inputs[0].default_value = 1.0
+            links.new(lost.outputs[0], covered.inputs[1])
+
+            if coverage is None:
+                coverage = covered.outputs[0]
+            else:
+                both = nodes.new("ShaderNodeMath")
+                both.operation = "MULTIPLY"
+                both.location = (820, row)
+                links.new(coverage, both.inputs[0])
+                links.new(covered.outputs[0], both.inputs[1])
+                coverage = both.outputs[0]
+
+        uv = nodes.new("ShaderNodeCombineXYZ")
+        uv.location = (560, base)
+        links.new(wrapped[0], uv.inputs["X"])
+        links.new(wrapped[1], uv.inputs["Y"])
+
+        links.new(uv.outputs[0], output.inputs[f"UV {index + 1}"])
+        links.new(coverage, output.inputs[f"Coverage {index + 1}"])
+
+    return tree
+
+
 def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
     """Builds (or rebuilds) the node group for one family member."""
 
@@ -155,6 +407,17 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
         _socket(tree, DUST_ALPHA, "NodeSocketFloat", panel=textures,
                 description="Dust noise alpha; drives the dirt mask. "
                             "The RGB channels drive the dusty albedo, F0 and roughness")
+
+    # Coverage comes from the projection group rather than from a texture: only
+    # a CLAMP_TO_BORDER axis can leave a texel uncovered, and that is decided by
+    # the projected coordinate, not by the mask image.
+    for index in (1, 2):
+        if f"PatternMask{index}Map" in member.textures:
+            _socket(tree, f"Pattern{index}Coverage", "NodeSocketFloat",
+                    panel=_panel(tree, PATTERN_PANELS[index - 1], panels),
+                    default=1.0, min_value=0.0, max_value=1.0,
+                    description=f"From the {PROJECTION_GROUP} group's Coverage {index}; "
+                                "zero outside a bordered projection")
 
     # --- Object inputs ------------------------------------------------------
     object_panel = _panel(tree, "Object", panels)
@@ -239,8 +502,88 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
                             location=(-520, y), clamp=True,
                             label=f"Mtl{layer + 1} weight"))
 
+    def toward(source, target, factor, location, label=""):
+        node = nodes.new("ShaderNodeMix")
+        node.data_type = "RGBA"
+        node.blend_type = "MIX"
+        node.location = location
+        node.label = label
+        links.new(factor, node.inputs["Factor"])
+        links.new(source, node.inputs[6])
+        if isinstance(target, tuple):
+            node.inputs[7].default_value = target
+        else:
+            links.new(target, node.inputs[7])
+        return node.outputs[2]
+
+    # --- Pattern coverage, one effective mask per projection ----------------
+    #
+    # A pattern does not tint the finished colour: it REPLACES a base material
+    # layer where its mask covers, per layer, gated by that projection's
+    # targetMaterials. Measured from the pixel stage, which for each layer n
+    # does `mix(Mtl_n, patternMaterial, maskSample * target[n])`, mask 1 then
+    # mask 2 -- which is what "pattern 2 on top of pattern 1" means.
+    patterns = []
+    for index in (1, 2):
+        mask_name = f"PatternMask{index}Map"
+        if not has(mask_name):
+            continue
+        sample = separate(value(mask_name), (-1200, 900 - index * 120))[0]
+        coverage_name = f"Pattern{index}Coverage"
+        if has(coverage_name):
+            sample = math("MULTIPLY", sample, value(coverage_name),
+                          location=(-1040, 900 - index * 120),
+                          label=f"mask {index} x coverage")
+
+        # ccpwgl binds mask 0 to PMtl1 and mask 1 to PMtl2; materialIndex can in
+        # principle name a base material too, which is not implemented.
+        prefix = f"PMtl{index}"
+        targets = nodes.new("ShaderNodeAttribute")
+        targets.attribute_type = "OBJECT"
+        targets.attribute_name = MASK_PROPERTIES["targets"].format(index - 1)
+        targets.location = (-1200, 700 - index * 120)
+        targets.label = targets.attribute_name
+        target_rgb = separate(targets.outputs["Color"], (-1040, 700 - index * 120))
+
+        target4 = nodes.new("ShaderNodeAttribute")
+        target4.attribute_type = "OBJECT"
+        target4.attribute_name = MASK_PROPERTIES["target4"].format(index - 1)
+        target4.location = (-1200, 640 - index * 120)
+        target4.label = target4.attribute_name
+
+        per_layer = [target_rgb[0], target_rgb[1], target_rgb[2], target4.outputs["Factor"]]
+        patterns.append((prefix, sample, per_layer))
+
+    def patterned(layer, socket, suffix, location, *, scalar=False):
+        """One layer's constant after every projection has had its say."""
+
+        for order, (prefix, sample, targets) in enumerate(patterns):
+            source = f"{prefix}{suffix}"
+            if not has(source):
+                continue
+            factor = math("MULTIPLY", sample, targets[layer],
+                          location=(location[0] - 120, location[1] - order * 40))
+            if scalar:
+                node = nodes.new("ShaderNodeMix")
+                node.data_type = "FLOAT"
+                node.location = (location[0], location[1] - order * 40)
+                links.new(factor, node.inputs["Factor"])
+                links.new(socket, node.inputs[2])
+                links.new(value(source), node.inputs[3])
+                socket = node.outputs[0]
+            else:
+                socket = toward(socket, value(source), factor,
+                                (location[0], location[1] - order * 40),
+                                f"{prefix} over Mtl{layer + 1}")
+        return socket
+
     def blend4(prefix, suffix, location_y, *, scalar=False):
-        """Weighted sum of the four per-layer constants."""
+        """Weighted sum of the four per-layer constants, patterns applied first.
+
+        Order matters: a pattern replaces a LAYER, so it has to happen before
+        the four layers are summed. Applying it to the summed result would tint
+        regions the projection never targeted.
+        """
 
         total = None
         for layer, weight in enumerate(weights):
@@ -248,16 +591,19 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
             if not has(name):
                 return None
             x = -340 + layer * 40
+            row = location_y - layer * 30
+            source = value(name)
+            if prefix == "Mtl" and patterns:
+                source = patterned(layer, source, suffix, (x - 260, row), scalar=scalar)
             if scalar:
-                term = math("MULTIPLY", value(name), weight,
-                            location=(x, location_y - layer * 30))
+                term = math("MULTIPLY", source, weight, location=(x, row))
                 total = term if total is None else math("ADD", total, term,
-                                                        location=(x + 20, location_y - layer * 30))
+                                                        location=(x + 20, row))
             else:
-                term = vector("SCALE", value(name), None, location=(x, location_y - layer * 30))
+                term = vector("SCALE", source, None, location=(x, row))
                 links.new(weight, term.node.inputs["Scale"])
                 total = term if total is None else vector("ADD", total, term,
-                                                          location=(x + 20, location_y - layer * 30))
+                                                          location=(x + 20, row))
         return total
 
     diffuse = blend4("Mtl", "DiffuseColor", 600)
@@ -273,20 +619,6 @@ def build_group(member: Optional[Member] = None) -> bpy.types.ShaderNodeTree:
         influence = value(influence_socket) if has(influence_socket) else None
         paint = math("MULTIPLY", paint_x, influence if influence else 1.0,
                      location=(-1000, 200), label="paint strength")
-
-    def toward(source, target, factor, location, label=""):
-        node = nodes.new("ShaderNodeMix")
-        node.data_type = "RGBA"
-        node.blend_type = "MIX"
-        node.location = location
-        node.label = label
-        links.new(factor, node.inputs["Factor"])
-        links.new(source, node.inputs[6])
-        if isinstance(target, tuple):
-            node.inputs[7].default_value = target
-        else:
-            links.new(target, node.inputs[7])
-        return node.outputs[2]
 
     if paint is not None and diffuse is not None:
         diffuse = toward(diffuse, (1.0, 1.0, 1.0, 1.0), paint, (-140, 600), "paint -> white")

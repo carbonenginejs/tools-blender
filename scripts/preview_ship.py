@@ -91,6 +91,90 @@ def import_geometry(path):
     return created
 
 
+def find_custom_masks(document):
+    """The ship's pattern projections, in order."""
+
+    masks = []
+
+    def walk(node):
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, dict):
+            if node.get("_type") == "EveCustomMask":
+                masks.append(node)
+            for value in node.values():
+                walk(value)
+
+    walk(document)
+    return masks
+
+
+def apply_custom_masks(obj, masks, effects):
+    """Writes the ship's projections onto the object as custom properties.
+
+    They belong to the SHIP, not to a material: every area shares the same two
+    projections, which is where Carbon puts them too -- the per-object constant
+    buffer. Materials read them back through Attribute nodes, so one edit here
+    reaches every area at once.
+
+    Wrap mode comes from the effect's `Tr2SamplerOverride`, not from the mask's
+    `clampU`/`clampV`: those are a boolean that cannot tell EDGE from BORDER.
+    """
+
+    import mathutils
+
+    address_to_mode = {1: 0.0, 3: 1.0, 4: 2.0}  # REPEAT, EDGE, BORDER
+
+    overrides = {}
+    for effect in effects:
+        for override in effect.get("samplerOverrides", []):
+            overrides[override.get("name", "")] = override
+
+    for index, mask in enumerate(masks[:2]):
+        prefix = f"carbon_mask{index}_"
+        obj[prefix + "position"] = tuple(mask.get("position") or (0.0, 0.0, 0.0))
+        obj[prefix + "scaling"] = tuple(mask.get("scaling") or (1.0, 1.0, 1.0))
+
+        # Stored as euler so it drops straight into a Mapping node; a
+        # four-component read would depend on the Attribute node's Alpha
+        # carrying w, which is not established.
+        x, y, z, w = tuple(mask.get("rotation") or (0.0, 0.0, 0.0, 1.0))
+        euler = mathutils.Quaternion((w, x, y, z)).to_euler()
+        obj[prefix + "rotation"] = (euler.x, euler.y, euler.z)
+
+        obj[prefix + "mirrored"] = 1.0 if mask.get("isMirrored") else 0.0
+
+        sampler = overrides.get(f"PatternMask{index + 1}MapSampler", {})
+        obj[prefix + "wrap"] = (
+            address_to_mode.get(sampler.get("addressUMode", sampler.get("addressU", 1)), 0.0),
+            address_to_mode.get(sampler.get("addressVMode", sampler.get("addressV", 1)), 0.0),
+            0.0,
+        )
+
+        targets = tuple(mask.get("targetMaterials") or (1.0, 1.0, 1.0, 1.0))
+        obj[prefix + "targets"] = tuple(targets[:3]) + (1.0,)
+        obj[prefix + "target4"] = float(targets[3]) if len(targets) > 3 else 1.0
+        obj[prefix + "material"] = float(mask.get("materialIndex", 0))
+
+        print(f"  mask {index}: wrap={obj[prefix + 'wrap'][:2]} "
+              f"mirrored={obj[prefix + 'mirrored']:g} "
+              f"targets={targets} materialIndex={mask.get('materialIndex')}")
+
+
+def ensure_projection(mnodes):
+    """One projection-group node per material, reusing the shared group."""
+
+    for node in mnodes:
+        if node.bl_idname == "ShaderNodeGroup" and node.node_tree                 and node.node_tree.name == nodes.PROJECTION_GROUP:
+            return node
+    tree = bpy.data.node_groups.get(nodes.PROJECTION_GROUP) or nodes.build_projection_group()
+    node = mnodes.new("ShaderNodeGroup")
+    node.node_tree = tree
+    node.location = (-1400, 400)
+    return node
+
+
 def build_area_material(area, family, resources, index):
     """One material for one mesh area, from its own effect."""
 
@@ -128,6 +212,18 @@ def build_area_material(area, family, resources, index):
         node.location = (-700, row)
         node.label = name
         mlinks.new(node.outputs["Color"], socket)
+
+        # Pattern masks are sampled with projected coordinates from the shared
+        # projection group, and the per-axis wrapping is done there, so the
+        # image node must not wrap on its own.
+        pattern_index = {"PatternMask1Map": 1, "PatternMask2Map": 2}.get(name)
+        if pattern_index is not None:
+            node.extension = "EXTEND"
+            projection = ensure_projection(mnodes)
+            mlinks.new(projection.outputs[f"UV {pattern_index}"], node.inputs["Vector"])
+            coverage = group.inputs.get(f"Pattern{pattern_index}Coverage")
+            if coverage is not None:
+                mlinks.new(projection.outputs[f"Coverage {pattern_index}"], coverage)
 
         scale = member.annotation(name).uv_scale
         if scale != 1.0:
@@ -188,6 +284,10 @@ def assemble(args):
         target = objects[0]
         if primary is None:
             primary = target
+        effects = [a.get("effect") or {} for b in BATCHES for a in (mesh.get(b) or [])]
+        masks = find_custom_masks(document)
+        if masks:
+            apply_custom_masks(target, masks, effects)
         print(f"\n{os.path.basename(path)} -> {target.name}, "
               f"{len(target.data.materials)} index group(s)")
 
