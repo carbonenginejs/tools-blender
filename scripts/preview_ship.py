@@ -462,6 +462,34 @@ def apply_ship_globals(objects, overrides=None):
     print(f"  ship values on {len(objects)} object(s): {listed}")
 
 
+def drive_ship_sockets(objects, source):
+    """Points every material's per-ship sockets at ONE object's properties.
+
+    The values are read through drivers rather than Attribute nodes because
+    EEVEE delivers only eight object attributes per material and silently
+    returns zero beyond that -- the pattern masks alone ask for sixteen. A
+    decal's driver targets the HULL, so a hull and everything on it stay in
+    step no matter which object is being shaded.
+    """
+
+    driven = materials = 0
+    seen = set()
+    for obj in objects:
+        for slot in getattr(obj, "material_slots", []):
+            material = slot.material
+            if material is None or material.name in seen or not material.use_nodes:
+                continue
+            seen.add(material.name)
+            for node in material.node_tree.nodes:
+                if node.bl_idname != "ShaderNodeGroup" or not node.node_tree:
+                    continue
+                count = nodes.drive_ship_values(node, source)
+                if count:
+                    driven += count
+                    materials += 1
+    print(f"  drove {driven} per-ship socket(s) across {materials} material group(s)")
+
+
 def build_decals(document, hull, resources, family):
     """Copies each decal's hull triangles into its own mesh and shades it.
 
@@ -688,8 +716,10 @@ def main():
         load_document(args.sof), primary,
         json.load(open(os.path.join(args.resources, "manifest.json"), encoding="utf-8")),
         load_family())
-    apply_ship_globals([primary] + list(decal_objects),
+    ship_objects = [primary] + list(decal_objects)
+    apply_ship_globals(ship_objects,
                        {"EmissionStrength": preview_quad.DEMO_EMISSION_STRENGTH})
+    drive_ship_sockets(ship_objects, primary)
     preview_quad.ENVIRONMENT[:] = [args.environment] if args.environment else []
     if args.sun_strength is not None:
         preview_quad.SUN_SCALE[0] = args.sun_strength

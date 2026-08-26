@@ -162,6 +162,45 @@ def _socket(tree, name, kind, *, description="", default=None, panel=None,
     return socket
 
 
+
+def drive_ship_values(group_node, obj):
+    """Drives a material's per-ship sockets from an object's properties.
+
+    Carbon holds age, activation, booster gain, emission strength and the kill
+    count once per OBJECT, so every area of a hull and every decal on it must
+    read the same number. An Attribute node would express that directly, but
+    EEVEE delivers only eight object attributes per material and returns zero
+    for the rest without saying so, and the pattern masks already spend all
+    eight and more.
+
+    A driver has no such budget. It reads the same custom property, updates
+    live when the operator edits it, and lets a decal point at the HULL rather
+    than at itself, which is what "one number per ship" actually means.
+
+    Returns the number of sockets driven.
+    """
+
+    driven = 0
+    for name, (prop, _) in SHIP_PROPERTIES.items():
+        socket = group_node.inputs.get(name)
+        if socket is None:
+            continue
+        index = list(group_node.inputs).index(socket)
+        group_node.id_data.driver_remove(f'nodes["{group_node.name}"].inputs[{index}].default_value')
+        driver = group_node.id_data.driver_add(
+            f'nodes["{group_node.name}"].inputs[{index}].default_value').driver
+        driver.type = "SCRIPTED"
+        variable = driver.variables.new()
+        variable.name = "v"
+        variable.targets[0].id_type = "OBJECT"
+        variable.targets[0].id = obj
+        variable.targets[0].data_path = f'["{prop}"]'
+        # A missing property leaves the socket at its own default rather than
+        # failing the whole driver, which would render as black.
+        driver.expression = "v"
+        driven += 1
+    return driven
+
 def build_projection_group() -> bpy.types.ShaderNodeTree:
     """Builds the shared pattern-projection group.
 
@@ -587,15 +626,26 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
             return group_in.outputs[name]
         if name not in SHIP_PROPERTIES:
             return None
-        # Read from the object, so a hull and all its decals share one value.
+        # A SOCKET, not an Attribute node. EEVEE delivers only EIGHT object
+        # attributes per material and silently returns zero for the rest, with
+        # no error and a valid-looking render. The two pattern masks already
+        # spend sixteen, so a ship value read through an attribute lands
+        # outside the eight that arrive and reads zero -- which is what turned
+        # the boosters black: activation and emission strength both went to
+        # zero and took the whole emissive term with them.
+        #
+        # `drive_ship_values` puts a driver on this socket instead, so the
+        # value still comes from the OBJECT and a hull and its decals still
+        # agree, at no attribute cost.
         if name not in ship:
             prop, default = SHIP_PROPERTIES[name]
-            node = nodes.new("ShaderNodeAttribute")
-            node.attribute_type = "OBJECT"
-            node.attribute_name = prop
-            node.location = (-1500, 600 - len(ship) * 120)
-            node.label = prop
-            ship[name] = node.outputs["Factor"]
+            socket = tree.interface.new_socket(
+                name=name, in_out="INPUT", socket_type="NodeSocketFloat")
+            socket.default_value = default
+            socket.description = (
+                f"Per-ship value, driven from the object's {prop} property"
+            )
+            ship[name] = group_in.outputs[name]
         return ship[name]
 
     def math(op, a, b=None, *, location=(0, 0), clamp=False, label=""):
@@ -1291,11 +1341,12 @@ def build_heat_displace_group() -> bpy.types.ShaderNodeTree:
                              [group_in.outputs[f"Mtl{n}HeatGlow boosterGain influence"] for n in range(1, 5)],
                              -300, -100)
 
-    gain = nodes.new("ShaderNodeAttribute")
-    gain.attribute_type = "OBJECT"
-    gain.attribute_name = SHIP_PROPERTIES["BoosterGain"][0]
-    gain.location = (-1200, -400)
-    gain.label = gain.attribute_name
+    # A socket, driven from the object -- see `drive_ship_values` for why this
+    # cannot be an Attribute node.
+    booster = tree.interface.new_socket(
+        name="BoosterGain", in_out="INPUT", socket_type="NodeSocketFloat")
+    booster.default_value = SHIP_PROPERTIES["BoosterGain"][1]
+    gain_socket = group_in.outputs["BoosterGain"]
 
     def math(op, a, b, location, clamp=False, label=""):
         node = nodes.new("ShaderNodeMath")
@@ -1310,7 +1361,7 @@ def build_heat_displace_group() -> bpy.types.ShaderNodeTree:
                 links.new(operand, node.inputs[index])
         return node.outputs[0]
 
-    shifted = math("SUBTRACT", gain.outputs["Factor"], reference.HEAT_GATE_START, (-150, -400))
+    shifted = math("SUBTRACT", gain_socket, reference.HEAT_GATE_START, (-150, -400))
     gate = math("MULTIPLY", shifted, reference.HEAT_GATE_SCALE, (-10, -400), clamp=True,
                 label="booster gate")
     below = math("SUBTRACT", gate, 1.0, (130, -400))
