@@ -25,12 +25,13 @@ const CAPS2_CUBEMAP = 0x200;
 
 function parseArguments(argv)
 {
-    const parsed = { input: "", output: "", width: 1024, alphaToRgb: true };
+    const parsed = { input: "", output: "", width: 1024, alphaToRgb: true, axes: "identity" };
     const rest = [];
     for (let index = 0; index < argv.length; index++)
     {
         if (argv[index] === "--width") parsed.width = Number(argv[++index]);
         else if (argv[index] === "--keep-colour") parsed.alphaToRgb = false;
+        else if (argv[index] === "--axes") parsed.axes = argv[++index];
         else rest.push(argv[index]);
     }
     [ parsed.input, parsed.output ] = rest;
@@ -91,7 +92,18 @@ function sampleCube(faces, x, y, z)
  *
  * Blender is Z-up where the cube is Y-up, so the cube's Y is fed Blender's Z.
  */
-function toEquirectangular(faces, width, alphaToRgb)
+/** How a direction handed to Blender maps onto the cube's own axes.
+ *
+ * The cube is sampled in the space the SHADER works in, not in Blender's world,
+ * so this is a convention to be established once and then left alone. `--axes`
+ * exists to establish it against a render rather than by argument.
+ */
+const AXES = {
+    identity: (x, y, z) => [ x, y, z ],
+    "z-up": (x, y, z) => [ x, z, y ],
+};
+
+function toEquirectangular(faces, width, alphaToRgb, axes)
 {
     const height = width >> 1;
     const out = Buffer.alloc(width * height * 4);
@@ -105,7 +117,7 @@ function toEquirectangular(faces, width, alphaToRgb)
             const phi = ((column + 0.5) / width - 0.5) * 2 * Math.PI;
             const x = -radius * Math.cos(phi);
             const y = radius * Math.sin(phi);
-            const [ red, green, blue, alpha ] = sampleCube(faces, x, z, y);
+            const [ red, green, blue, alpha ] = sampleCube(faces, ...axes(x, y, z));
             const offset = (row * width + column) * 4;
             // The alpha is ALSO written into RGB. Blender's Environment
             // Texture -- the only node that takes a direction -- has no alpha
@@ -166,7 +178,7 @@ function encodePng({ width, height, pixels })
 const parsed = parseArguments(process.argv.slice(2));
 const source = fs.readFileSync(parsed.input);
 const faces = readFaces(source);
-const image = toEquirectangular(faces, parsed.width, parsed.alphaToRgb);
+const image = toEquirectangular(faces, parsed.width, parsed.alphaToRgb, AXES[parsed.axes]);
 fs.writeFileSync(parsed.output, encodePng(image));
 
 /* A converted file goes STALE SILENTLY when EVE ships a new texture: the PNG
@@ -177,7 +189,7 @@ const sidecar = {
     tool: "prepare_cube_texture.mjs",
     generated: {
         width: image.width, height: image.height, layout: "equirectangular",
-        alphaInRgb: parsed.alphaToRgb,
+        alphaInRgb: parsed.alphaToRgb, axes: parsed.axes,
     },
     source: {
         path: parsed.input.split("\\").join("/"),
