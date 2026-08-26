@@ -413,6 +413,8 @@ def build_decals(document, hull, resources, family):
                 # A repeated triangle, or an index past the hull -- neither is
                 # worth losing the rest of the decal over.
                 continue
+        bm.verts.index_update()
+        order = {source: vertex.index for source, vertex in made.items()}
         bm.to_mesh(mesh)
         bm.free()
 
@@ -447,6 +449,7 @@ def build_decals(document, hull, resources, family):
         if decal.parent_bone >= 0:
             boned += 1
 
+        skin_like_hull(obj, hull, order)
         mesh.materials.append(build_decal_material(decal, resources))
         built.append(obj)
 
@@ -454,6 +457,42 @@ def build_decals(document, hull, resources, family):
         print(f"  ! {count} decal(s) skipped: {reason}")
     print(f"  built {len(built)} decal object(s); {boned} are skinned to a bone, identity at rest")
     return built
+
+
+def skin_like_hull(obj, hull, vertex_map):
+    """Makes a decal deform with the hull it was copied from.
+
+    A decal's vertices ARE hull vertices, so its weights are the hull's. Copying
+    the groups and adding the same armature modifier makes the decal follow
+    every deformation exactly, which is also the right answer to the bone
+    question: the shader takes parentBoneMatrix from JointMat, the SKINNING
+    matrices, so in Blender the armature does that work rather than the
+    projection.
+
+    Parenting alone only carries the object transform, so an animated hull
+    would deform out from under its decals.
+    """
+
+    if not hull.vertex_groups:
+        return
+
+    armature = next((m.object for m in hull.modifiers
+                     if m.type == "ARMATURE" and m.object), None)
+    if armature is None:
+        return
+
+    groups = {}
+    for group in hull.vertex_groups:
+        groups[group.index] = obj.vertex_groups.new(name=group.name)
+
+    for source_index, target_index in vertex_map.items():
+        for entry in hull.data.vertices[source_index].groups:
+            target = groups.get(entry.group)
+            if target is not None and entry.weight:
+                target.add([target_index], entry.weight, "REPLACE")
+
+    modifier = obj.modifiers.new(name="Armature", type="ARMATURE")
+    modifier.object = armature
 
 
 def build_decal_material(decal, resources):

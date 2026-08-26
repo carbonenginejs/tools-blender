@@ -548,9 +548,24 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         if annotation.is_color:
             _socket(tree, exposed, "NodeSocketColor", description=note,
                     default=tuple(constant.default[:3]) + (1.0,), panel=panel)
-        else:
-            _socket(tree, exposed, "NodeSocketFloat", description=note,
-                    default=float(constant.default[0]), panel=panel)
+            continue
+
+        # A vec4 of four separate quantities gets a socket per lane, named from
+        # Carbon's own annotations -- MtlNHeatGlowData is boosterGain
+        # influence, Shimmer speed, Shimmer size and Shimmer strength, and
+        # exposing only .x silently drops three of them. A renamed constant is
+        # excluded: renaming is the statement that one lane is the meaningful
+        # one, which is why GeneralData stays a single PaintMaskInfluence.
+        lanes = [] if exposed != name else annotation.components()
+        if len(lanes) > 1:
+            for index, lane in enumerate(lanes):
+                _socket(tree, f"{name.replace('Data', '')} {lane}", "NodeSocketFloat",
+                        description=f"{name}.{'xyzw'[index]}", panel=panel,
+                        default=float(constant.default[index]))
+            continue
+
+        _socket(tree, exposed, "NodeSocketFloat", description=note,
+                default=float(constant.default[0]), panel=panel)
 
     # Now that the Material panels exist, the Pattern Material ones land under
     # them. Coverage comes from the projection group rather than from a texture:

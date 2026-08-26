@@ -136,6 +136,24 @@ class Annotation:
     def has_transparency(self) -> bool:
         return bool(self.values.get("HasTransparency", False))
 
+    def components(self) -> list:
+        """Every named vec4 lane, in order, or an empty list.
+
+        Carbon names them when a constant is four separate quantities rather
+        than a colour: `MtlNHeatGlowData` is
+        ``boosterGain influence``, ``Shimmer speed``, ``Shimmer size``,
+        ``Shimmer strength``. A consumer exposing only ``.x`` silently drops
+        three of them.
+        """
+
+        names = []
+        for index in range(1, 5):
+            name = self.component(index)
+            if not name:
+                break
+            names.append(name)
+        return names
+
     def component(self, index: int) -> str:
         """The authored name of one vec4 lane, 1-based, or an empty string.
 
