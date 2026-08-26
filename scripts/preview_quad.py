@@ -322,17 +322,75 @@ def frame(hull):
 
     light_data = bpy.data.lights.new("Sun", type="SUN")
     light_data.energy = 4.0
+    SUN_LIGHT.append(light_data)
     light = bpy.data.objects.new("Sun", light_data)
     light.rotation_euler = (math.radians(55), 0.0, math.radians(35))
     bpy.context.collection.objects.link(light)
 
-    set_world(ENVIRONMENT[0] if ENVIRONMENT else "")
+    image, manifest = read_environment(ENVIRONMENT[0] if ENVIRONMENT else "")
+    set_world(image)
+    if manifest:
+        apply_sun(manifest)
     set_viewport_clipping(radius)
     add_glare()
 
 
 #: Set by a caller to use an EVE nebula as the world environment.
 ENVIRONMENT = []
+
+#: The scene's sun, so a system's star can recolour it after framing.
+SUN_LIGHT = []
+
+
+def apply_sun(manifest):
+    """Colours the sun from the system's own star.
+
+    tools-core derives both from the star record, so this only applies them:
+    colour from the blackbody temperature, intensity from the luminosity curve.
+    Blender's sun strength is irradiance in W/m2 rather than EVE's relative
+    number, so the intensity scales a sensible default rather than being used
+    raw -- the ratio between two stars is meaningful, the absolute value is not.
+    """
+
+    sun = (manifest or {}).get("sun") or {}
+    colour = sun.get("color") or [1.0, 1.0, 1.0]
+    intensity = float(sun.get("intensity") or 1.0)
+    for data in SUN_LIGHT:
+        data.color = tuple(colour[:3])
+        data.energy = 3.0 * intensity
+    system = (manifest or {}).get("system") or {}
+    print(f"  sun: {system.get('name', '?')} {sun.get('star') or ''} "
+          f"colour {[round(c, 3) for c in colour[:3]]} intensity {intensity:.3f}")
+
+
+def read_environment(path):
+    """Resolves --environment to an image and the system's sun, if given a dir.
+
+    `prepare_environment.mjs` writes an `environment.hdr` next to an
+    `environment.json` holding the star's colour and intensity, both of which
+    tools-core derives -- colour from the blackbody temperature, intensity from
+    the luminosity curve. Accepting either the directory or the image keeps the
+    common case one argument.
+    """
+
+    import json
+    import os
+
+    if not path:
+        return "", None
+    if os.path.isdir(path):
+        manifest_path = os.path.join(path, "environment.json")
+        if os.path.exists(manifest_path):
+            with open(manifest_path, encoding="utf-8") as handle:
+                manifest = json.load(handle)
+            image = os.path.join(path, manifest.get("environment", "environment.hdr"))
+            return image, manifest
+        for name in ("environment.hdr", "environment.png"):
+            candidate = os.path.join(path, name)
+            if os.path.exists(candidate):
+                return candidate, None
+        return "", None
+    return path, None
 
 
 def set_world(environment_path="", strength=1.0):
