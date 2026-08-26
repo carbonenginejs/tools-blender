@@ -418,6 +418,47 @@ def combine_dirt(clean: Sequence[float], dusty: Sequence[float], mask: float) ->
     return tuple(c * clean_weight + d * mask for c, d in zip(clean, dusty))
 
 
+#: Sampler address modes, as Carbon stores them after
+#: `EveSOFDataPatternLayer.ToAddressMode`. A pattern projection sets U and V
+#: independently, so all nine combinations are reachable.
+WRAP_REPEAT = 1
+WRAP_EDGE = 3
+WRAP_BORDER = 4
+
+#: The projection types authored on the pattern layer, and what they convert to.
+PROJECTION_TO_WRAP = {0: WRAP_REPEAT, 1: WRAP_EDGE, 2: WRAP_BORDER}
+
+
+def wrap_coordinate(value: float, mode: int) -> float:
+    """One projected coordinate after its wrap mode.
+
+    `REPEAT` tiles, and both clamping modes pin the lookup to the edge -- they
+    differ in what happens *outside*, which is `pattern_coverage`'s job rather
+    than this one's.
+    """
+
+    if mode == WRAP_REPEAT:
+        return value - int(value // 1) * 1.0 if value >= 0 else value - (value // 1)
+    return clamp(value)
+
+
+def pattern_coverage(u: float, v: float, mode_u: int, mode_v: int) -> float:
+    """Whether a projected texel is covered at all, given the wrap modes.
+
+    Only `CLAMP_TO_BORDER` can produce "nothing here": outside `[0, 1]` the
+    lookup returns the border, which for pattern projections is black, and the
+    pattern therefore covers nothing. `REPEAT` and `CLAMP_TO_EDGE` always cover.
+
+    Returned as a factor to multiply the sampled mask by, so a consumer whose
+    renderer lacks a border mode gets the same answer without emulating one.
+    """
+
+    for value, mode in ((u, mode_u), (v, mode_v)):
+        if mode == WRAP_BORDER and not (0.0 <= value <= 1.0):
+            return 0.0
+    return 1.0
+
+
 def sails_selector(
     uv: Sequence[float],
     material_map: float,

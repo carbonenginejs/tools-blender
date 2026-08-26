@@ -503,3 +503,43 @@ class SocketNaming(unittest.TestCase):
             if name == "GeneralData":
                 continue
             self.assertEqual(socket_name(name), name)
+
+
+class PatternWrap(unittest.TestCase):
+
+    def test_projection_types_convert_to_address_modes(self):
+        # EveSOFDataPatternLayer.ToAddressMode: 0->1, 1->3, 2->4.
+        self.assertEqual(reference.PROJECTION_TO_WRAP[0], reference.WRAP_REPEAT)
+        self.assertEqual(reference.PROJECTION_TO_WRAP[1], reference.WRAP_EDGE)
+        self.assertEqual(reference.PROJECTION_TO_WRAP[2], reference.WRAP_BORDER)
+
+    def test_repeat_tiles(self):
+        for value, expected in ((0.25, 0.25), (1.25, 0.25), (2.5, 0.5)):
+            self.assertAlmostEqual(
+                reference.wrap_coordinate(value, reference.WRAP_REPEAT), expected, places=6)
+
+    def test_both_clamping_modes_pin_the_lookup_to_the_edge(self):
+        # They differ outside the range, not in where they sample.
+        for mode in (reference.WRAP_EDGE, reference.WRAP_BORDER):
+            self.assertAlmostEqual(reference.wrap_coordinate(1.7, mode), 1.0, places=6)
+            self.assertAlmostEqual(reference.wrap_coordinate(-0.3, mode), 0.0, places=6)
+
+    def test_only_border_stops_covering(self):
+        R, E, B = reference.WRAP_REPEAT, reference.WRAP_EDGE, reference.WRAP_BORDER
+        self.assertEqual(reference.pattern_coverage(1.7, 0.5, R, R), 1.0)
+        self.assertEqual(reference.pattern_coverage(1.7, 0.5, E, E), 1.0)
+        self.assertEqual(reference.pattern_coverage(1.7, 0.5, B, B), 0.0)
+
+    def test_the_axes_are_independent(self):
+        R, B = reference.WRAP_REPEAT, reference.WRAP_BORDER
+        # Outside in V only, with V bordered and U repeating.
+        self.assertEqual(reference.pattern_coverage(1.7, 1.7, R, B), 0.0)
+        self.assertEqual(reference.pattern_coverage(1.7, 0.5, R, B), 1.0)
+        self.assertEqual(reference.pattern_coverage(1.7, 1.7, B, R), 0.0)
+
+    def test_inside_the_range_every_combination_covers(self):
+        modes = (reference.WRAP_REPEAT, reference.WRAP_EDGE, reference.WRAP_BORDER)
+        for mode_u in modes:
+            for mode_v in modes:
+                self.assertEqual(
+                    reference.pattern_coverage(0.5, 0.5, mode_u, mode_v), 1.0)
