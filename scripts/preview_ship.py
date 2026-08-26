@@ -686,7 +686,10 @@ def build_decal_material(decal, resources):
     elif glow_colour:
         principled.inputs["Emission Color"].default_value = tuple(glow_colour[:3]) + (1.0,)
 
-    if transparency is not None:
+    if decal.shader == "decalcounterv5.fx" and transparency is not None:
+        wire_kill_counter(decal, principled, transparency, projection,
+                          mnodes, mlinks, glow_colour, intensity)
+    elif transparency is not None:
         mlinks.new(transparency.outputs["Color"], principled.inputs["Alpha"])
 
     # The shader alpha-blends with ZWRITEENABLE off: decals are depth-TESTED
@@ -703,6 +706,56 @@ def build_decal_material(decal, resources):
 
     mlinks.new(principled.outputs["BSDF"], output.inputs["Surface"])
     return material
+
+
+def wire_kill_counter(decal, principled, transparency, projection, mnodes, mlinks,
+                      glow_colour, intensity):
+    """Draws a kill counter as tally marks driven by the ship's count.
+
+    The counter decal carries no number of its own: the count arrives per
+    OBJECT, and the shader turns it into nine columns by three rows of marks,
+    lighting as many in each row as that row's decimal digit and discarding the
+    rest. The mark texture is sampled nine times across, which is why it repeats
+    here where every other decal map clips.
+    """
+
+    counter = mnodes.new("ShaderNodeGroup")
+    counter.node_tree = nodes.build_kill_counter_group()
+    counter.location = (-400, -200)
+    mlinks.new(projection.outputs["UV"], counter.inputs["UV"])
+
+    transparency.extension = "REPEAT"
+    mlinks.new(counter.outputs["Mark UV"], transparency.inputs["Vector"])
+
+    # alpha = coverage * (mark * intensity)^2 -- the square is the shader's own,
+    # applied after the scaling, and it is what keeps the marks hard-edged.
+    scaled = mnodes.new("ShaderNodeMath")
+    scaled.operation = "MULTIPLY"
+    scaled.location = (-200, -300)
+    scaled.label = "mark x intensity"
+    mlinks.new(transparency.outputs["Color"], scaled.inputs[0])
+    scaled.inputs[1].default_value = float(intensity[0]) if intensity else 1.0
+
+    squared = mnodes.new("ShaderNodeMath")
+    squared.operation = "MULTIPLY"
+    squared.location = (-60, -300)
+    squared.label = "squared"
+    mlinks.new(scaled.outputs[0], squared.inputs[0])
+    mlinks.new(scaled.outputs[0], squared.inputs[1])
+
+    alpha = mnodes.new("ShaderNodeMath")
+    alpha.operation = "MULTIPLY"
+    alpha.location = (80, -300)
+    alpha.label = "discarded where no mark"
+    mlinks.new(squared.outputs[0], alpha.inputs[0])
+    mlinks.new(counter.outputs["Coverage"], alpha.inputs[1])
+    mlinks.new(alpha.outputs[0], principled.inputs["Alpha"])
+
+    # The counter glows rather than reflecting: its colour is emissive.
+    if glow_colour:
+        principled.inputs["Emission Color"].default_value = tuple(glow_colour[:3]) + (1.0,)
+        principled.inputs["Emission Strength"].default_value = 1.0
+        principled.inputs["Base Color"].default_value = (0.0, 0.0, 0.0, 1.0)
 
 
 def main():

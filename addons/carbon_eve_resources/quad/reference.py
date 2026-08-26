@@ -26,6 +26,7 @@ library alone.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Sequence
 
 
@@ -619,3 +620,77 @@ def heat_emissive(
     glow = glow_at((uv[0] + offset[0], uv[1] + offset[1]))
     strength = amount * pow(glow * glow, GLOW_OUTER_EXPONENT) * activation
     return tuple(channel * strength for channel in colour[:3])  # type: ignore[return-value]
+
+
+#: The kill counter's grid, measured from `decalcounterv5`'s pixel stage.
+#:
+#: The shader works in a coordinate that is the decal's projected UV shifted
+#: into ``[0, 2]``, and multiplies it by 4.5 and 1.5 before truncating. Over the
+#: decal's own ``[0, 1]`` that is NINE columns and THREE rows.
+KILL_COUNTER_COLUMNS = 9.0
+KILL_COUNTER_ROWS = 3.0
+
+#: ``log2(10)``, as the shader spells it: it raises ten to a power by
+#: ``exp2(x * 3.32192802)`` rather than calling a decimal power.
+KILL_COUNTER_LOG2_TEN = 3.32192802
+
+
+def kill_counter_digit(count: float, row: int) -> float:
+    """The decimal digit a row of the kill counter shows.
+
+    Row 0 is units, row 1 tens, row 2 hundreds, which is why the shader raises
+    ten to the row. The half added before truncating is the shader's own, and it
+    is what keeps a count that arrives as 6.999998 from reading as five.
+    """
+
+    place = pow(2.0, KILL_COUNTER_LOG2_TEN * row)
+    following = pow(2.0, KILL_COUNTER_LOG2_TEN * (row + 1.0))
+    share = count / following
+    # The shader takes fract() of the absolute value and restores the sign, so a
+    # negative count folds the same way rather than clamping.
+    folded = math.fmod(abs(share), 1.0)
+    if share < 0.0:
+        folded = -folded
+    return float(int((folded * following + 0.5) / place))
+
+
+def kill_counter_coverage(uv: Sequence[float], count: float) -> float:
+    """Whether one point of the counter decal draws a mark.
+
+    The counter is not a row of glyphs: each of the three rows draws as many
+    TALLY MARKS as its decimal digit, up to nine, and the shader DISCARDS the
+    rest. So 27 kills is seven marks on the units row and two on the tens row.
+
+    Zero outside the decal's own box, because the shader also discards there.
+    """
+
+    point = (uv[0] * 2.0, uv[1] * 2.0)
+    if not (0.0 <= point[0] <= 2.0 and 0.0 <= point[1] <= 2.0):
+        return 0.0
+    column = float(int(point[0] * 4.5))
+    row = float(int(point[1] * 1.5))
+    digit = kill_counter_digit(count, row)
+    # The shader discards where the digit is BELOW the column's centre, so a
+    # digit of three lights columns 0, 1 and 2.
+    return 0.0 if digit < column + 0.5 else 1.0
+
+
+def kill_counter_mark_uv(uv: Sequence[float]) -> tuple:
+    """Where one mark of the counter samples its texture.
+
+    Nine repeats across, one down: the horizontal scale matches the column
+    count, so each column samples the whole mark.
+    """
+
+    return (uv[0] * 2.0 * 4.5, uv[1] * 2.0 * 0.5)
+
+
+def kill_counter_alpha(mark: float, intensity: float, coverage: float) -> float:
+    """The counter's opacity: the mark texture, scaled, then SQUARED.
+
+    The square is the shader's, applied after both scalings, and it is what
+    makes the marks read as hard-edged rather than as a soft smear.
+    """
+
+    scaled = mark * intensity
+    return coverage * scaled * scaled

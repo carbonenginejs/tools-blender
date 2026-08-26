@@ -685,3 +685,30 @@ class HeatGlow(unittest.TestCase):
     def test_heat_uses_the_same_exponent_as_the_base_glow(self):
         value = reference.heat_emissive(lambda uv: 0.5, (0, 0), (0, 0), (1, 1, 1), 1.0, 1.0)
         self.assertAlmostEqual(value[0], pow(0.5, 2.4), places=6)
+
+
+class KillCounterTests(unittest.TestCase):
+    """`decalcounterv5` draws tally marks, not digits."""
+
+    def test_digits_split_into_units_tens_hundreds(self):
+        for count, expected in ((0, [0, 0, 0]), (7, [7, 0, 0]), (10, [0, 1, 0]),
+                                (27, [7, 2, 0]), (105, [5, 0, 1]), (999, [9, 9, 9])):
+            rows = [int(reference.kill_counter_digit(count, row)) for row in (0, 1, 2)]
+            self.assertEqual(rows, expected, f"count {count}")
+
+    def test_a_row_lights_one_mark_per_unit(self):
+        # The bottom row spans v in [0, 1/3); nine columns across u.
+        lit = [reference.kill_counter_coverage(((column + 0.5) / 9.0, 0.1), 3)
+               for column in range(9)]
+        self.assertEqual(lit, [1.0, 1.0, 1.0] + [0.0] * 6)
+
+    def test_nothing_is_drawn_outside_the_decal(self):
+        for uv in ((-0.1, 0.5), (1.1, 0.5), (0.5, -0.1), (0.5, 1.1)):
+            self.assertEqual(reference.kill_counter_coverage(uv, 9), 0.0, uv)
+
+    def test_the_mark_texture_repeats_nine_times_across(self):
+        self.assertEqual(reference.kill_counter_mark_uv((1.0, 1.0)), (9.0, 1.0))
+
+    def test_alpha_squares_after_scaling(self):
+        self.assertAlmostEqual(reference.kill_counter_alpha(0.5, 2.0, 1.0), 1.0)
+        self.assertEqual(reference.kill_counter_alpha(0.5, 2.0, 0.0), 0.0)

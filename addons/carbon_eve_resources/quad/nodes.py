@@ -1065,6 +1065,117 @@ def build_all() -> list:
 DECAL_PROJECTION_GROUP = "Carbon Decal Projection"
 
 
+
+#: The kill counter's group name; one per blend file.
+KILL_COUNTER_GROUP = "Carbon Kill Counter"
+
+
+def build_kill_counter_group() -> bpy.types.ShaderNodeTree:
+    """Turns a kill count into tally marks, as `decalcounterv5` does.
+
+    The counter is not a number drawn with digit glyphs. The decal is a grid of
+    NINE columns and THREE rows, and each row lights as many marks as its own
+    decimal digit -- units, tens, hundreds -- discarding the rest. Twenty-seven
+    kills is seven marks on the bottom row and two on the next.
+
+    `KillCount` is one value per SHIP, so it arrives on a socket that
+    `drive_ship_values` drives from the object, exactly like activation.
+    """
+
+    existing = bpy.data.node_groups.get(KILL_COUNTER_GROUP)
+    if existing is not None:
+        return existing
+
+    tree = _new_group(KILL_COUNTER_GROUP)
+    nodes, links = tree.nodes, tree.links
+
+    tree.interface.new_socket(name="UV", in_out="INPUT", socket_type="NodeSocketVector")
+    count_socket = tree.interface.new_socket(
+        name="KillCount", in_out="INPUT", socket_type="NodeSocketFloat")
+    count_socket.default_value = SHIP_PROPERTIES["KillCount"][1]
+    tree.interface.new_socket(
+        name="Mark UV", in_out="OUTPUT", socket_type="NodeSocketVector"
+    ).description = "Nine mark widths across the decal, one down"
+    tree.interface.new_socket(
+        name="Coverage", in_out="OUTPUT", socket_type="NodeSocketFloat"
+    ).description = "One where a mark is drawn; zero where the shader discards"
+
+    group_in = nodes.new("NodeGroupInput")
+    group_in.location = (-1200, 0)
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (900, 0)
+
+    def math(op, a, b=None, *, location=(0, 0), label="", clamp=False):
+        node = nodes.new("ShaderNodeMath")
+        node.operation = op
+        node.use_clamp = clamp
+        node.location = location
+        node.label = label
+        for index, operand in enumerate((a, b)):
+            if operand is None:
+                continue
+            if isinstance(operand, (int, float)):
+                node.inputs[index].default_value = operand
+            else:
+                links.new(operand, node.inputs[index])
+        return node.outputs[0]
+
+    separate = nodes.new("ShaderNodeSeparateXYZ")
+    separate.location = (-1000, 0)
+    links.new(group_in.outputs["UV"], separate.inputs[0])
+
+    # The shader works in the decal's [-1, 1] box shifted to [0, 2]; our
+    # projection group already hands over [0, 1], so this is one multiply
+    # rather than a round trip through the signed coordinate.
+    px = math("MULTIPLY", separate.outputs["X"], 2.0, location=(-820, 120), label="into [0, 2]")
+    py = math("MULTIPLY", separate.outputs["Y"], 2.0, location=(-820, -40))
+
+    column = math("TRUNC", math("MULTIPLY", px, 4.5, location=(-660, 200)),
+                  location=(-500, 200), label="column")
+    row = math("TRUNC", math("MULTIPLY", py, 1.5, location=(-660, 40)),
+               location=(-500, 40), label="row")
+
+    # Ten to the row, spelled as the shader spells it.
+    place = math("POWER", 2.0,
+                 math("MULTIPLY", row, reference.KILL_COUNTER_LOG2_TEN, location=(-340, 0)),
+                 location=(-180, 0), label="10 ^ row")
+    following = math("POWER", 2.0,
+                     math("MULTIPLY", math("ADD", row, 1.0, location=(-340, -140)),
+                          reference.KILL_COUNTER_LOG2_TEN, location=(-260, -140)),
+                     location=(-180, -140), label="10 ^ (row + 1)")
+
+    share = math("DIVIDE", group_in.outputs["KillCount"], following, location=(-20, -70))
+    folded = math("FRACT", share, location=(120, -70))
+    digit = math("TRUNC",
+                 math("DIVIDE",
+                      math("ADD", math("MULTIPLY", folded, following, location=(260, -70)),
+                           0.5, location=(400, -70), label="the shader's own half"),
+                      place, location=(540, -70)),
+                 location=(680, -70), label="digit for this row")
+
+    # Discard where the digit falls below the column's centre, so a digit of
+    # three lights columns 0, 1 and 2.
+    lit = math("GREATER_THAN", digit, math("ADD", column, 0.5, location=(540, 200)),
+               location=(680, 200), label="mark is lit")
+
+    inside = lit
+    for value, limit, op, y in ((px, 0.0, "GREATER_THAN", 340), (px, 2.0, "LESS_THAN", 300),
+                                (py, 0.0, "GREATER_THAN", 260), (py, 2.0, "LESS_THAN", 220)):
+        # Outside its own box the shader discards too, so a decal never draws
+        # marks across the rest of the hull.
+        test = math(op, value, limit + (0.0001 if op == "LESS_THAN" else -0.0001),
+                    location=(760, y))
+        inside = math("MULTIPLY", inside, test, location=(820, y))
+
+    links.new(inside, group_out.inputs["Coverage"])
+
+    combine = nodes.new("ShaderNodeCombineXYZ")
+    combine.location = (760, 120)
+    links.new(math("MULTIPLY", px, 4.5, location=(600, 160)), combine.inputs["X"])
+    links.new(math("MULTIPLY", py, 0.5, location=(600, 100)), combine.inputs["Y"])
+    links.new(combine.outputs[0], group_out.inputs["Mark UV"])
+    return tree
+
 def build_decal_projection_group() -> bpy.types.ShaderNodeTree:
     """Builds the decal projection, read from the decal object's own properties.
 
