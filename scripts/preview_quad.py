@@ -76,6 +76,8 @@ def parse_args(argv):
                         help="A carbon.document JSON from tools-core, to drive the "
                              "material from a real ship's authored values")
     parser.add_argument("--out", default="")
+    parser.add_argument("--environment", default="",
+                        help="Equirectangular nebula for the world environment")
     parser.add_argument("--render", default="")
     return parser.parse_args(argv[argv.index("--") + 1:] if "--" in argv else [])
 
@@ -324,12 +326,59 @@ def frame(hull):
     light.rotation_euler = (math.radians(55), 0.0, math.radians(35))
     bpy.context.collection.objects.link(light)
 
-    world = bpy.data.worlds.new("World")
-    world.use_nodes = True
-    world.node_tree.nodes["Background"].inputs[0].default_value = (0.02, 0.025, 0.04, 1.0)
-    bpy.context.scene.world = world
+    set_world(ENVIRONMENT[0] if ENVIRONMENT else "")
     set_viewport_clipping(radius)
     add_glare()
+
+
+#: Set by a caller to use an EVE nebula as the world environment.
+ENVIRONMENT = []
+
+
+def set_world(environment_path="", strength=1.0):
+    """The scene's environment, from an EVE nebula when one is given.
+
+    This is where most of a hull's light comes from. Carbon samples its
+    environment cube twice -- once along the reflection vector for specular and
+    once along the normal for irradiance -- and scales both by
+    `ReflectionIntensity`; that is split-sum image-based lighting, and Blender
+    already does it. So the nebula is handed over as a world texture and Cycles
+    or EEVEE light the surface with it, rather than the probe being
+    reimplemented in nodes.
+
+    Without one, dark materials with high gloss and bright fresnel -- which
+    describes most of an EVE hull -- have nothing to reflect and read as flat
+    and far too dark.
+    """
+
+    import os
+
+    world = bpy.data.worlds.new("World")
+    world.use_nodes = True
+    tree = world.node_tree
+    background = tree.nodes["Background"]
+    background.inputs[1].default_value = strength
+
+    if environment_path and os.path.exists(environment_path):
+        image = bpy.data.images.load(environment_path, check_existing=True)
+        texture = tree.nodes.new("ShaderNodeTexEnvironment")
+        texture.image = image
+        texture.location = (-300, 0)
+        # A Mapping node so the nebula can be turned without re-exporting it:
+        # EVE is Y-up and Blender Z-up, and which way a nebula faces is a scene
+        # decision rather than a property of the cube.
+        mapping = tree.nodes.new("ShaderNodeMapping")
+        mapping.location = (-500, 0)
+        coordinate = tree.nodes.new("ShaderNodeTexCoord")
+        coordinate.location = (-700, 0)
+        tree.links.new(coordinate.outputs["Generated"], mapping.inputs["Vector"])
+        tree.links.new(mapping.outputs["Vector"], texture.inputs["Vector"])
+        tree.links.new(texture.outputs["Color"], background.inputs[0])
+        print(f"  world environment: {os.path.basename(environment_path)}")
+    else:
+        background.inputs[0].default_value = (0.02, 0.025, 0.04, 1.0)
+
+    bpy.context.scene.world = world
 
 
 #: EVE hulls run from tens of units to well over a thousand, and a station is

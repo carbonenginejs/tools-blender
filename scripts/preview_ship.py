@@ -50,6 +50,8 @@ def parse_args(argv):
     parser.add_argument("--sof", required=True)
     parser.add_argument("--resources", required=True)
     parser.add_argument("--out", default="")
+    parser.add_argument("--environment", default="",
+                        help="Equirectangular nebula for the world environment")
     parser.add_argument("--render", default="")
     return parser.parse_args(argv[argv.index("--") + 1:] if "--" in argv else [])
 
@@ -364,6 +366,7 @@ def main():
     if primary is None:
         raise SystemExit("no geometry was assembled")
 
+    preview_quad.ENVIRONMENT[:] = [args.environment] if args.environment else []
     preview_quad.frame(primary)
 
     scene = bpy.context.scene
