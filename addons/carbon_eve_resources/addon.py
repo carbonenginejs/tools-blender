@@ -32,6 +32,9 @@ from .resource_index import (
     payload_cache_stats,
     safe_join,
 )
+from .sof_assembly import apply_mesh_areas, area_slot_report
+from .sof_builder import BundleBuild, SofBuilderError, build_bundle, normalize_dna
+from .sof_document import SofBundle, SofDocumentError, load_sof_bundle
 
 
 ADDON_ID = __package__ or "carbon_eve_resources"
@@ -66,6 +69,10 @@ def _default_cache_directory() -> str:
 
 def _default_download_directory() -> str:
     return str(Path.home() / "Downloads" / "EVE Resources")
+
+
+def _default_bundle_directory() -> str:
+    return str(Path.home() / "Downloads" / "EVE Resources" / "SOF Bundles")
 
 
 def _detail_filter_updated(self, context) -> None:
@@ -114,6 +121,33 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         min=25,
         max=2000,
     )
+    tools_core_directory: StringProperty(
+        name="tools-core checkout",
+        description="Directory containing tools-core's bin/cjs-sof-bundle.js; required to build a DNA",
+        subtype="DIR_PATH",
+        default="",
+    )
+    node_executable: StringProperty(
+        name="Node executable",
+        description="Node.js used to run tools-core; leave empty to use the first node on PATH",
+        subtype="FILE_PATH",
+        default="",
+    )
+    bundle_directory: StringProperty(
+        name="SOF bundles",
+        description="Where DNA builds are written; each DNA gets its own folder",
+        subtype="DIR_PATH",
+        default=_default_bundle_directory(),
+    )
+    shader_library: StringProperty(
+        name="Shader library",
+        description=(
+            "Optional .blend supplying node groups such as QuadV5; when present, "
+            "SOF material values drive it instead of a plain Principled BSDF"
+        ),
+        subtype="FILE_PATH",
+        default="",
+    )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -132,6 +166,12 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
             row.operator(EVE_RESOURCE_OT_accept_creator_terms.bl_idname, text="Review and Accept", icon="CHECKMARK")
         layout.prop(self, "cache_directory")
         layout.prop(self, "download_directory")
+        sof = layout.box()
+        sof.label(text="SOF assembly", icon="OUTLINER_OB_MESH")
+        sof.prop(self, "tools_core_directory")
+        sof.prop(self, "node_executable")
+        sof.prop(self, "bundle_directory")
+        sof.prop(self, "shader_library")
         layout.prop(self, "auto_load")
         layout.prop(self, "result_limit")
         layout.label(text="Default channel: Tranquility (TQ)", icon="WORLD")
@@ -285,6 +325,11 @@ class EVE_RESOURCE_State(PropertyGroup):
     )
     result_summary: StringProperty(default="")
     cache_summary: StringProperty(default="Downloaded cache: calculating...")
+    dna: StringProperty(
+        name="DNA",
+        description="SOF DNA to build, for example cf1_t1:caldarinavy:caldari",
+        default="",
+    )
     preview_image: PointerProperty(type=bpy.types.Image)
     preview_logical_path: StringProperty(default="")
     preview_error_path: StringProperty(default="")
@@ -614,6 +659,139 @@ class EVE_RESOURCE_OT_import_gr2(Operator):
         return {"FINISHED"}
 
 
+class EVE_RESOURCE_OT_import_sof_document(Operator):
+    """Builds a ship from a pre-compiled tools-core SOF bundle."""
+
+    bl_idname = "carbon.eve_resource_import_sof_document"
+    bl_label = "Assemble SOF Bundle"
+    bl_description = (
+        "Import the geometry, mesh areas, and textures described by a "
+        "pre-compiled tools-core SOF bundle or carbon.document JSON file"
+    )
+
+    filepath: StringProperty(subtype="FILE_PATH", options={"HIDDEN"})
+    filter_glob: StringProperty(default="*.json", options={"HIDDEN"})
+    include_secondary_meshes: BoolProperty(
+        name="Include additional meshes",
+        description=(
+            "Also import meshes the document attaches to the hull, such as the "
+            "shield impact overlay sphere"
+        ),
+        default=False,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        state = getattr(context.window_manager, "carbon_eve_resources", None)
+        return state is not None and not state.busy and _context_terms_accepted(context)
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        if not hasattr(bpy.ops.import_scene, "carbon_gr2"):
+            self.report({"ERROR"}, "Enable CarbonEngineJS GR2 Importer first")
+            return {"CANCELLED"}
+        if not self.filepath:
+            self.report({"ERROR"}, "Select a SOF bundle or document first")
+            return {"CANCELLED"}
+        try:
+            bundle = load_sof_bundle(self.filepath)
+        except SofDocumentError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+        prefs = _prefs(context)
+        primary_only = not self.include_secondary_meshes
+        pending = bundle.unresolved(primary_only=primary_only)
+        if pending and _catalog is None:
+            self.report(
+                {"ERROR"},
+                f"{len(pending)} resources are missing from the bundle; load the resource index "
+                "to download them",
+            )
+            return {"CANCELLED"}
+        _launch_job(
+            context,
+            "sof_document",
+            lambda: _run_with_cache_stats(
+                lambda: (bundle, primary_only, _fetch_sof_resources(pending, prefs)),
+                _cache_path(prefs),
+            ),
+            f"Assembling {bundle.assembly.dna or 'SOF bundle'}"
+            + (f" ({len(pending)} downloads)" if pending else ""),
+        )
+        return {"FINISHED"}
+
+
+class EVE_RESOURCE_OT_build_sof_dna(Operator):
+    """Builds a DNA into a bundle with tools-core, then assembles it."""
+
+    bl_idname = "carbon.eve_resource_build_sof_dna"
+    bl_label = "Build DNA"
+    bl_description = (
+        "Run tools-core to compose this SOF DNA into a bundle, then import its "
+        "geometry, mesh areas, and textures"
+    )
+
+    refresh: BoolProperty(
+        name="Rebuild",
+        description="Rebuild the bundle even when one already exists for this DNA",
+        default=False,
+        options={"HIDDEN"},
+    )
+    include_secondary_meshes: BoolProperty(
+        name="Include additional meshes",
+        description="Also import meshes the document attaches to the hull",
+        default=False,
+        options={"HIDDEN"},
+    )
+
+    @classmethod
+    def poll(cls, context):
+        state = getattr(context.window_manager, "carbon_eve_resources", None)
+        return state is not None and not state.busy and _context_terms_accepted(context)
+
+    def execute(self, context):
+        if not hasattr(bpy.ops.import_scene, "carbon_gr2"):
+            self.report({"ERROR"}, "Enable CarbonEngineJS GR2 Importer first")
+            return {"CANCELLED"}
+        state = context.window_manager.carbon_eve_resources
+        prefs = _prefs(context)
+        try:
+            dna = normalize_dna(state.dna)
+        except SofBuilderError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        if not str(prefs.tools_core_directory).strip():
+            self.report({"ERROR"}, "Set the tools-core checkout in preferences first")
+            return {"CANCELLED"}
+
+        primary_only = not self.include_secondary_meshes
+        refresh = bool(self.refresh)
+        _launch_job(
+            context,
+            "sof_dna",
+            lambda: _run_with_cache_stats(
+                lambda: (
+                    build_bundle(
+                        dna,
+                        tools_core_directory=Path(bpy.path.abspath(prefs.tools_core_directory)),
+                        output_root=Path(bpy.path.abspath(prefs.bundle_directory)),
+                        cache_root=_cache_path(prefs),
+                        node_executable=str(prefs.node_executable).strip(),
+                        refresh=refresh,
+                    ),
+                    primary_only,
+                ),
+                _cache_path(prefs),
+            ),
+            f"Building {dna} with tools-core",
+        )
+        return {"FINISHED"}
+
+
 class EVE_RESOURCE_OT_open_downloads(Operator):
     bl_idname = "carbon.eve_resource_open_downloads"
     bl_label = "Open Download Folder"
@@ -706,6 +884,8 @@ class EVE_RESOURCE_PT_browser(Panel):
         status.alert = state.status.startswith("Error:")
         status.label(text=state.status, icon="TIME" if state.busy else "NONE")
 
+        _draw_sof_controls(layout, state)
+
         if _catalog is None:
             button = layout.operator(EVE_RESOURCE_OT_load_index.bl_idname, text="Load Cached / Latest Index", icon="IMPORT")
             button.refresh = False
@@ -770,6 +950,28 @@ class EVE_RESOURCE_PT_browser(Panel):
                     actions.operator(EVE_RESOURCE_OT_import_gr2.bl_idname, text="Import GR2", icon="MESH_DATA")
 
         _draw_cache_controls(layout, state)
+
+
+def _draw_sof_controls(layout, state) -> None:
+    box = layout.box()
+    box.label(text="Build from DNA", icon="OUTLINER_OB_MESH")
+    if not hasattr(bpy.ops.import_scene, "carbon_gr2"):
+        box.label(text="Enable the GR2 importer to assemble", icon="ERROR")
+        return
+    box.prop(state, "dna", text="", icon="RNA")
+    build = box.row(align=True)
+    build.operator(EVE_RESOURCE_OT_build_sof_dna.bl_idname, text="Build DNA", icon="PLAY")
+    rebuild = build.operator(EVE_RESOURCE_OT_build_sof_dna.bl_idname, text="", icon="FILE_REFRESH")
+    rebuild.refresh = True
+    box.operator(
+        EVE_RESOURCE_OT_import_sof_document.bl_idname,
+        text="Assemble Existing Bundle",
+        icon="IMPORT",
+    )
+    note = box.column(align=True)
+    note.scale_y = 0.8
+    note.label(text="tools-core composes SOF/DNA")
+    note.label(text="Materials approximate Carbon shaders")
 
 
 def _draw_cache_controls(layout, state) -> None:
@@ -853,6 +1055,106 @@ def _start_preview(context, entry) -> None:
 
 def _run_with_cache_stats(worker: Callable[[], Any], cache_root: Path):
     return worker(), payload_cache_stats(cache_root)
+
+
+def _shader_library() -> str:
+    """The optional .blend supplying Carbon-shaped node groups."""
+
+    try:
+        return str(_prefs(bpy.context).shader_library or "").strip()
+    except (AttributeError, ResourceIndexError):
+        return ""
+
+
+def _fetch_sof_resources(paths: tuple[str, ...], prefs) -> tuple[dict[str, Path], list[str]]:
+    """Materializes the document resources a bundle did not already provide."""
+
+    if not paths:
+        return {}, []
+    if _catalog is None:
+        raise ResourceIndexError("Load the EVE resource index before assembling a SOF document")
+    accepted = _creator_terms_accepted(prefs)
+    cache_root = _cache_path(prefs)
+    download_root = _download_path(prefs)
+    resolved: dict[str, Path] = {}
+    missing: list[str] = []
+    for logical_path in paths:
+        try:
+            entry = _catalog.get(logical_path)
+            fetched = materialize_resource(
+                entry,
+                cache_root,
+                download_root,
+                creator_terms_accepted=accepted,
+            )
+        except ResourceIndexError as exc:
+            missing.append(f"{logical_path}: {exc}")
+            continue
+        resolved[logical_path] = fetched.path
+    return resolved, missing
+
+
+def _assemble_sof_document(
+    bundle: SofBundle,
+    primary_only: bool,
+    downloaded: dict[str, Path],
+    missing: list[str],
+) -> str:
+    """Imports each document mesh and routes its SOF areas onto the slots."""
+
+    assembly = bundle.assembly
+    resolved: dict[str, Path] = dict(bundle.resources)
+    resolved.update(downloaded)
+    imported = 0
+    materials = 0
+    slots = 0
+    problems = list(missing)
+    for mesh in assembly.meshes:
+        if primary_only and mesh.role != "primary":
+            continue
+        geometry = resolved.get(mesh.geometry_path)
+        if geometry is None:
+            problems.append(f"{mesh.geometry_path}: geometry was not downloaded")
+            continue
+        before = {item.name for item in bpy.data.objects}
+        bpy.ops.import_scene.carbon_gr2("EXEC_DEFAULT", filepath=str(geometry))
+        objects = [
+            item
+            for item in bpy.data.objects
+            if item.name not in before and item.type == "MESH"
+        ]
+        if not objects:
+            problems.append(f"{mesh.geometry_path}: the GR2 importer created no mesh objects")
+            continue
+        imported += 1
+        slot_count = sum(len(item.data.materials) for item in objects)
+        problems.extend(area_slot_report(mesh, slot_count))
+        report = apply_mesh_areas(
+            mesh,
+            objects,
+            resolved,
+            prefix=f"{mesh.name}.",
+            shader_library=str(_shader_library()),
+        )
+        materials += report.materials
+        slots += report.assigned_slots
+        problems.extend(report.warnings)
+        problems.extend(
+            f"{path}: texture unavailable" for path in report.missing_textures
+        )
+        for item in objects:
+            item["carbon_sof_dna"] = assembly.dna
+            item["carbon_sof_geometry"] = mesh.geometry_path
+
+    for problem in problems:
+        print(f"[CarbonEngineJS SOF] {problem}")
+    summary = (
+        f"Assembled {assembly.dna or 'SOF document'}: {imported} meshes, "
+        f"{materials} area materials, {slots} slots"
+    )
+    if problems:
+        summary += f"; {len(problems)} issues logged to the console"
+    return summary
 
 
 def _launch_job(
@@ -965,6 +1267,21 @@ def _poll_job():
             state.preview_error_path = ""
             state.status = f"Previewing {fetched.entry.logical_path}"
             _populate_results(context)
+        elif job.kind == "sof_dna":
+            (built, primary_only), stats = job.result
+            _set_cache_stats(state, stats)
+            bundle = load_sof_bundle(built.directory)
+            source = "built" if built.created else "reused"
+            state.status = (
+                f"{_assemble_sof_document(bundle, primary_only, {}, list(bundle.unresolved(primary_only=primary_only)))}"
+                f" ({source} {built.directory.name})"
+            )
+        elif job.kind == "sof_document":
+            (bundle, primary_only, (downloaded, missing)), stats = job.result
+            _set_cache_stats(state, stats)
+            state.status = _assemble_sof_document(bundle, primary_only, downloaded, missing)
+            if _catalog is not None:
+                _populate_results(context)
         elif job.kind == "import_gr2":
             fetched, stats = job.result
             _set_cache_stats(state, stats)
@@ -1173,6 +1490,8 @@ classes = (
     EVE_RESOURCE_OT_download_selected,
     EVE_RESOURCE_OT_preview_selected,
     EVE_RESOURCE_OT_import_gr2,
+    EVE_RESOURCE_OT_import_sof_document,
+    EVE_RESOURCE_OT_build_sof_dna,
     EVE_RESOURCE_OT_open_downloads,
     EVE_RESOURCE_OT_refresh_cache_stats,
     EVE_RESOURCE_OT_clear_cache,
@@ -1187,6 +1506,8 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.WindowManager.carbon_eve_resources = PointerProperty(type=EVE_RESOURCE_State)
     _preview_collection = bpy.utils.previews.new()
+    from . import pattern_controls
+    pattern_controls.register()
     _registered = True
     if not bpy.app.timers.is_registered(_auto_load):
         bpy.app.timers.register(_auto_load, first_interval=1.0)
@@ -1206,6 +1527,8 @@ def unregister():
     if _preview_collection is not None:
         bpy.utils.previews.remove(_preview_collection)
         _preview_collection = None
+    from . import pattern_controls
+    pattern_controls.unregister()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
