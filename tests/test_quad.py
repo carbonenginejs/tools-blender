@@ -561,3 +561,49 @@ class AnnotationExpressions(unittest.TestCase):
         dust = base.annotation("DustNoiseMap")
         self.assertEqual(dust.uv_scale, reference.DUST_TILING)
         self.assertEqual(dust.uv_scale_expression, "")
+
+
+class Sails(unittest.TestCase):
+
+    def _sampler(self, value):
+        return lambda uv: value
+
+    def test_the_sail_texture_reselects_where_layer_one_is_chosen(self):
+        # At MaterialMap 0 layer 1 is at full weight, so the sail texture
+        # takes over the selector completely.
+        selector = reference.sails_selector(
+            (0.0, 0.0), 0.0, self._sampler(1.0), (55.0, 0.0))
+        self.assertAlmostEqual(selector, 1.0, places=5)
+
+    def test_it_does_nothing_where_another_layer_is_chosen(self):
+        # At MaterialMap 1 layer 4 is chosen and layer 1's weight is zero, so
+        # the selector is unchanged however bright the sail texture is.
+        selector = reference.sails_selector(
+            (0.0, 0.0), 1.0, self._sampler(1.0), (55.0, 0.0))
+        self.assertAlmostEqual(selector, 1.0, places=5)
+        selector = reference.sails_selector(
+            (0.0, 0.0), 0.7, self._sampler(1.0), (55.0, 0.0))
+        self.assertAlmostEqual(selector, 0.7, places=5)
+
+    def test_tiling_scales_the_lookup(self):
+        seen = []
+        reference.sails_selector((0.5, 0.25), 0.0,
+                                 lambda uv: seen.append(uv) or 0.0, (55.0, 0.0))
+        self.assertAlmostEqual(seen[0][0], 27.5, places=4)
+        self.assertAlmostEqual(seen[0][1], 13.75, places=4)
+
+    def test_rotation_turns_the_lookup(self):
+        import math as _math
+        seen = []
+        reference.sails_selector((1.0, 0.0), 0.0,
+                                 lambda uv: seen.append(uv) or 0.0,
+                                 (1.0, _math.pi / 2))
+        self.assertAlmostEqual(seen[0][0], 0.0, places=5)
+        self.assertAlmostEqual(seen[0][1], 1.0, places=5)
+
+    def test_the_two_sail_areas_differ_only_by_rotation(self):
+        # A Legion's two area_sails share every value but SailsDetailData.y,
+        # which is why one node group serves both.
+        flat = reference.sails_selector((0.3, 0.4), 0.0, self._sampler(0.5), (55.0, 0.0))
+        turned = reference.sails_selector((0.3, 0.4), 0.0, self._sampler(0.5), (55.0, 1.6))
+        self.assertAlmostEqual(flat, turned, places=6)

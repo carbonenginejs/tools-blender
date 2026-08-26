@@ -412,6 +412,76 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
     return tree
 
 
+#: The sails detail lookup's own group. Named separately from the pattern one
+#: because it is a different space, and reuses none of it.
+SAILS_GROUP = "Carbon Sails Projection"
+
+
+def build_sails_group() -> bpy.types.ShaderNodeTree:
+    """Builds the sails detail-texture transform.
+
+    `quadsailsv5` does NOT project: it scales and rotates the mesh's own UV0 and
+    looks the detail texture up with that. So there is no position, no
+    quaternion and no wrap mode -- only a tiling factor and an angle, both from
+    `SailsDetailData`::
+
+        uv' = rotate(uv * data.x, data.y)
+
+    A separate group for the same reason the pattern projection is one: the
+    result has to reach an Image Texture node whose colour then feeds the
+    material, and routing that through the quad group would be a cycle.
+
+    The scale-then-rotate order matches Blender's Mapping node, which applies
+    scale, then rotation, then location.
+    """
+
+    existing = bpy.data.node_groups.get(SAILS_GROUP)
+    if existing is not None:
+        return existing
+
+    tree = _new_group(SAILS_GROUP)
+    nodes, links = tree.nodes, tree.links
+
+    tiling = tree.interface.new_socket(name="Tiling", in_out="INPUT", socket_type="NodeSocketFloat")
+    tiling.default_value = 1.0
+    tiling.description = "SailsDetailData.x -- how many times the sail texture repeats"
+    rotation = tree.interface.new_socket(name="Rotation", in_out="INPUT", socket_type="NodeSocketFloat")
+    rotation.description = (
+        "SailsDetailData.y, in radians. The two sail areas of one hull differ "
+        "only in this, so the same texture serves perpendicular surfaces"
+    )
+    tree.interface.new_socket(name="UV", in_out="OUTPUT", socket_type="NodeSocketVector")
+
+    group_in = nodes.new("NodeGroupInput")
+    group_in.location = (-600, 0)
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (300, 0)
+
+    coordinate = nodes.new("ShaderNodeTexCoord")
+    coordinate.location = (-600, 220)
+
+    scale = nodes.new("ShaderNodeCombineXYZ")
+    scale.location = (-380, -120)
+    scale.inputs["Z"].default_value = 1.0
+    links.new(group_in.outputs["Tiling"], scale.inputs["X"])
+    links.new(group_in.outputs["Tiling"], scale.inputs["Y"])
+
+    angle = nodes.new("ShaderNodeCombineXYZ")
+    angle.location = (-380, -260)
+    links.new(group_in.outputs["Rotation"], angle.inputs["Z"])
+
+    mapping = nodes.new("ShaderNodeMapping")
+    mapping.vector_type = "POINT"
+    mapping.location = (-140, 0)
+    mapping.label = "uv * tiling, rotated"
+    links.new(coordinate.outputs["UV"], mapping.inputs["Vector"])
+    links.new(scale.outputs[0], mapping.inputs["Scale"])
+    links.new(angle.outputs[0], mapping.inputs["Rotation"])
+
+    links.new(mapping.outputs["Vector"], group_out.inputs["UV"])
+    return tree
+
+
 def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
     """The node group for one family member, built once and then shared.
 
@@ -545,6 +615,23 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
     # --- Material weights: the tent filter ----------------------------------
     # clamp(OFFSET - abs((MaterialMap.x - centre) * SLOPE), 0, 1)
     material_x = separate(value("MaterialMap"), (-1200, 400))[0]
+
+    # `quadsailsv5` re-selects which material layer is used, rather than adding
+    # one: the sail texture is blended over the MaterialMap selector by the tent
+    # weight of LAYER 1, so the pattern only acts where the first material is
+    # chosen -- which is what makes that region the sail.
+    if has("SailsDetailMap"):
+        scaled = math("MULTIPLY", material_x, reference.MATERIAL_TENT_SLOPE,
+                      location=(-1140, 300))
+        absolute = math("ABSOLUTE", scaled, location=(-1080, 300))
+        layer1 = math("SUBTRACT", reference.MATERIAL_TENT_OFFSET, absolute,
+                      location=(-1020, 300), clamp=True, label="Mtl1 weight")
+        sails = separate(value("SailsDetailMap"), (-1200, 220))[0]
+        difference = math("SUBTRACT", sails, material_x, location=(-960, 240))
+        weighted = math("MULTIPLY", difference, layer1, location=(-920, 240))
+        material_x = math("ADD", weighted, material_x, location=(-880, 300),
+                          label="sails re-selects")
+
     weights = []
     for layer, centre in enumerate(reference.MATERIAL_TENT_CENTRES):
         y = 600 - layer * 160

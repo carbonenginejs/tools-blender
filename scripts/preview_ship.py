@@ -222,6 +222,23 @@ def build_area_material(area, family, resources, index):
         # Pattern masks are sampled with projected coordinates from the shared
         # projection group, and the per-axis wrapping is done there, so the
         # image node must not wrap on its own.
+        # The sails detail texture is looked up with a scaled and rotated UV0,
+        # not a projection, so it gets its own small transform group fed from
+        # this area's own SailsDetailData. Two areas of one hull share the
+        # texture and differ only in the rotation.
+        if name == "SailsDetailMap":
+            node.extension = "REPEAT"
+            data = next((c.get("value") for c in effect.get("constParameters", [])
+                         if c.get("name") == "SailsDetailData"), None)
+            sails = mnodes.new("ShaderNodeGroup")
+            sails.node_tree = nodes.build_sails_group()
+            sails.location = (-1000, row)
+            if data:
+                sails.inputs["Tiling"].default_value = float(data[0])
+                sails.inputs["Rotation"].default_value = float(data[1])
+                print(f"  sails uv: tiling {data[0]:g}, rotation {data[1]:g} rad")
+            mlinks.new(sails.outputs["UV"], node.inputs["Vector"])
+
         pattern_index = {"PatternMask1Map": 1, "PatternMask2Map": 2}.get(name)
         if pattern_index is not None:
             node.extension = "EXTEND"
