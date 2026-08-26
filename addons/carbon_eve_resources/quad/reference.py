@@ -256,6 +256,67 @@ def dust_noise(sample: Sequence[float]) -> Vec4:
     return tuple(channel + DUST_BIAS for channel in sample[:4])  # type: ignore[return-value]
 
 
+def dust_diffuse_color(
+    weights: Sequence[float],
+    dust_colors: Sequence[Sequence[float]],
+) -> Vec3:
+    """The dusty material's diffuse colour.
+
+    The *same* four tent weights are applied to `Mtl1-4DustDiffuseColor` as to
+    the clean `Mtl1-4DiffuseColor`, so dust is a second material layer set
+    rather than a tint on top of the first.
+    """
+
+    return blend_layers(weights, dust_colors)[:3]  # type: ignore[return-value]
+
+
+def dirt_mask(dirt_map: float, dust_noise_w: float, dirt_level: float) -> float:
+    """How much of this texel is dirty.
+
+    The dirt texture is modulated by the dust noise map's ALPHA channel -- the
+    one that also carries the `+0.5` bias -- and then divided by
+    `1 - dirtLevel`, so the object's dirt level widens the mask rather than
+    scaling it. `dirtLevel` reaches the shader as ``shipData.z`` and comes from
+    `dirt_level_from_weeks`.
+
+    At `dirtLevel` 0 the mask is just the texture; as the level rises toward 1
+    the divisor shrinks and the mask saturates over more of the surface.
+    """
+
+    divisor = 1.0 - dirt_level
+    if divisor <= 0.0:
+        return 1.0
+    return clamp((dirt_map * dust_noise_w) / divisor)
+
+
+def combine_dirt(clean: Sequence[float], dusty: Sequence[float], mask: float) -> tuple[float, ...]:
+    """Blend a clean and a dusty result by the dirt mask.
+
+    **This is where a Blender port necessarily diverges, and the divergence is
+    deliberate.** The shader evaluates the ENTIRE lighting twice -- once for the
+    clean material and once for the dusty one -- and blends the two lit results::
+
+        colour = pow(1 - mask, 3) * cleanLit + mask * dustyLit
+
+    Note the weights do not sum to one: at `mask` 0.5 they total 0.625, so a
+    half-dirty texel is darker than either side. That is an authored curve, not
+    an error.
+
+    A consumer that outputs surface parameters for Blender to light has no two
+    lit results to blend, so it blends the parameters instead and lights once.
+    That is a different operation and will not match a client screenshot in the
+    mid-range. It is the same trade already made by not reproducing the sun,
+    the environment probe or the screen-space buffers.
+
+    This function implements the authored curve, for the reference path and for
+    anyone reproducing the full chain.
+    """
+
+    inverse = 1.0 - mask
+    clean_weight = inverse * inverse * inverse
+    return tuple(c * clean_weight + d * mask for c, d in zip(clean, dusty))
+
+
 @dataclass(frozen=True, slots=True)
 class Surface:
     """What the material composition produces, for Blender to light."""

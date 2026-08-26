@@ -320,3 +320,42 @@ class Compose(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Dirt(unittest.TestCase):
+
+    def test_dust_uses_the_same_weights_as_the_clean_layers(self):
+        weights = reference.material_weights(0.5)
+        colors = [(0.1, 0.1, 0.1, 1.0), (0.2, 0.2, 0.2, 1.0),
+                  (0.3, 0.3, 0.3, 1.0), (0.4, 0.4, 0.4, 1.0)]
+        self.assertEqual(
+            reference.dust_diffuse_color(weights, colors),
+            reference.blend_layers(weights, colors)[:3],
+        )
+
+    def test_mask_is_the_texture_when_the_object_is_clean(self):
+        self.assertAlmostEqual(reference.dirt_mask(0.5, 1.0, 0.0), 0.5, places=6)
+
+    def test_dirt_level_widens_the_mask(self):
+        low = reference.dirt_mask(0.4, 1.0, 0.0)
+        high = reference.dirt_mask(0.4, 1.0, 0.5)
+        self.assertGreater(high, low)
+
+    def test_the_noise_alpha_modulates_the_mask(self):
+        self.assertAlmostEqual(reference.dirt_mask(1.0, 0.25, 0.0), 0.25, places=6)
+
+    def test_mask_stays_clamped_at_extreme_dirt(self):
+        self.assertEqual(reference.dirt_mask(1.0, 1.0, 1.0), 1.0)
+        self.assertEqual(reference.dirt_mask(0.5, 1.0, 0.9), 1.0)
+
+    def test_the_blend_weights_do_not_sum_to_one(self):
+        # An authored curve, not an error: a half-dirty texel is darker than
+        # either side. Asserted so it is not "fixed" into a plain mix.
+        mid = reference.combine_dirt((1.0,), (1.0,), 0.5)
+        self.assertAlmostEqual(mid[0], 0.625, places=6)
+
+    def test_the_ends_are_exact(self):
+        clean = reference.combine_dirt((0.8, 0.6, 0.4), (0.1, 0.1, 0.1), 0.0)
+        dusty = reference.combine_dirt((0.8, 0.6, 0.4), (0.1, 0.2, 0.3), 1.0)
+        self.assertEqual(clean, (0.8, 0.6, 0.4))
+        self.assertEqual(dusty, (0.1, 0.2, 0.3))
