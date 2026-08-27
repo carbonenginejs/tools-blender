@@ -184,9 +184,58 @@ def import_geometry(path):
     except Exception:
         pass  # already registered
     before = set(bpy.data.objects)
+    known_actions = set(bpy.data.actions)
     bpy.ops.import_scene.carbon_gr2(filepath=path)
     created = [o for o in bpy.data.objects if o not in before and o.type == "MESH"]
+    keep_actions([action for action in bpy.data.actions if action not in known_actions],
+                 [o for o in bpy.data.objects if o not in before and o.type == "ARMATURE"])
     return created
+
+
+#: The state an idle ship sits in, by the names GR2 files actually use.
+#:
+#: A hull names its own: gb2_t2 has NormalLoop, StartSiege, SiegeLoop and
+#: EndSiege; others carry Normal, Warp, Normal2Warp and Warp2Normal. So this is
+#: a preference order and not a lookup -- anything unmatched falls back to the
+#: first action the file provided.
+IDLE_ACTIONS = ("NormalLoop", "Normal", "Idle")
+
+
+def keep_actions(actions, armatures):
+    """Keeps imported animations, and puts one on the armature.
+
+    The GR2 importer creates an Action per animation but assigns NONE of them,
+    so every one has zero users -- and Blender PURGES zero-user data when the
+    file is saved. Import by hand and they are there; build a ship and save it
+    and they are gone, which is exactly how it looked: actions in a live
+    session, an empty dope sheet in the saved file.
+
+    So each gets a fake user, and the armature is given the idle one, because a
+    dope sheet with no action assigned shows nothing at all and reads as an
+    import that failed.
+    """
+
+    for action in actions:
+        action.use_fake_user = True
+
+    if not actions or not armatures:
+        return actions
+
+    def rank(action):
+        name = action.name.rsplit(".", 1)[-1]
+        for position, wanted in enumerate(IDLE_ACTIONS):
+            if name == wanted:
+                return position
+        return len(IDLE_ACTIONS)
+
+    idle = sorted(actions, key=rank)[0]
+    for armature in armatures:
+        if armature.animation_data is None:
+            armature.animation_data_create()
+        if armature.animation_data.action is None:
+            armature.animation_data.action = idle
+    print(f"  kept {len(actions)} action(s); armature set to {idle.name}")
+    return actions
 
 
 def find_custom_masks(document):
