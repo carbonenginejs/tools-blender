@@ -21,13 +21,25 @@ NAMES = {
 TYPE = {"typeID": 29984, "graphicID": 20215, "name": {"text": "Tengu", "language": "en"}}
 GRAPHIC = {"payload": {"_key": 20215, "sofFactionName": "caldaribase",
                        "sofHullName": "csc1_t3", "sofRaceName": "caldari"}}
-SKINS = {"4288": {"skinID": 4288, "skinMaterialID": 185, "types": [24692]}}
-SKIN_MATERIALS = {"185": {"skinMaterialID": 185, "materialSetID": 210}}
+SKINS = {"4288": {"skinID": 4288, "skinMaterialID": 185, "types": [24692]},
+         "12618": {"skinID": 12618, "skinMaterialID": 900, "types": [33820]}}
+SKIN_MATERIALS = {"185": {"skinMaterialID": 185, "materialSetID": 210},
+                  "900": {"skinMaterialID": 900, "materialSetID": 3490}}
 SKIN_SETS = {"210": {"materialSetID": 210, "material1": "blue_darknavy_enamel",
                      "material2": "grey_darksteel_brushed",
                      "material3": "black_gunmetal_metallic",
                      "material4": "orange_bright_matt",
-                     "resPathInsert": "amarr", "sofFactionName": "amarrbase"}}
+                     "resPathInsert": "amarr", "sofFactionName": "amarrbase"},
+             # Barghest Shattered Paradigm, verbatim: it repaints with a
+             # PATTERN and names no materials -- and spells their absence with
+             # a capital N.
+             "3490": {"materialSetID": 3490,
+                      "material1": "None", "material2": "None",
+                      "material3": "None", "material4": "None",
+                      "patternMaterial1": "orange_fire_colorshift",
+                      "patternMaterial2": "white_ghost_enamel",
+                      "sofPatternName": "igc_xx_mordu",
+                      "sofFactionName": "igc_xx_mordu"}}
 ABADDON_GRAPHIC = {"payload": {"sofHullName": "ab3_t1", "sofFactionName": "amarrbase",
                                "sofRaceName": "amarr"}}
 
@@ -52,10 +64,16 @@ class _Client:
             return TYPE
         if route.endswith("/types/24692"):
             return {"typeID": 24692, "graphicID": 33}
+        if route.endswith("/types/33820"):
+            return {"typeID": 33820, "graphicID": 44}
         if route.endswith("/sde/graphics/20215"):
             return GRAPHIC
         if route.endswith("/sde/graphics/33"):
             return ABADDON_GRAPHIC
+        if route.endswith("/sde/graphics/44"):
+            return {"payload": {"sofHullName": "morb1_t1",
+                                "sofFactionName": "mordu",
+                                "sofRaceName": "mordu"}}
         raise RuntimeError(f"no route: {route}")
 
 
@@ -105,6 +123,19 @@ class LookupTests(unittest.TestCase):
         # A Rifter wearing an Abaddon's materials is a DNA that resolves and
         # draws something that cannot exist.
         self.assertFalse(sof_lookup.skin_applies(4288, 587, self.client))
+
+    def test_a_skin_can_repaint_with_a_pattern_instead_of_materials(self):
+        # Barghest Shattered Paradigm names no materials at all. Reading only
+        # the materials gave it a DNA with nothing in it, and it loaded
+        # unpainted.
+        made = sof_lookup.dna_for(33820, 12618, self.client)
+        self.assertIn("pattern?igc_xx_mordu;orange_fire_colorshift;white_ghost_enamel",
+                      made)
+
+    def test_a_capital_none_is_still_an_absence(self):
+        # These arrive capitalised. A case-sensitive test read four absences as
+        # four overrides and wrote a material command that said nothing.
+        self.assertNotIn("material?", sof_lookup.dna_for(33820, 12618, self.client))
 
     def test_nothing_is_fetched_twice(self):
         sof_lookup.dna_for(29984, client=self.client)

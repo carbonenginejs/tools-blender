@@ -219,10 +219,27 @@ def dna_for(type_id=0, skin_id=0, client=None, *, build: str = "latest",
     material_set = skin_material_set(skin_id, client, build=build, target=target)
     faction = components["faction"]
     if material_set:
-        materials = [str(material_set.get(f"material{index}") or sof_resolution.NONE)
+        # Lowercased BEFORE the `none` test. These arrive capitalised -- the
+        # Shattered Paradigm skins carry "None" -- so a case-sensitive
+        # comparison read four absences as four overrides and wrote a material
+        # command that said nothing.
+        materials = [str(material_set.get(f"material{index}") or sof_resolution.NONE).lower()
                      for index in (1, 2, 3, 4)]
         if any(value != sof_resolution.NONE for value in materials):
             commands["material"] = materials
+
+        # A skin can repaint with a PATTERN instead of materials, and many do:
+        # `Barghest Shattered Paradigm` names no materials at all, only
+        # `sofPatternName` and its two layers. Reading only the materials gave
+        # those skins a DNA with nothing in it, so they loaded unpainted.
+        pattern = str(material_set.get("sofPatternName") or "").strip()
+        if pattern:
+            commands["pattern"] = [
+                pattern,
+                str(material_set.get("patternMaterial1") or sof_resolution.NONE).lower(),
+                str(material_set.get("patternMaterial2") or sof_resolution.NONE).lower(),
+            ]
+
         insert = str(material_set.get("resPathInsert") or "")
         if insert:
             commands["respathinsert"] = [insert]
