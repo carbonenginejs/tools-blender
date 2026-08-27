@@ -1468,7 +1468,7 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
                                            float(item.get("angleY") or 0.0))
             obj.data.materials.append(
                 banner_material(slot, set_index, index, owners, cache_directory,
-                                banner_set.get("effect"), resources))
+                                banner_set.get("effect"), resources, hull))
             attach_to_bone(obj, armature, item.get("bone"))
             stamp_identity(obj, slot, "banner",
                            str(source.get("visibilityGroupName") or "primary"))
@@ -1516,7 +1516,7 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
 
 
 def banner_material(slot, set_index, index, owners=None, cache_directory="",
-                    effect=None, resources=None):
+                    effect=None, resources=None, ship_object=None):
     """A banner: a logo behind two SCROLLING layers and a mask, ADDED to the scene.
 
     Measured from `banner.fx` rather than guessed:
@@ -1682,6 +1682,25 @@ def banner_material(slot, set_index, index, owners=None, cache_directory="",
     emission = tree.nodes.new("ShaderNodeEmission")
     emission.location = (440, -20)
     tree.links.new(premultiplied.outputs[0], emission.inputs["Color"])
+
+    # The shader's last multiply is by cb3[12].y, a per-object value. That slot
+    # is activationStrength for the quad family, and a banner dimming with the
+    # ship it belongs to is the behaviour that makes sense -- so it is driven
+    # from the same per-ship value everything else reads. At its default of one
+    # it changes nothing, which is why this is structure rather than a knob.
+    if ship_object is not None:
+        strength = emission.inputs["Strength"]
+        index = list(emission.inputs).index(strength)
+        path = f'nodes["{emission.name}"].inputs[{index}].default_value'
+        tree.driver_remove(path)
+        driver = tree.driver_add(path).driver
+        driver.type = "SCRIPTED"
+        variable = driver.variables.new()
+        variable.name = "v"
+        variable.targets[0].id_type = "OBJECT"
+        variable.targets[0].id = ship_object
+        variable.targets[0].data_path = '["carbon_ship_activation_strength"]'
+        driver.expression = "v"
 
     transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
     transparent.location = (440, 160)
