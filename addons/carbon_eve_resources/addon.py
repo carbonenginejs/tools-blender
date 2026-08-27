@@ -32,7 +32,6 @@ from .resource_index import (
     payload_cache_stats,
     safe_join,
 )
-from .sof_assembly import apply_mesh_areas, area_slot_report
 from .sof_builder import BundleBuild, SofBuilderError, build_bundle, normalize_dna
 from .sof_document import SofBundle, SofDocumentError, load_sof_bundle
 
@@ -151,15 +150,6 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         subtype="DIR_PATH",
         default=_default_bundle_directory(),
     )
-    shader_library: StringProperty(
-        name="Shader library",
-        description=(
-            "Optional .blend supplying node groups such as QuadV5; when present, "
-            "SOF material values drive it instead of a plain Principled BSDF"
-        ),
-        subtype="FILE_PATH",
-        default="",
-    )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -187,7 +177,6 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         sof.prop(self, "tools_core_directory")
         sof.prop(self, "node_executable")
         sof.prop(self, "bundle_directory")
-        sof.prop(self, "shader_library")
         layout.prop(self, "auto_load")
         layout.prop(self, "result_limit")
         layout.label(text="Default channel: Tranquility (TQ)", icon="WORLD")
@@ -1157,15 +1146,6 @@ def _start_preview(context, entry) -> None:
 
 def _run_with_cache_stats(worker: Callable[[], Any], cache_root: Path):
     return worker(), payload_cache_stats(cache_root)
-
-
-def _shader_library() -> str:
-    """The optional .blend supplying Carbon-shaped node groups."""
-
-    try:
-        return str(_prefs(bpy.context).shader_library or "").strip()
-    except (AttributeError, ResourceIndexError):
-        return ""
 
 
 def _fetch_sof_resources(paths: tuple[str, ...], prefs) -> tuple[dict[str, Path], list[str]]:
