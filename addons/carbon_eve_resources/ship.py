@@ -528,6 +528,22 @@ def drive_ship_sockets(objects, source):
     print(f"  drove {driven} per-ship socket(s) across {materials} material group(s)")
 
 
+def collection_name(ship, kind, group):
+    """A collection name that is unique BY CONSTRUCTION.
+
+    Blender's IDs of one type share a single namespace, so two collections
+    cannot both be called "primary" -- it appends .001, and with two ships in a
+    scene it reaches .003. The suffix is not just untidy: it means the name
+    stops being the thing it names, so an exporter reading names sees
+    "primary.002" and a person cannot tell which ship it belongs to.
+
+    Scoping by ship and kind removes the collision rather than surviving it.
+    """
+
+    return ".".join(part for part in (ship, kind, group) if part)
+
+
+
 def ship_collection(name):
     """The collection that IS the ship, created on demand.
 
@@ -566,13 +582,15 @@ def decal_collection(group, visibility_group="", parent=None):
     """
 
     root_parent = parent or bpy.context.scene.collection
-    root = next((child for child in root_parent.children if child.name.startswith("decals")), None)
+    root_name = collection_name(root_parent.name, "decalSets", "")
+    root = next((c for c in root_parent.children if c.name == root_name), None)
     if root is None:
-        root = bpy.data.collections.new("decals")
+        root = bpy.data.collections.new(root_name)
         root_parent.children.link(root)
-    child = next((c for c in root.children if c.name == group), None)
+    child_name = collection_name(root_parent.name, "decalSets", group)
+    child = next((c for c in root.children if c.name == child_name), None)
     if child is None:
-        child = bpy.data.collections.new(group)
+        child = bpy.data.collections.new(child_name)
         root.children.link(child)
     # The visibility group lives on the GROUP, not on each decal: it is what the
     # client switches a whole set on and off by, and a consumer editing it
@@ -1191,15 +1209,17 @@ def attachment_collection(parent, kind, group="", visibility_hash=None):
     compares.
     """
 
-    root = next((c for c in parent.children if c.name.split(".")[0] == kind), None)
+    root_name = collection_name(parent.name, kind, "")
+    root = next((c for c in parent.children if c.name == root_name), None)
     if root is None:
-        root = bpy.data.collections.new(kind)
+        root = bpy.data.collections.new(root_name)
         parent.children.link(root)
     if not group:
         return root
-    child = next((c for c in root.children if c.name.split(".")[0] == group), None)
+    child_name = collection_name(parent.name, kind, group)
+    child = next((c for c in root.children if c.name == child_name), None)
     if child is None:
-        child = bpy.data.collections.new(group)
+        child = bpy.data.collections.new(child_name)
         root.children.link(child)
     if child.get("visibilityGroup") != group:
         child["visibilityGroup"] = group
