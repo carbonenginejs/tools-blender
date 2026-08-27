@@ -82,6 +82,9 @@ class Decal:
     #: name at the point of use.
     sof_name: str = ""
     visibility_group: str = ""
+    #: The DECAL SET this belongs to. A set is the named group a consumer sees,
+    #: and it carries the visibility group the client switches on.
+    set_name: str = ""
 
     @property
     def name(self) -> str:
@@ -95,13 +98,16 @@ class Decal:
     def group(self) -> str:
         """The collection this decal belongs in, under `decals`.
 
-        The SOF's visibility group when the document names one -- that is what
-        an exporter needs, because it is how the client decides which decals to
-        show. Otherwise the shader family, which at least keeps damage, glows,
-        counters and hull decals apart.
+        The SOF's own SET name when we have it: that is the named group a
+        consumer recognises, and the collection carries the set's visibility
+        group as a property beside it.
+
+        Falling back to the shader family keeps damage, glows, counters and
+        hull decals apart, which is the best that can be done from a built
+        document alone -- it carries neither name.
         """
 
-        return self.visibility_group or self.shader.replace(".fx", "")
+        return self.set_name or self.visibility_group or self.shader.replace(".fx", "")
 
     @property
     def is_lit(self) -> bool:
@@ -184,3 +190,95 @@ def summarise(decals: Sequence[Decal]) -> str:
         triangles += len(decal.triangles)
     parts = ", ".join(f"{name.replace('.fx', '')} x{count}" for name, count in sorted(counts.items()))
     return f"{len(decals)} decals ({parts}), {triangles} triangles"
+
+
+#: What each `EveSOFDataHullDecalSetItem.usage` draws with.
+#:
+#: Read from `EveSOF.js`, which indexes this table by usage and SKIPS the item
+#: when there is no name for it. Note that STANDARD and LOGO share `decalv5`:
+#: usage alone does not identify a decal, which is why the match below uses the
+#: transform as well.
+DECAL_USAGE_EFFECTS = (
+    "decalv5.fx",              # 0 STANDARD
+    "decalcounterv5.fx",       # 1 KILLCOUNTER
+    "decalholev5.fx",          # 2 HOLE
+    "decalcylindricv5.fx",     # 3 CYLINDRICAL
+    "decalglowcylindricv5.fx", # 4 GLOWCYLINDRICAL
+    "decalglowv5.fx",          # 5 GLOWSTANDARD
+    "decalv5.fx",              # 6 LOGO
+)
+
+
+def _transform_key(rotation, scaling, bone):
+    """A key that survives the trip from hull record to built decal.
+
+    POSITION is deliberately absent. A strategic cruiser is assembled from
+    several hulls and `EveSOF` accumulates a subsystem offset into each decal's
+    position, so the hull item and the decal it became disagree by that offset.
+    Rotation, scaling and the bone index are copied across untouched.
+
+    Rounded, because both sides have been through JSON.
+    """
+
+    def rounded(values, count, fallback):
+        items = list(values or ())
+        items += list(fallback)[len(items):]
+        return tuple(round(float(value), 4) for value in items[:count])
+
+    return (rounded(rotation, 4, (0.0, 0.0, 0.0, 1.0)),
+            rounded(scaling, 3, (1.0, 1.0, 1.0)),
+            int(bone if bone is not None else -1))
+
+
+def name_decals(decals, decal_sets):
+    """Gives each built decal the name and visibility group its SOF set has.
+
+    A built `EveSpaceObjectDecal` carries NEITHER: `EveSOF` copies the
+    transform, the bone, the effect and the index buffers onto it and leaves the
+    set's name and visibility group and the item's name behind. They exist only
+    on the hull record, so the two have to be matched up.
+
+    NOT by index. The builder skips sets that fail the visibility test, items
+    whose usage has no effect, and logo items when the faction has no matching
+    logo set -- so the two lists have different lengths on exactly the hulls
+    that skip something, and an index mapping would misname decals silently.
+
+    Matching is by transform and effect instead, and each hull item is consumed
+    once, so two decals sharing a transform take the two candidates in order.
+
+    `decal_sets` is a sequence of mappings with `name`, `visibilityGroup` and
+    `items`; pass the sets of EVERY hull of a multi-hull ship, in hull order.
+    Returns a new list of `Decal`, unmatched ones unchanged.
+    """
+
+    candidates = {}
+    for decal_set in decal_sets or ():
+        group = str((decal_set or {}).get("visibilityGroup") or "primary")
+        set_name = str((decal_set or {}).get("name") or "")
+        for item in (decal_set or {}).get("items") or ():
+            usage = int((item or {}).get("usage") or 0)
+            if usage >= len(DECAL_USAGE_EFFECTS):
+                continue
+            key = _transform_key(item.get("rotation"), item.get("scaling"),
+                                 item.get("boneIndex"))
+            candidates.setdefault(key + (DECAL_USAGE_EFFECTS[usage],), []).append(
+                (set_name, group, str(item.get("name") or "")))
+
+    named = []
+    for decal in decals:
+        key = _transform_key(decal.rotation, decal.scaling, decal.parent_bone)
+        waiting = candidates.get(key + (decal.shader,))
+        if not waiting:
+            named.append(decal)
+            continue
+        set_name, group, item_name = waiting.pop(0)
+        named.append(Decal(
+            index=decal.index, shader=decal.shader, position=decal.position,
+            rotation=decal.rotation, scaling=decal.scaling,
+            parent_bone=decal.parent_bone, triangles=decal.triangles,
+            textures=decal.textures, constants=decal.constants,
+            sof_name=item_name or decal.sof_name,
+            visibility_group=group or decal.visibility_group,
+            set_name=set_name or getattr(decal, "set_name", ""),
+        ))
+    return named

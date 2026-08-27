@@ -9,6 +9,7 @@ if str(ADDONS) not in sys.path:
 
 from carbon_eve_resources.quad import (  # noqa: E402
     QuadInterfaceError,
+    decals,
     load_family,
     normalize_shader_name,
     reference,
@@ -747,3 +748,71 @@ class HullBreachTests(unittest.TestCase):
         self.assertEqual(tuple(round(x, 6) for x in rim_only), (1.0, 0.5, 0.0))
         self.assertEqual(tuple(round(x, 6) for x in interior_only), (1.0, 0.5, 0.0))
         self.assertEqual(reference.hole_colour(0.0, 0.5, 0.0, glow), (0.0, 0.0, 0.0))
+
+
+class DecalNamingTests(unittest.TestCase):
+    """A built decal carries neither its name nor its visibility group."""
+
+    def _decal(self, index, shader, rotation, scaling, bone):
+        return decals.Decal(index=index, shader=shader, position=(0.0, 0.0, 0.0),
+                            rotation=rotation, scaling=scaling, parent_bone=bone,
+                            triangles=(), textures={}, constants={})
+
+    def _set(self, name, group, items):
+        return {"name": name, "visibilityGroup": group, "items": items}
+
+    def test_a_decal_takes_its_set_name_and_visibility_group(self):
+        built = [self._decal(0, "decalv5.fx", (0, 0, 0, 1), (1, 1, 1), -1)]
+        sets = [self._set("hull_damage", "damage", [
+            {"name": "scorch_01", "usage": 0, "rotation": (0, 0, 0, 1),
+             "scaling": (1, 1, 1), "boneIndex": -1}])]
+        named = decals.name_decals(built, sets)
+        self.assertEqual(named[0].sof_name, "scorch_01")
+        self.assertEqual(named[0].visibility_group, "damage")
+        self.assertEqual(named[0].group, "hull_damage")
+
+    def test_position_is_not_part_of_the_key(self):
+        # A strategic cruiser offsets decal positions per subsystem hull, so a
+        # match must survive the position disagreeing.
+        built = [self._decal(0, "decalv5.fx", (0, 0, 0, 1), (1, 1, 1), 4)]
+        built[0] = decals.Decal(index=0, shader="decalv5.fx",
+                                position=(900.0, -12.0, 5.0),
+                                rotation=(0, 0, 0, 1), scaling=(1, 1, 1),
+                                parent_bone=4, triangles=(), textures={}, constants={})
+        sets = [self._set("wing", "primary", [
+            {"name": "wing_mark", "usage": 0, "position": (0, 0, 0),
+             "rotation": (0, 0, 0, 1), "scaling": (1, 1, 1), "boneIndex": 4}])]
+        self.assertEqual(decals.name_decals(built, sets)[0].sof_name, "wing_mark")
+
+    def test_skipped_sets_do_not_shift_the_names(self):
+        # The builder drops invisible sets, so the lists differ in length and an
+        # index mapping would name this decal from the wrong set.
+        built = [self._decal(0, "decalholev5.fx", (0, 0, 1, 0), (2, 2, 2), -1)]
+        sets = [
+            self._set("never_built", "hidden", [
+                {"name": "ghost", "usage": 0, "rotation": (0, 0, 0, 1),
+                 "scaling": (1, 1, 1), "boneIndex": -1}]),
+            self._set("breaches", "damage", [
+                {"name": "breach_a", "usage": 2, "rotation": (0, 0, 1, 0),
+                 "scaling": (2, 2, 2), "boneIndex": -1}]),
+        ]
+        named = decals.name_decals(built, sets)
+        self.assertEqual(named[0].sof_name, "breach_a")
+        self.assertEqual(named[0].group, "breaches")
+
+    def test_two_decals_sharing_a_transform_take_one_candidate_each(self):
+        built = [self._decal(0, "decalv5.fx", (0, 0, 0, 1), (1, 1, 1), -1),
+                 self._decal(1, "decalv5.fx", (0, 0, 0, 1), (1, 1, 1), -1)]
+        sets = [self._set("pair", "primary", [
+            {"name": "left", "usage": 0, "rotation": (0, 0, 0, 1),
+             "scaling": (1, 1, 1), "boneIndex": -1},
+            {"name": "right", "usage": 0, "rotation": (0, 0, 0, 1),
+             "scaling": (1, 1, 1), "boneIndex": -1}])]
+        named = decals.name_decals(built, sets)
+        self.assertEqual([d.sof_name for d in named], ["left", "right"])
+
+    def test_an_unmatched_decal_is_left_alone(self):
+        built = [self._decal(0, "decalglowv5.fx", (0, 0, 0, 1), (1, 1, 1), -1)]
+        named = decals.name_decals(built, [])
+        self.assertEqual(named[0].sof_name, "")
+        self.assertEqual(named[0].group, "decalglowv5")

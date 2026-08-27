@@ -527,7 +527,7 @@ def drive_ship_sockets(objects, source):
     print(f"  drove {driven} per-ship socket(s) across {materials} material group(s)")
 
 
-def decal_collection(group):
+def decal_collection(group, visibility_group=""):
     """`decals > {group}`, created on demand.
 
     The tree matters beyond tidiness: an exporter walks collections, so the
@@ -547,10 +547,15 @@ def decal_collection(group):
         root.children.link(child)
     elif child.name not in root.children:
         root.children.link(child)
+    # The visibility group lives on the GROUP, not on each decal: it is what the
+    # client switches a whole set on and off by, and a consumer editing it
+    # should be editing one value rather than seventeen.
+    if visibility_group and child.get("visibilityGroup") != visibility_group:
+        child["visibilityGroup"] = visibility_group
     return child
 
 
-def build_decals(document, hull, resources, family):
+def build_decals(document, hull, resources, family, decal_sets=None):
     """Copies each decal's hull triangles into its own mesh and shades it.
 
     A decal is a re-draw of part of the hull, not a surface of its own, so the
@@ -564,6 +569,14 @@ def build_decals(document, hull, resources, family):
     import mathutils
 
     found = decal_module.read_decals(document)
+    # A built decal carries neither its name nor its visibility group: EveSOF
+    # copies the transform, the bone and the effect onto it and leaves the set
+    # behind. Both come from the hull record, matched by transform rather than
+    # by index -- see decal_module.name_decals for why index would misname them.
+    if decal_sets:
+        found = decal_module.name_decals(found, decal_sets)
+        named = sum(1 for decal in found if decal.sof_name)
+        print(f"  named {named}/{len(found)} decal(s) from the hull's decal sets")
     if not found:
         return []
     print("")
@@ -612,7 +625,7 @@ def build_decals(document, hull, resources, family):
             continue
 
         obj = bpy.data.objects.new(decal.name, mesh)
-        decal_collection(decal.group).objects.link(obj)
+        decal_collection(decal.group, decal.visibility_group).objects.link(obj)
         obj.matrix_world = hull.matrix_world
         obj.parent = hull
         obj.matrix_parent_inverse = hull.matrix_world.inverted()
@@ -1030,7 +1043,8 @@ def populate_sof(obj, document, family):
     print(f"  SOF: {settings.dna or '(no dna in the document)'}")
 
 
-def build_ship(document_path, resources_directory, *, clear=True, globals_overrides=None):
+def build_ship(document_path, resources_directory, *, clear=True,
+               globals_overrides=None, decal_sets=None):
     """Builds a whole ship: geometry, areas, decals, and the SOF that drives it.
 
     ONE call, because the panel and the command line must produce the same
@@ -1054,7 +1068,7 @@ def build_ship(document_path, resources_directory, *, clear=True, globals_overri
     if primary is None:
         return None
 
-    decal_objects = build_decals(document, primary, resources, family)
+    decal_objects = build_decals(document, primary, resources, family, decal_sets)
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material

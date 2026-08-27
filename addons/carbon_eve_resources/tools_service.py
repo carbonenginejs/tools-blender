@@ -159,6 +159,25 @@ class ToolsServiceClient:
             request,
         )
 
+    def hull_decal_sets(self, hull: str, build: str = "latest", target: str = "eve") -> list:
+        """The named decal sets of one hull, with their visibility groups.
+
+        A built ship carries neither: `EveSOF` copies a decal's transform, bone
+        and effect and leaves the set's name and visibility group behind. They
+        exist only here, on the hull record.
+
+        The build must be the RESOURCE build. `latest` resolves to two different
+        numbers -- one for resources, one for the SDE -- and a SOF route given
+        the SDE build silently acquires a whole second client build.
+
+        Returns an empty list when the hull has none, rather than raising: a
+        hull without decals is ordinary.
+        """
+
+        record = self._request("GET", f"/{target}/{build}/sof/hulls/{hull}")
+        sets = record.get("decalSets") if isinstance(record, Mapping) else None
+        return list(sets or [])
+
     def _request(self, method: str, route: str, body: Optional[Mapping] = None) -> dict:
         bootstrap = self.start()
         host = f"[{bootstrap.host}]" if ":" in bootstrap.host else bootstrap.host
