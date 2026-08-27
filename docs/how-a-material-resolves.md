@@ -33,6 +33,18 @@ pattern name and its two layer materials, so a pattern's colours are never a
 faction lookup — which is why a SKIN can repaint a hull that has no faction
 override at all.
 
+## The shader only ever sees the answer
+
+By the time a value reaches the hull's shaders it is a constant: `Mtl1DiffuseColor`
+and its neighbours, four numbers in a buffer. The shader has no idea a faction
+exists, cannot tell an override from a default, and could not resolve one if it
+wanted to.
+
+Resolution is therefore entirely a CPU-side concern, and what sits in the scene's
+shader sockets is a RESULT. That is the whole reason the SOF has to be the source
+and the scene the consequence: read the sockets back and you learn what the colour
+IS, never what decided it — and only the thing that decided it can be exported.
+
 ## What that means for the tools
 
 A material slot names a MATERIAL. The colours under it are what that material

@@ -77,7 +77,7 @@ license.
 The packed tangent-frame decode/encode math is derived from Fenris Creations
 (formerly CCP / CCP Games) EVE/Carbon shader behavior for packed tangent frames.
 The canonical JavaScript implementation is maintained by CarbonEngineJS in
-`@carbonenginejs/core-math` (`src/tangent.js`), and `format-gr2` delegates to
+`@carbonenginejs/runtime-utils` (`src/tangent.js`), and `format-gr2` delegates to
 that implementation. This Blender package contains a pure-Python port of its
 packed-frame decode math in `addons/io_scene_carbon_gr2/gr2/tangents.py`. It
 does not include copied shader source.
