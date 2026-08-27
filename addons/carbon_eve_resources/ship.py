@@ -528,32 +528,39 @@ def drive_ship_sockets(objects, source):
     print(f"  drove {driven} per-ship socket(s) across {materials} material group(s)")
 
 
-#: How wide the KIND field is before a set's own name.
+#: How wide the MEANING is before the unique part of a name.
 #:
-#: Padded so the names line up as columns in the outliner, which is the whole
-#: reason for the underscores:
+#: Every name is the thing it means on the left, padded, then whatever makes it
+#: unique on the right, so the unique column lines up and can be read down:
 #:
-#:     decalSets______primary
-#:     planeSets______primary
-#:     bannerSets_____primary
+#:     decalSets______mde3_t3
+#:     primary________mde3_t3
+#:     Killmarks______mde3_t3
 #:
-#: Fifteen is the longest kind plus a gap. A longer kind simply takes its own
-#: width rather than being cut, because a truncated name is worse than a ragged
-#: column.
-KIND_FIELD = 15
+#: The meaning is the array name for a set collection, the visibility group for
+#: a group, and the item's own name for an object. A name longer than the field
+#: takes its own width rather than being cut, because a truncated name is worse
+#: than a ragged column.
+NAME_FIELD = 15
 
 
-def collection_name(kind, group):
-    """A set's collection name: the kind, padded, then the set's own name.
+def unique_name(meaning, unique):
+    """`meaning_______unique`, padded so the unique parts line up.
 
-    Blender's IDs of one type share ONE namespace, so a second ship's
-    `decalSets______primary` becomes `.001`. That is accepted rather than
-    engineered around: the collection sits inside its ship, and the
-    `visibilityGroup` property carries the meaning, so the suffix costs nothing
-    a reader needs.
+    Blender's names are unique PER ID TYPE across the whole file and a
+    collection does NOT scope them, so a second ship's `Killmarks` becomes
+    `Killmarks.001` wherever it sits. Supplying the unique part ourselves is
+    what keeps the meaning readable: the ship is on the right, and nothing is
+    left to Blender to disambiguate.
     """
 
-    return f"{kind:_<{KIND_FIELD}}{group}" if group else kind
+    if not unique:
+        return str(meaning)
+    # At least one underscore, always. A name as long as the field would
+    # otherwise run straight into the unique part -- "LightStrip_rightmde3_t3"
+    # -- which is unreadable and, worse, ambiguous about where one ends.
+    width = max(NAME_FIELD, len(str(meaning)) + 1)
+    return f"{meaning:_<{width}}{unique}"
 
 
 
@@ -595,13 +602,13 @@ def decal_collection(group, visibility_group="", parent=None):
     """
 
     root_parent = parent or bpy.context.scene.collection
-    root_name = "decalSets"
-    root = next((c for c in root_parent.children if c.name.split(".")[0] == root_name), None)
+    root_name = unique_name("decalSets", root_parent.name)
+    root = next((c for c in root_parent.children if c.name == root_name), None)
     if root is None:
         root = bpy.data.collections.new(root_name)
         root_parent.children.link(root)
-    child_name = collection_name("decalSets", group)
-    child = next((c for c in root.children if c.name.split(".")[0] == child_name), None)
+    child_name = unique_name(group, f"{root_parent.name}.decalSets")
+    child = next((c for c in root.children if c.name == child_name), None)
     if child is None:
         child = bpy.data.collections.new(child_name)
         root.children.link(child)
@@ -625,6 +632,10 @@ def build_decals(document, hull, resources, family, decal_sets=None, collection=
 
     import bmesh
     import mathutils
+
+    # Every name is its meaning then the ship, so two hulls of the same class
+    # can sit in one scene without Blender renaming either of them.
+    ship_name = collection.name if collection is not None else (hull.name if hull else "")
 
     found = decal_module.read_decals(document)
     # A built decal carries neither its name nor its visibility group: EveSOF
@@ -682,7 +693,7 @@ def build_decals(document, hull, resources, family, decal_sets=None, collection=
             skipped["no faces"] = skipped.get("no faces", 0) + 1
             continue
 
-        obj = bpy.data.objects.new(decal.name, mesh)
+        obj = bpy.data.objects.new(unique_name(decal.name, ship_name), mesh)
         decal_collection(decal.group, decal.visibility_group, collection).objects.link(obj)
         stamp_identity(obj, decal.sof_name, "decal", decal.visibility_group)
         obj.matrix_world = hull.matrix_world
@@ -1226,7 +1237,8 @@ def build_plane_sets(document, hull, collection, hull_sets=None):
             source.get("visibilityGroup"))
         for index, item in enumerate(planes):
             mesh = quad_mesh(f"planeset{set_index}_{index}")
-            obj = bpy.data.objects.new(f"plane_{set_index}_{index}", mesh)
+            obj = bpy.data.objects.new(
+                unique_name(f"plane_{set_index}_{index}", collection.name), mesh)
             group.objects.link(obj)
 
             obj.matrix_world = item_matrix(item, hull)
@@ -1263,15 +1275,18 @@ def attachment_collection(parent, kind, group="", visibility_hash=None):
     compares.
     """
 
-    root_name = kind
-    root = next((c for c in parent.children if c.name.split(".")[0] == root_name), None)
+    root_name = unique_name(kind, parent.name)
+    root = next((c for c in parent.children if c.name == root_name), None)
     if root is None:
         root = bpy.data.collections.new(root_name)
         parent.children.link(root)
     if not group:
         return root
-    child_name = collection_name(kind, group)
-    child = next((c for c in root.children if c.name.split(".")[0] == child_name), None)
+    # The kind is part of what makes a group unique: every kind has a
+    # "primary", and Blender would rename the second one and then never find it
+    # again -- which produced a fresh primary.001, .002 per set.
+    child_name = unique_name(group, f"{parent.name}.{kind}")
+    child = next((c for c in root.children if c.name == child_name), None)
     if child is None:
         child = bpy.data.collections.new(child_name)
         root.children.link(child)
@@ -1369,7 +1384,8 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
             reference = item.get("reference")
             slot = BANNER_REFERENCES[reference] if isinstance(reference, int)                 and 0 <= reference < len(BANNER_REFERENCES) else str(reference or "")
             mesh = quad_mesh(f"bannerset{set_index}_{index}")
-            obj = bpy.data.objects.new(f"banner_{slot or set_index}_{index}", mesh)
+            obj = bpy.data.objects.new(
+                unique_name(f"banner_{slot or set_index}", collection.name), mesh)
             group.objects.link(obj)
             obj.matrix_world = item_matrix(item, hull)
             obj["carbon_banner_reference"] = int(reference or 0)
@@ -1402,7 +1418,8 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
             # and moving the banner takes its light along.
             owner = banners_built[index] if index < len(banners_built) else None
             obj = bpy.data.objects.new(
-                f"{owner.name}_light" if owner else f"banner_light_{set_index}_{index}", lamp)
+                unique_name(f"{(owner.get('carbon_sof_name') or 'banner')}_light"
+                            if owner else f"banner_light_{index}", collection.name), lamp)
             group.objects.link(obj)
             world = item_matrix(data, hull)
             obj.matrix_world = world
