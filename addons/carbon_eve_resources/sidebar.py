@@ -121,19 +121,63 @@ class CARBON_PT_sidebar_sof(Panel):
             return
 
         settings = ship.carbon_sof
-        layout.label(text=ship.name.split("_")[0], icon="OUTLINER_OB_ARMATURE")
-        for field in ("hull", "faction", "race", "pattern"):
-            layout.prop(settings, field)
+
+        # The DNA first, because it is the thing being edited -- everything
+        # below is a view onto one part of this string.
         row = layout.row()
         row.enabled = False
         row.prop(settings, "dna", text="DNA")
-        # Two different jobs, and confusing them wastes a rebuild. `Apply`
-        # pushes what is already here down to the children; `Rebuild` asks
-        # tools-core what the edited SOF actually resolves to, which is the
-        # only way a faction change can reach the scene at all.
+
+        # Compulsory: a DNA without all three is not a DNA.
+        required = layout.column(align=True)
+        for field in ("hull", "faction", "race"):
+            required.prop(settings, field)
+
+        _command(layout, settings, "use_mesh", "carbon_cmd_mesh",
+                 [f"mesh_material{index}" for index in (1, 2, 3, 4)],
+                 note="`mesh` is how live skins spell `material`")
+        _command(layout, settings, "use_pattern", "carbon_cmd_pattern",
+                 ["pattern", "pattern_material5", "pattern_material6"])
+        _command(layout, settings, "use_respath", "carbon_cmd_respath",
+                 ["respath_insert"])
+        _command(layout, settings, "use_layout", "carbon_cmd_layout",
+                 ["layout_names"],
+                 note="scatters hull extensions; every layout is a structure")
+
         buttons = layout.row(align=True)
         buttons.operator("carbon.sof_apply", text="Apply", icon="FILE_REFRESH")
         buttons.operator("carbon.sof_rebuild", text="Rebuild", icon="PLAY")
+
+
+def _command(layout, settings, toggle, idname, fields, *, note=""):
+    """One optional DNA command: a switch, and its arguments beneath it.
+
+    The switch is the command's PRESENCE. A command that is off is absent from
+    the DNA, which is not the same as one whose arguments are all `none` --
+    they resolve alike, but only one of them says someone considered it.
+    """
+
+    header, body = _panel(layout, idname)
+    if header is None:
+        body = layout.column(align=True)
+    target = header if header is not None else body
+    target.prop(settings, toggle)
+    if body is None:
+        return
+    body.enabled = bool(getattr(settings, toggle))
+    if note:
+        body.label(text=note, icon="INFO")
+    for field in fields:
+        body.prop(settings, field)
+
+
+def _panel(layout, idname):
+    """`(header, body)` where the UI folds, `(None, None)` where it does not."""
+
+    maker = getattr(layout, "panel", None)
+    if maker is None:
+        return None, None
+    return maker(idname, default_closed=True)
 
 
 class CARBON_PT_sidebar_materials(Panel):

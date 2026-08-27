@@ -1,0 +1,107 @@
+"""The SOF editor edits the DNA's COMMANDS, and must not lose any of them."""
+
+from pathlib import Path
+import sys
+import unittest
+
+
+ADDONS = Path(__file__).resolve().parents[1] / "addons"
+if str(ADDONS) not in sys.path:
+    sys.path.insert(0, str(ADDONS))
+
+try:
+    import bpy
+except ImportError:                      # pragma: no cover - outside Blender
+    bpy = None
+
+if bpy is not None:
+    from carbon_eve_resources import sof_panels, sof_resolution
+
+
+FULL = ("mde3_t3:legion_minmatar:minmatar"
+        ":material?mtl_a;none;mtl_c;none"
+        ":pattern?legion_minmatar;brown_dust_coated;orange_fire_colorshift"
+        ":respathinsert?deathless"
+        ":layout?upwell_hangar;small_docks")
+
+
+@unittest.skipIf(bpy is None, "needs Blender")
+class EditorTests(unittest.TestCase):
+    def setUp(self):
+        bpy.ops.wm.read_homefile(use_empty=True)
+        try:
+            sof_panels.register()
+        except Exception:
+            pass
+        self.obj = bpy.data.objects.new("ship", None)
+        bpy.context.scene.collection.objects.link(self.obj)
+        self.settings = self.obj.carbon_sof
+
+    def test_reads_the_three_compulsory_components(self):
+        self.settings.read_dna(FULL)
+        self.assertEqual((self.settings.hull, self.settings.faction, self.settings.race),
+                         ("mde3_t3", "legion_minmatar", "minmatar"))
+
+    def test_reads_all_four_mesh_materials_including_the_nones(self):
+        self.settings.read_dna(FULL)
+        self.assertTrue(self.settings.use_mesh)
+        self.assertEqual(
+            [getattr(self.settings, f"mesh_material{i}") for i in (1, 2, 3, 4)],
+            ["mtl_a", "none", "mtl_c", "none"])
+
+    def test_reads_the_pattern_and_its_two_layer_materials(self):
+        self.settings.read_dna(FULL)
+        self.assertTrue(self.settings.use_pattern)
+        self.assertEqual(self.settings.pattern, "legion_minmatar")
+        self.assertEqual(self.settings.pattern_material5, "brown_dust_coated")
+        self.assertEqual(self.settings.pattern_material6, "orange_fire_colorshift")
+
+    def test_reads_respathinsert_and_layouts(self):
+        self.settings.read_dna(FULL)
+        self.assertEqual(self.settings.respath_insert, "deathless")
+        # Several layouts are legal; GetLayoutData takes a list.
+        self.assertEqual(self.settings.layout_names, "upwell_hangar;small_docks")
+
+    def test_round_trips_to_the_runtime_canonical_form(self):
+        # Not to the input text: EveSOFDNA SORTS its commands when it composes,
+        # so a DNA differing only in command order is the same ship.
+        self.settings.read_dna(FULL)
+        self.assertEqual(self.settings.compose_dna(),
+                         sof_resolution.parse(FULL).compose())
+
+    def test_the_optional_commands_are_absent_when_off(self):
+        self.settings.read_dna(FULL)
+        self.settings.use_layout = False
+        self.settings.use_respath = False
+        made = self.settings.compose_dna()
+        self.assertNotIn("layout?", made)
+        self.assertNotIn("respathinsert?", made)
+        self.assertIn("pattern?", made)
+
+    def test_a_mesh_command_of_all_nones_is_no_command(self):
+        # `none` is an absence, so four of them is a ship with no overrides --
+        # which is a DNA with no material command, not one spelling out four.
+        self.settings.read_dna("mde3_t3:legion_minmatar:minmatar")
+        self.settings.use_mesh = True
+        self.assertNotIn("material?", self.settings.compose_dna())
+
+    def test_a_plain_dna_switches_every_optional_command_off(self):
+        self.settings.read_dna(FULL)
+        self.settings.read_dna("mde3_t3:legion_minmatar:minmatar")
+        for toggle in ("use_mesh", "use_pattern", "use_respath", "use_layout"):
+            self.assertFalse(getattr(self.settings, toggle), toggle)
+
+    def test_an_unreadable_dna_changes_nothing(self):
+        self.settings.read_dna(FULL)
+        self.assertFalse(self.settings.read_dna("not-a-dna"))
+        self.assertEqual(self.settings.hull, "mde3_t3")
+
+    def test_the_dna_is_kept_verbatim_on_the_way_in(self):
+        # Recomposing on read would silently drop anything the editor does not
+        # model yet.
+        self.settings.read_dna(FULL)
+        self.assertEqual(self.settings.dna, FULL)
+
+
+if __name__ == "__main__":
+    unittest.main()

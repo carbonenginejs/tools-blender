@@ -251,6 +251,9 @@ def _privatise(entry, context):
 #: What a slot is called once its colours no longer match any named material.
 CUSTOM_MATERIAL = "custom"
 
+#: A DNA slot that names nothing. Not an override: the search simply continues.
+NONE_MATERIAL = "none"
+
 class CARBON_SOF_Name(PropertyGroup):
     """One catalog entry. A `name` is all a search list needs."""
 
@@ -394,9 +397,53 @@ class CARBON_SOF_Settings(PropertyGroup):
         description="The SOF faction, which supplies the materials and the logos")
     race: StringProperty(
         name="Race", default="", update=_component_update)
+    #: The DNA's optional COMMANDS, each with the toggle that decides whether
+    #: it is written at all. A command that is off is absent from the DNA,
+    #: which is not the same as one whose arguments are all `none` -- though
+    #: they resolve alike, only one of them says so.
+    use_mesh: BoolProperty(
+        name="Mesh", default=False, update=_component_update,
+        description="Name materials in the DNA. `mesh` is the spelling live "
+                    "EVE skins are authored with; the runtime reads it as "
+                    "`material`")
+    mesh_material1: StringProperty(name="Material 1", default=NONE_MATERIAL,
+                                   update=_component_update)
+    mesh_material2: StringProperty(name="Material 2", default=NONE_MATERIAL,
+                                   update=_component_update)
+    mesh_material3: StringProperty(name="Material 3", default=NONE_MATERIAL,
+                                   update=_component_update)
+    mesh_material4: StringProperty(name="Material 4", default=NONE_MATERIAL,
+                                   update=_component_update)
+
+    use_pattern: BoolProperty(
+        name="Pattern", default=False, update=_component_update,
+        description="The SKIN's pattern, if the ship wears one")
     pattern: StringProperty(
         name="Pattern", default="", update=_component_update,
-        description="The SKIN's pattern, if the ship wears one")
+        description="The pattern's name")
+    #: Numbered 5 and 6 because that is what they are: the pattern's two layer
+    #: materials continue the DNA's material numbering, and calling them 1 and
+    #: 2 again would collide with the mesh command's.
+    pattern_material5: StringProperty(name="Material 5", default=NONE_MATERIAL,
+                                      update=_component_update)
+    pattern_material6: StringProperty(name="Material 6", default=NONE_MATERIAL,
+                                      update=_component_update)
+
+    use_respath: BoolProperty(
+        name="RespathInsert", default=False, update=_component_update,
+        description="Redirects resource paths, which is how a hull reaches an "
+                    "alternate set of textures")
+    respath_insert: StringProperty(name="Name", default="",
+                                   update=_component_update)
+
+    use_layout: BoolProperty(
+        name="Layout", default=False, update=_component_update,
+        description="Scatters hull extensions over a structure from a named "
+                    "layout; every layout in the catalog is a station, hangar "
+                    "or dock rather than a ship")
+    layout_names: StringProperty(
+        name="Layouts", default="", update=_component_update,
+        description="One or more layout names, separated by ;")
     dna: StringProperty(
         name="DNA", default="",
         description="hull:faction:race, and a pattern when there is one")
@@ -413,36 +460,87 @@ class CARBON_SOF_Settings(PropertyGroup):
     materials: CollectionProperty(type=CARBON_SOF_Material)
 
     def compose_dna(self) -> str:
-        """The DNA these components and material slots describe.
+        """The DNA these components and commands describe.
 
         Composed through `sof_resolution`, which writes the runtime's own
-        grammar and sorts the commands the way `EveSOFDNA` does -- so a DNA
-        built here can be pasted straight into the loader, and two edits that
-        reach the same ship produce the same text.
+        grammar and sorts the commands the way `EveSOFDNA` does, so a DNA built
+        here can be pasted straight into the loader and two edits reaching the
+        same ship produce the same text.
 
-        Only slots the DNA OWNS are written. A slot showing the faction's
-        material is not an override, and writing it out would freeze today's
-        faction colour into the DNA -- the ship would stop following its
-        faction the moment anyone rebuilt it.
+        A command that is switched OFF is left out entirely. That is not the
+        same as one whose arguments are all `none`, even though they resolve
+        alike: a DNA carrying `material?none;none;none;none` says someone
+        considered the question, and one without the command does not.
         """
 
         if not any((self.hull, self.faction, self.race)):
             return ""
-        materials = []
-        for index in range(1, sof_resolution.MATERIAL_SLOTS + 1):
-            entry = self.slot(index)
-            owned = (entry is not None
-                     and entry.source == sof_resolution.SOURCE_DNA
-                     and entry.material
-                     and entry.material != CUSTOM_MATERIAL)
-            materials.append(entry.material if owned else sof_resolution.NONE)
 
-        dna = sof_resolution.compose([self.hull], self.faction, self.race)
-        if self.pattern:
-            parts = [part for part in str(self.pattern).split(";") if part]
-            if parts:
-                dna = sof_resolution.with_pattern(dna, parts[0], parts[1:])
-        return sof_resolution.with_materials(dna, materials)
+        commands = {}
+        if self.use_mesh:
+            args = [str(getattr(self, f"mesh_material{index}") or NONE_MATERIAL)
+                    for index in (1, 2, 3, 4)]
+            if any(value != NONE_MATERIAL for value in args):
+                commands["material"] = args
+        if self.use_pattern and self.pattern:
+            commands["pattern"] = [
+                self.pattern,
+                str(self.pattern_material5 or NONE_MATERIAL),
+                str(self.pattern_material6 or NONE_MATERIAL),
+            ]
+        if self.use_respath and self.respath_insert:
+            commands["respathinsert"] = [self.respath_insert]
+        if self.use_layout and self.layout_names:
+            # Several layouts are legal -- GetLayoutData takes a list -- so the
+            # separator is the DNA's own `;` rather than a second field.
+            names = [name.strip() for name in str(self.layout_names).split(";")]
+            names = [name for name in names if name]
+            if names:
+                commands["layout"] = names
+        return sof_resolution.compose([self.hull], self.faction, self.race, commands)
+
+    def read_dna(self, dna: str) -> bool:
+        """Fills the components and commands FROM a DNA string.
+
+        The DNA is the authority when one arrives: a ship built from
+        `mde3_t3:legion_minmatar:minmatar:pattern?...` must show that pattern in
+        the editor, not an empty command someone has to fill in again.
+        """
+
+        try:
+            parsed = sof_resolution.parse(dna)
+        except sof_resolution.DnaError:
+            return False
+
+        with applying():
+            self.hull = parsed.hull
+            self.faction = parsed.faction
+            self.race = parsed.race
+
+            materials = parsed.args("material") or parsed.args("mesh")
+            self.use_mesh = bool(materials)
+            for offset, index in enumerate((1, 2, 3, 4)):
+                value = materials[offset] if offset < len(materials) else NONE_MATERIAL
+                setattr(self, f"mesh_material{index}", value or NONE_MATERIAL)
+
+            pattern = parsed.pattern
+            self.use_pattern = bool(pattern)
+            self.pattern = pattern[0] if pattern else ""
+            self.pattern_material5 = (pattern[1] if len(pattern) > 1 else NONE_MATERIAL)
+            self.pattern_material6 = (pattern[2] if len(pattern) > 2 else NONE_MATERIAL)
+
+            respath = parsed.args("respathinsert")
+            self.use_respath = bool(respath)
+            self.respath_insert = respath[0] if respath else ""
+
+            layouts = parsed.args("layout")
+            self.use_layout = bool(layouts)
+            self.layout_names = ";".join(layouts)
+
+            # Verbatim, not recomposed: the fields were just filled from it, so
+            # anything the recompose dropped would be lost silently.
+            self.dna = dna
+        return True
 
     def bind_materials(self, obj) -> dict:
         """Points every area shader at the material groups its slots name.

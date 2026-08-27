@@ -1146,21 +1146,12 @@ def populate_sof(obj, document, family):
     settings = obj.carbon_sof
     dna = str(document.get("dna") or "")
     if dna:
-        try:
-            parsed = sof_resolution.parse(dna)
-        except sof_resolution.DnaError:
-            parsed = None
-        if parsed is not None:
-            settings.hull = parsed.hull
-            settings.faction = parsed.faction
-            settings.race = parsed.race
-            settings.pattern = ";".join(parsed.pattern)
-        # Setting a component recomposes the DNA from the fields, and the
-        # slots are still empty at this point -- so the composed text would
-        # drop the very material commands this DNA was built with. The
-        # document's own DNA is the authority; put it back, then read the
-        # slots' provenance out of it.
-        settings.dna = dna
+        # Every command, not just the components: the editor shows the DNA's
+        # mesh, pattern, respathinsert and layout commands, and a ship built
+        # from a DNA that carries them must arrive showing them rather than
+        # blank fields someone has to fill in again. The DNA is kept verbatim
+        # rather than recomposed, so nothing it holds can be lost on the way in.
+        settings.read_dna(dna)
 
     # One group of four slots PER AREA TYPE, because that is how a faction
     # stores them: four material names keyed `areaType:slot`. A single group
