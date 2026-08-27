@@ -38,6 +38,18 @@ from .sof_document import SofBundle, SofDocumentError, load_sof_bundle
 
 
 ADDON_ID = __package__ or "carbon_eve_resources"
+
+
+def _gr2_settings():
+    """The importer's settings class, imported late.
+
+    Late because the importer imports `bpy.types` at module scope and this
+    module is imported while the add-on is still being registered.
+    """
+
+    from .gr2_importer.addon import GR2ImporterPreferences
+
+    return GR2ImporterPreferences
 IMAGE_EXTENSIONS = {".bmp", ".dds", ".jpeg", ".jpg", ".png", ".tga", ".tif", ".tiff"}
 MODEL_EXTENSIONS = {".gr2"}
 DATA_EXTENSIONS = {".black", ".blue", ".json", ".red", ".xml", ".yaml", ".yml"}
@@ -150,6 +162,10 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
     )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
+
+    #: The GR2 importer's settings, which used to be a second AddonPreferences
+    #: of its own. One add-on has one preferences class, so they live here.
+    gr2: PointerProperty(type=_gr2_settings())
 
     def draw(self, context):
         layout = self.layout
@@ -1225,8 +1241,14 @@ def _hull_record(dna: str) -> dict:
     if not hull:
         return {}
 
-    prefs = _prefs(bpy.context)
-    root = str(prefs.tools_core_directory or "").strip()
+    # Preferences can be absent -- a script that imports the package rather
+    # than enabling it, or a file reload between the two -- and a missing
+    # setting is not a reason to take a build down.
+    try:
+        prefs = _prefs(bpy.context)
+    except ResourceIndexError:
+        return {}
+    root = str(getattr(prefs, "tools_core_directory", "") or "").strip()
     if not root:
         return {}
     try:
@@ -1273,6 +1295,12 @@ def _assemble_sof_document(
     primary = ship_builder.build_ship(
         str(bundle.document_path),
         str(bundle.directory),
+        # Keep what is already in the scene. The builder's default is to empty
+        # the file first, which suits the preview script -- one ship per run --
+        # and is entirely wrong for a panel: loading a second hull silently
+        # deleted the first, leaving its empty collections behind so it looked
+        # like the ship was still there.
+        clear=False,
         decal_sets=(hull_record.get("decalSets") or []),
         hull_record=hull_record,
         cache_directory=str(_cache_path(_prefs(bpy.context)) / "logos"),
@@ -1645,6 +1673,9 @@ def _auto_load():
 
 
 classes = (
+    # The importer's settings FIRST: the preferences class below points at it,
+    # and a PointerProperty to an unregistered type fails at register time.
+    _gr2_settings(),
     EVE_RESOURCE_Preferences,
     EVE_RESOURCE_OT_open_creator_terms,
     EVE_RESOURCE_OT_accept_creator_terms,

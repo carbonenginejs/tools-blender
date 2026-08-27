@@ -204,8 +204,10 @@ class CARBON_PT_sidebar_dna(Panel):
                                  text="", icon="FILE_REFRESH")
         again.dna = settings.dna
         again.refresh = True
-        layout.operator("carbon.sof_apply", text="Refresh Materials",
-                        icon="MATERIAL")
+        actions = layout.row(align=True)
+        actions.operator("carbon.sof_apply", text="Refresh Materials",
+                         icon="MATERIAL")
+        actions.operator("carbon.sof_select_ship", text="", icon="RESTRICT_SELECT_OFF")
 
         if state is None:
             layout.label(text="Resource browser is not registered", icon="ERROR")

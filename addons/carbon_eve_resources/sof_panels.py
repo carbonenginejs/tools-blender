@@ -835,6 +835,66 @@ class CARBON_SOF_OT_apply(Operator):
         return {"FINISHED"}
 
 
+def _collection_objects(collection):
+    """Every object in a collection and the collections under it."""
+
+    found = list(getattr(collection, "objects", []))
+    for child in getattr(collection, "children", []):
+        found.extend(_collection_objects(child))
+    return found
+
+
+class CARBON_SOF_OT_select_ship(Operator):
+    """Selects a whole ship: the hull and everything hanging off it.
+
+    Blender does not select children with their parent, and a ship is 25-odd
+    objects -- hull, decals, planes, banners, lights -- so clicking the hull
+    selects one of them. That is Blender's behaviour rather than a fault in how
+    the ship is grouped, but a tool that builds 25-object ships should offer
+    the obvious way to grab one.
+
+    Selects from whatever is active, so clicking any decal and pressing this
+    takes the ship it belongs to.
+    """
+
+    bl_idname = "carbon.sof_select_ship"
+    bl_label = "Select Whole Ship"
+    bl_description = "Select the hull and every object parented to it"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        obj = context.object
+        while obj is not None and not getattr(obj, "carbon_sof", None).dna:
+            obj = obj.parent
+        if obj is None:
+            self.report({"ERROR"}, "Select part of a ship first")
+            return {"CANCELLED"}
+
+        # Parenting alone is not the ship. Following it from the hull found 11
+        # of 28 objects: decals and banners hang off the ARMATURE, and some
+        # attachments hang off nothing at all. What they share is the ship's
+        # COLLECTION, which is what the builder groups them into.
+        wanted = [obj]
+        index = 0
+        while index < len(wanted):
+            wanted.extend(child for child in wanted[index].children
+                          if child not in wanted)
+            index += 1
+
+        for collection in obj.users_collection:
+            for target in _collection_objects(collection):
+                if target not in wanted:
+                    wanted.append(target)
+
+        bpy.ops.object.select_all(action="DESELECT")
+        for target in wanted:
+            if target.name in context.view_layer.objects:
+                target.select_set(True)
+        context.view_layer.objects.active = obj
+        self.report({"INFO"}, f"Selected {len(wanted)} object(s)")
+        return {"FINISHED"}
+
+
 class CARBON_SOF_OT_rebuild(Operator):
     """Resolve the edited SOF and rebuild what hangs off it.
 
@@ -1162,6 +1222,7 @@ CLASSES = (
     CARBON_SOF_Settings,
     CARBON_SOF_OT_apply,
     CARBON_SOF_OT_rebuild,
+    CARBON_SOF_OT_select_ship,
     CARBON_SOF_OT_export_material,
     CARBON_SOF_OT_ensure_slots,
     CARBON_PT_sof,

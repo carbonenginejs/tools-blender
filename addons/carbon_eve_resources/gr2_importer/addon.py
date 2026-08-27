@@ -6,7 +6,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple, Set
 
 import bpy
-from bpy.types import Operator, AddonPreferences
+from bpy.types import Operator, PropertyGroup
 from bpy.props import (
     StringProperty,
     BoolProperty,
@@ -27,8 +27,14 @@ ADDON_ID = "carbon_eve_resources"   # preferences live on the one add-on now
 # Preferences
 # =============================================================================
 
-class GR2ImporterPreferences(AddonPreferences):
-    bl_idname = ADDON_ID
+class GR2ImporterPreferences(PropertyGroup):
+    """The importer's settings, nested in the add-on's preferences.
+
+    A PropertyGroup and not AddonPreferences: there is one add-on now, one
+    `bl_idname`, and one preferences class allowed to claim it. Registering a
+    second one silently REPLACED the add-on's own preferences -- every setting
+    of it vanished and reads failed with "no attribute cache_directory".
+    """
 
     import_scale: FloatProperty(
         name="Import scale",
@@ -185,7 +191,9 @@ class GR2ImporterPreferences(AddonPreferences):
 
 
 def _prefs(context) -> GR2ImporterPreferences:
-    return context.preferences.addons[ADDON_ID].preferences
+    """The importer's settings, reached through the add-on's preferences."""
+
+    return context.preferences.addons[ADDON_ID].preferences.gr2
 
 
 # =============================================================================
@@ -1992,7 +2000,6 @@ def menu_func_import(self, context):
     self.layout.operator(IMPORT_SCENE_OT_carbon_gr2.bl_idname, text="Granny GR2 (.gr2)")
 
 classes = (
-    GR2ImporterPreferences,
     IMPORT_SCENE_OT_carbon_gr2,
     IMPORT_OT_gr2_json,
 )
