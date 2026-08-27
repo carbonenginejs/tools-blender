@@ -25,9 +25,9 @@ Everything below works without it.
 from __future__ import annotations
 
 import bpy
-from bpy.props import (BoolProperty, CollectionProperty, EnumProperty,
-                       FloatProperty, FloatVectorProperty, IntProperty,
-                       PointerProperty, StringProperty)
+from bpy.props import (BoolProperty, CollectionProperty, FloatProperty,
+                       FloatVectorProperty, IntProperty, PointerProperty,
+                       StringProperty)
 from bpy.types import Operator, Panel, PropertyGroup
 
 from . import sof_resolution
@@ -181,64 +181,59 @@ def _colour_edited(self, context):
 #: What a slot is called once its colours no longer match any named material.
 CUSTOM_MATERIAL = "custom"
 
-#: The dropdown's items, kept alive at module scope.
-#:
-#: Blender does not copy the strings an items callback returns: hand it a list
-#: built inside the callback and the strings are freed while the menu is still
-#: pointing at them, which corrupts the labels and can take the process down.
-#: Building the list once and holding it here is the documented way round it.
-_ENUM_ITEMS = []
+class CARBON_SOF_Name(PropertyGroup):
+    """One catalog entry. A `name` is all a search list needs."""
 
 
-def material_items(self, context):
-    """The material catalog, for the slot dropdown.
+def catalog_items(context=None):
+    """Fills the window's material list, once, and returns how many it holds.
 
-    The catalog is 1149 names and is fetched once per build, not per redraw.
-    A slot whose current material is not in the catalog -- `custom`, or a name
-    from a build we cannot reach -- keeps its own entry at the top so choosing
-    something else is a decision rather than an accident.
+    The catalog lives on the WINDOW MANAGER rather than in the blend: it is
+    1149 names that belong to a tools-core build, not to this file, and saving
+    a copy into every .blend would make each one carry a stale snapshot of a
+    catalog it does not own.
     """
 
     from . import service_access, sof_materials
 
-    names = sof_materials.catalog(service_access.client(context))
-    current = str(self.material or "")
-    _ENUM_ITEMS.clear()
-    if current and current not in names:
-        _ENUM_ITEMS.append((current, current, "This slot's current material"))
-    if not names:
-        _ENUM_ITEMS.append(("", "<catalog unavailable>",
-                            "tools-core could not be reached"))
-    for name in names:
-        _ENUM_ITEMS.append((name, name, ""))
-    return list(_ENUM_ITEMS)
+    window = (context or bpy.context).window_manager
+    items = window.carbon_sof_materials
+    if len(items):
+        return len(items)
+    for name in sof_materials.catalog(service_access.client(context)):
+        items.add().name = name
+    return len(items)
 
 
-def _material_chosen(self, context):
-    """A material was picked, so the slot takes that material's values.
+def _material_named(self, context):
+    """The slot was pointed at a different material, so it takes its values.
 
     Fetched rather than derived: a material is a bag of vec4 parameters and
-    only tools-core has them. The write is marked as arriving from the SOF, so
-    it does not read as a person editing a colour and mark the slot custom --
-    picking a named material is the opposite of going custom.
+    only tools-core has them.
+
+    A name arriving FROM the SOF is skipped -- it already came with its values,
+    and re-fetching would be a round trip to be told what we were just told.
     """
 
+    if _APPLYING["depth"] != 0:
+        return
     from . import service_access, sof_materials
 
-    chosen = str(self.material_choice or "")
-    if not chosen or chosen == str(self.material or ""):
+    chosen = str(self.material or "")
+    if not chosen or chosen == CUSTOM_MATERIAL:
         return
-    record = sof_materials.material(chosen, service_access.client(context))
-    values = sof_materials.material_values(record)
+    values = sof_materials.material_values(
+        sof_materials.material(chosen, service_access.client(context)))
+    if not values:
+        # Said plainly rather than leaving the old colours under a new name,
+        # which would be a slot lying about what it holds.
+        print(f"[CarbonEngineJS SOF] {chosen}: no parameters were fetched; "
+              "the colours below still belong to the previous material")
+        return
     with applying():
-        self.material = chosen
         for field, value in values.items():
             setattr(self, field, value)
-    if not values:
-        # Said plainly rather than silently leaving the old colours under a new
-        # name, which would be a slot lying about what it holds.
-        print(f"[CarbonEngineJS SOF] {chosen}: no parameters were fetched; "
-              "the colours below are still the previous material's")
+    _material_update(self, context)
 
 
 class CARBON_SOF_Material(PropertyGroup):
@@ -255,17 +250,18 @@ class CARBON_SOF_Material(PropertyGroup):
 
     index: IntProperty(default=1, min=1, max=4)
     is_pattern: BoolProperty(default=False)
+    #: The material this slot uses, BY NAME.
+    #:
+    #: A string, deliberately, and not an enum: an EnumProperty with a dynamic
+    #: items callback stores the chosen INDEX, so every slot whose index was
+    #: never set displayed item 0 -- the catalog's first material -- and an
+    #: index into a 1149-entry list is meaningless the moment the catalog
+    #: changes. The name is the thing worth keeping.
     material: StringProperty(
-        name="Material", default="",
-        description="The SOF material this slot uses. Editing a colour below "
-                    "leaves that material and marks the slot custom")
-    #: The dropdown. Separate from `material` because the name a slot HAS and
-    #: the name a person is choosing are different things: a slot can hold
-    #: `custom`, or a material from a build whose catalog we cannot reach, and
-    #: neither is an item the menu could offer.
-    material_choice: EnumProperty(
-        name="Material", items=material_items, update=_material_chosen,
-        description="Pick a SOF material; its values fill the slot")
+        name="Material", default="", update=_material_named,
+        description="The SOF material this slot uses. Pick one to fill the "
+                    "slot with its values; editing a colour below leaves that "
+                    "material and marks the slot custom")
     #: WHERE the value came from, which the value itself no longer knows. By
     #: the time colours reach a shader they are four numbers in a constant
     #: buffer that cannot tell an override from a default, so a consumer
@@ -415,12 +411,7 @@ class CARBON_SOF_Settings(PropertyGroup):
                         entry.area_type if entry.area_type >= 0
                         else sof_resolution.TYPE_PRIMARY,
                         entry.index)
-                if entry.material:
-                    # Keep the dropdown showing what the slot actually holds.
-                    try:
-                        entry.material_choice = entry.material
-                    except TypeError:
-                        pass          # not in the catalog; the menu adds it
+
 
     def slot(self, index, pattern=False, area_type=-1):
         """One slot, keyed by area type as well as number.
@@ -675,10 +666,15 @@ def draw_slot(layout, settings, entry, *, compact=False):
     header.label(text=label, icon="DECORATE_KEYFRAME" if from_dna else "DECORATE")
     name = header.row(align=True)
     name.alert = entry.material == CUSTOM_MATERIAL
-    # The dropdown is the picker; the text beneath is what the slot HOLDS,
-    # which is not always something the catalog can offer -- `custom`, or a
-    # name from a build we cannot reach.
-    name.prop(entry, "material_choice", text="")
+    # A search field rather than a menu: 1149 materials is not a list anyone
+    # scrolls, and the value stays the NAME, so a slot showing `custom` or a
+    # material from a build we cannot reach still displays what it holds
+    # instead of snapping to whatever happens to be first.
+    if catalog_items():
+        name.prop_search(entry, "material", bpy.context.window_manager,
+                         "carbon_sof_materials", text="", icon="MATERIAL")
+    else:
+        name.prop(entry, "material", text="")
     if entry.material == CUSTOM_MATERIAL:
         header.operator("carbon.sof_export_material", text="", icon="EXPORT"
                         ).slot = f"{entry.index}:{int(entry.is_pattern)}:{entry.area_type}"
@@ -770,6 +766,7 @@ class CARBON_PT_sof_patterns(Panel):
 
 
 CLASSES = (
+    CARBON_SOF_Name,
     CARBON_SOF_Material,
     CARBON_SOF_Settings,
     CARBON_SOF_OT_apply,
@@ -788,9 +785,14 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Object.carbon_sof = PointerProperty(type=CARBON_SOF_Settings)
+    # On the window manager, not the blend: the catalog belongs to a tools-core
+    # build, and a copy saved into a file would go stale in it.
+    bpy.types.WindowManager.carbon_sof_materials = CollectionProperty(type=CARBON_SOF_Name)
 
 
 def unregister():
+    if hasattr(bpy.types.WindowManager, "carbon_sof_materials"):
+        del bpy.types.WindowManager.carbon_sof_materials
     if hasattr(bpy.types.Object, "carbon_sof"):
         del bpy.types.Object.carbon_sof
     for cls in reversed(CLASSES):
