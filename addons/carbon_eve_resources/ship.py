@@ -189,7 +189,37 @@ def import_geometry(path):
     created = [o for o in bpy.data.objects if o not in before and o.type == "MESH"]
     keep_actions([action for action in bpy.data.actions if action not in known_actions],
                  [o for o in bpy.data.objects if o not in before and o.type == "ARMATURE"])
+    parent_to_armature(created)
     return created
+
+
+def parent_to_armature(meshes):
+    """Puts each skinned mesh UNDER the armature that deforms it.
+
+    The importer leaves them as SIBLINGS: the mesh carries an Armature modifier
+    and neither object is parented to the other. Nothing looks wrong until the
+    ship is moved -- then the mesh moves and the rig does not, the modifier
+    deforms against a rig that is no longer where the mesh is, and the geometry
+    flies off in a direction that looks like a broken rig rather than a broken
+    parent.
+
+    Parenting is the fix Blender expects: the armature is the root of a skinned
+    object, and moving it moves the ship. The world transform is preserved, so
+    nothing shifts at the moment of parenting.
+    """
+
+    parented = 0
+    for mesh in meshes:
+        armature = next((m.object for m in mesh.modifiers
+                         if m.type == "ARMATURE" and m.object), None)
+        if armature is None or mesh.parent is not None:
+            continue
+        mesh.parent = armature
+        mesh.matrix_parent_inverse = armature.matrix_world.inverted()
+        parented += 1
+    if parented:
+        print(f"  parented {parented} mesh(es) to their armature")
+    return parented
 
 
 #: The state an idle ship sits in, by the names GR2 files actually use.
