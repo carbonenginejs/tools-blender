@@ -527,25 +527,51 @@ def drive_ship_sockets(objects, source):
     print(f"  drove {driven} per-ship socket(s) across {materials} material group(s)")
 
 
-def decal_collection(group, visibility_group=""):
-    """`decals > {group}`, created on demand.
+def ship_collection(name):
+    """The collection that IS the ship, created on demand.
 
-    The tree matters beyond tidiness: an exporter walks collections, so the
-    structure here is the structure that leaves. Grouping by the SOF's
-    visibility group is what lets a consumer turn a whole set on or off the way
-    the client does.
+    One ship, one collection, everything of it inside: the armature that roots
+    it, the hull, and the decals beneath. That is the `EveShip2` tree in
+    Blender's own terms, and it is what makes two ships in one scene separable
+    -- an exporter walks the collection and finds a ship rather than a scene
+    that happens to contain one.
     """
 
     scene = bpy.context.scene.collection
-    root = bpy.data.collections.get("decals")
+    collection = bpy.data.collections.get(name)
+    if collection is None:
+        collection = bpy.data.collections.new(name)
+    if collection.name not in scene.children:
+        scene.children.link(collection)
+    return collection
+
+
+def move_to_collection(obj, collection):
+    """Puts an object in one collection and no other."""
+
+    for current in list(obj.users_collection):
+        current.objects.unlink(obj)
+    if obj.name not in collection.objects:
+        collection.objects.link(obj)
+
+
+def decal_collection(group, visibility_group="", parent=None):
+    """`<ship> > decals > <set>`, created on demand.
+
+    The tree matters beyond tidiness: an exporter walks collections, so the
+    structure here is the structure that leaves. The set is the named group a
+    consumer recognises, and it carries the visibility group the client
+    switches the whole set by.
+    """
+
+    root_parent = parent or bpy.context.scene.collection
+    root = next((child for child in root_parent.children if child.name.startswith("decals")), None)
     if root is None:
         root = bpy.data.collections.new("decals")
-        scene.children.link(root)
-    child = bpy.data.collections.get(group)
+        root_parent.children.link(root)
+    child = next((c for c in root.children if c.name == group), None)
     if child is None:
         child = bpy.data.collections.new(group)
-        root.children.link(child)
-    elif child.name not in root.children:
         root.children.link(child)
     # The visibility group lives on the GROUP, not on each decal: it is what the
     # client switches a whole set on and off by, and a consumer editing it
@@ -555,7 +581,7 @@ def decal_collection(group, visibility_group=""):
     return child
 
 
-def build_decals(document, hull, resources, family, decal_sets=None):
+def build_decals(document, hull, resources, family, decal_sets=None, collection=None):
     """Copies each decal's hull triangles into its own mesh and shades it.
 
     A decal is a re-draw of part of the hull, not a surface of its own, so the
@@ -625,7 +651,7 @@ def build_decals(document, hull, resources, family, decal_sets=None):
             continue
 
         obj = bpy.data.objects.new(decal.name, mesh)
-        decal_collection(decal.group, decal.visibility_group).objects.link(obj)
+        decal_collection(decal.group, decal.visibility_group, collection).objects.link(obj)
         obj.matrix_world = hull.matrix_world
         obj.parent = hull
         obj.matrix_parent_inverse = hull.matrix_world.inverted()
@@ -1063,12 +1089,27 @@ def build_ship(document_path, resources_directory, *, clear=True,
     resources = load_manifest(resources_directory)
     family = quad_interface.load_family()
 
+    existing = set(bpy.data.objects)
     primary = assemble(document_path, resources_directory, clear=clear,
                        document=document, resources=resources, family=family)
     if primary is None:
         return None
 
-    decal_objects = build_decals(document, primary, resources, family, decal_sets)
+    # One collection per ship, named for the hull, holding EVERYTHING of the
+    # ship: the armature that roots it, every mesh including the secondary ones
+    # like the shield sphere, and the decals below. Membership is by what the
+    # build CREATED rather than by parenting, because a secondary mesh brings
+    # its own armature and is parented to neither the hull nor its rig.
+    root = primary
+    while root.parent is not None:
+        root = root.parent
+    collection = ship_collection(root.name.replace("_Armature", "") or "ship")
+    for obj in bpy.data.objects:
+        if obj not in existing:
+            move_to_collection(obj, collection)
+
+    decal_objects = build_decals(document, primary, resources, family, decal_sets,
+                                 collection)
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material
@@ -1077,4 +1118,22 @@ def build_ship(document_path, resources_directory, *, clear=True,
     apply_ship_globals(ship, globals_overrides)
     drive_ship_sockets(ship, primary)
     populate_sof(primary, document, family)
+    prune_empty_collections()
     return primary
+
+
+def prune_empty_collections():
+    """Removes the empty collections an import leaves behind.
+
+    The GR2 importer makes a collection per file; once the ship has been
+    gathered into its own, those are empty shells that make the outliner read
+    as though the ship were in several places at once.
+    """
+
+    removed = 0
+    for collection in list(bpy.data.collections):
+        if collection.objects or collection.children or collection.users > 1:
+            continue
+        bpy.data.collections.remove(collection)
+        removed += 1
+    return removed
