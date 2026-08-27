@@ -59,9 +59,128 @@ def parse_args(argv):
     return parser.parse_args(argv[argv.index("--") + 1:] if "--" in argv else [])
 
 
+CARBON_DOCUMENT_SCHEMA = "carbon.document"
+
+
+def expand_document(document):
+    """Expands a `carbon.document` node graph into the tree this script walks.
+
+    TWO shapes arrive here, and they are different formats rather than one
+    format written two ways:
+
+    - HYDRATION data, the CjsModel spelling: `_type` names the class, `_id`
+      identifies a node, and `{"_ref": id}` points at one. This is what a
+      dehydrated object graph looks like and what a reader should expect.
+    - a CLASS-POPULATION format, which is what the bundle at hand carries:
+      `{id, kind, fields}` with `{"$ref": id}`. It describes how to build the
+      objects rather than an object graph that has been saved.
+
+    Both are node graphs with shared references, so both expand the same way,
+    and this reads either. Do not treat the second as a variant spelling of the
+    first when writing anything back.
+
+    Either way the deduplication is the point: a hull's effect is referenced by
+    every area that uses it rather than copied. Sharing is PRESERVED rather than
+    unrolled -- an expanded node is cached by id and handed out again, so two
+    areas that referenced one effect still see one object. The cache entry is
+    placed BEFORE the fields are walked, which is what stops a cycle, and the
+    graph has them: a child can point back at its parent.
+    """
+
+    if not isinstance(document, dict) or document.get("schema") != CARBON_DOCUMENT_SCHEMA:
+        return document
+
+    nodes = {}
+    for node in document.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        identity = node.get("_id", node.get("id"))
+        if identity is not None:
+            nodes[identity] = node
+
+    cache = {}
+
+    def reference_of(value):
+        """The id a value points at, under either spelling, or None."""
+
+        if "_ref" in value:
+            return value["_ref"]
+        if "$ref" in value:
+            return value["$ref"]
+        return None
+
+    def convert(value):
+        if isinstance(value, dict):
+            identity = reference_of(value)
+            if identity is not None:
+                return expand(identity)
+            return {key: convert(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [convert(item) for item in value]
+        return value
+
+    def expand(node_id):
+        if node_id in cache:
+            return cache[node_id]
+        node = nodes.get(node_id)
+        if node is None:
+            return None
+        out = {"_type": node.get("_type", node.get("kind"))}
+        cache[node_id] = out
+        fields = node.get("fields")
+        if not isinstance(fields, dict):
+            # Under the contract the properties are on the node itself.
+            fields = {key: value for key, value in node.items()
+                      if key not in ("_type", "_id", "id", "kind")}
+        for key, value in fields.items():
+            out[key] = convert(value)
+        return out
+
+    for root in document.get("roots") or []:
+        reference = (root or {}).get("ref") if isinstance(root, dict) else None
+        identity = None
+        if isinstance(reference, dict):
+            identity = reference_of(reference)
+        elif isinstance(root, dict):
+            identity = reference_of(root)
+        if identity is not None:
+            return expand(identity)
+    raise SystemExit("carbon.document has no root reference")
+
+
+def load_manifest(directory):
+    """The `res:/` -> local file map, from either bundle shape.
+
+    Two exist and they are not interchangeable. A hand-made bundle carries a
+    flat `manifest.json` of ABSOLUTE paths; a bundle built by tools-core carries
+    `bundle.json`, whose paths are RELATIVE to the bundle and nested by resource
+    path. Reading only the first is why a tools-core bundle appeared to be
+    missing its textures when every one of them was on disk.
+    """
+
+    flat = os.path.join(directory, "manifest.json")
+    if os.path.exists(flat):
+        with open(flat, encoding="utf-8") as handle:
+            return json.load(handle)
+
+    built = os.path.join(directory, "bundle.json")
+    if not os.path.exists(built):
+        raise SystemExit(f"{directory} has neither manifest.json nor bundle.json")
+    with open(built, encoding="utf-8") as handle:
+        bundle = json.load(handle)
+    resources = {}
+    for logical, relative in (bundle.get("resources") or {}).items():
+        local = os.path.normpath(os.path.join(directory, relative))
+        if os.path.exists(local):
+            resources[logical] = local
+    return resources
+
+
 def load_document(path):
+    """Reads a SOF document, whichever shape it is written in."""
+
     with open(path, encoding="utf-8") as handle:
-        return json.load(handle)
+        return expand_document(json.load(handle))
 
 
 def find_meshes(document):
@@ -365,8 +484,7 @@ def build_area_material(area, family, resources, index):
 
 def assemble(args):
     document = load_document(args.sof)
-    with open(os.path.join(args.resources, "manifest.json"), encoding="utf-8") as handle:
-        resources = json.load(handle)
+    resources = load_manifest(args.resources)
     family = load_family()
 
     for obj in list(bpy.data.objects):
@@ -1013,7 +1131,7 @@ def main():
 
     decal_objects = build_decals(
         load_document(args.sof), primary,
-        json.load(open(os.path.join(args.resources, "manifest.json"), encoding="utf-8")),
+        load_manifest(args.resources),
         load_family())
     ship_objects = [primary] + list(decal_objects)
     apply_ship_globals(ship_objects,
