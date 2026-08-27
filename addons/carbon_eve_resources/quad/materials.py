@@ -23,6 +23,24 @@ import bpy
 from . import nodes
 
 
+
+def local_file(resources, path):
+    """The on-disk file for a `res:/` path, as a STRING, or None.
+
+    Callers disagree about the value type: the preview script's map holds
+    strings, the add-on's holds `Path`. `bpy.data.images.load` takes only a
+    string, so the coercion belongs here rather than in each caller -- a Path
+    reaching it raises a TypeError deep inside the builder, which reads as the
+    material being broken rather than as a map holding the wrong type.
+    """
+
+    local = resources.get(path)
+    if not local:
+        return None
+    text = str(local)
+    return text if os.path.exists(text) else None
+
+
 def black_image():
     """A shared 1x1 black image, for texture slots with nothing authored.
 
@@ -107,10 +125,9 @@ def wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources):
                   if r.get("name") == "HeatGlowNoiseMap"), None)
     glow = next((r.get("resourcePath") for r in noise_path
                  if r.get("name") == "GlowMap"), None)
-    noise_local, glow_local = resources.get(noise or ""), resources.get(glow or "")
-    if not noise_local or not glow_local:
-        return
-    if not (os.path.exists(noise_local) and os.path.exists(glow_local)):
+    noise_local = local_file(resources, noise or "")
+    glow_local = local_file(resources, glow or "")
+    if noise_local is None or glow_local is None:
         return
 
     lanes = {}
@@ -195,8 +212,8 @@ def build_area_material(area, family, resources, index):
     for resource in effect.get("resources", []):
         name, path = resource.get("name"), resource.get("resourcePath")
         socket = group.inputs.get(name)
-        local = resources.get(path)
-        if socket is None or not local or not os.path.exists(local):
+        local = local_file(resources, path)
+        if socket is None or local is None:
             continue
         image = bpy.data.images.load(local, check_existing=True)
         image.colorspace_settings.name = (

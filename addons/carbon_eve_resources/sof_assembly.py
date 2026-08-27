@@ -84,8 +84,14 @@ def apply_mesh_areas(
                 f"{len(slots)} slots imported from {mesh.name}"
             )
             continue
-        plan = plan_material(area, prefix=prefix)
-        material = build_material(plan, resources, report, shader_library=shader_library)
+        # The accurate quad material first; the approximation only when the
+        # effect is outside the measured family.
+        material, problem = _carbon_material(area, resources, report.materials)
+        if material is None:
+            if problem:
+                report.warnings.append(f"{area.name}: approximated ({problem})")
+            plan = plan_material(area, prefix=prefix)
+            material = build_material(plan, resources, report, shader_library=shader_library)
         report.materials += 1
         for slot_index in targets:
             target_object, local_index = slots[slot_index]
@@ -93,6 +99,48 @@ def apply_mesh_areas(
             report.assigned_slots += 1
     return report
 
+
+
+def _as_document_area(area) -> dict:
+    """A `SofArea` in the shape the quad builder reads.
+
+    The quad builder takes an area straight out of the expanded SOF document --
+    an `effect` with `resources` and `constParameters` -- because that is what
+    the document holds. `SofArea` is the same information already flattened, so
+    this is a translation and not a conversion: no value changes, only its
+    shape.
+    """
+
+    return {
+        "name": area.name,
+        "effect": {
+            "effectFilePath": area.effect_path,
+            "resources": [{"name": name, "resourcePath": path}
+                          for name, path in (area.textures or {}).items()],
+            "constParameters": [{"name": name, "value": list(value)}
+                                for name, value in (area.parameters or {}).items()],
+        },
+    }
+
+
+def _carbon_material(area, resources: Mapping[str, Path], index: int):
+    """The accurate material for an area, or None if it cannot be built.
+
+    None is not a failure to report loudly: a hull can use an effect outside the
+    measured quad family, and the approximation is the right answer there. It IS
+    worth knowing which happened, so the caller records it.
+    """
+
+    try:
+        from .quad import interface as quad_interface
+        from .quad import materials as quad_materials
+        family = quad_interface.load_family()
+    except Exception:
+        return None, "quad interface data is unavailable"
+
+    material, problem = quad_materials.build_area_material(
+        _as_document_area(area), family, resources, index)
+    return material, problem
 
 def build_material(
     plan: MaterialPlan,
