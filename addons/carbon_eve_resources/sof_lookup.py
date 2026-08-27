@@ -13,6 +13,8 @@ No ``bpy`` import; testable with the standard library.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Mapping
 
 from . import sof_resolution
@@ -36,14 +38,72 @@ def _fetch(client, route: str, key: tuple):
     return value
 
 
+#: Where the name index is kept between sessions, set by `service_access`.
+CACHE_ROOT = {"path": None}
+
+#: Only what can be drawn. The full index is 57604 names and 6.4MB; the ones
+#: with a graphic or a skin are 24655 and 1.1MB written compactly, and the rest
+#: are blueprints and modules nobody can load.
+NAMES_FILE = "carbon-names-{target}-{build}.json"
+
+
 def names(client=None, *, build: str = "latest", target: str = "eve") -> dict:
     """The name index: a lowercased name -> what it can refer to.
 
     One name can mean several things, so every entry is a list.
+
+    Cached on disk per BUILD, because it is 6.4MB and it only changes when EVE
+    does. Re-downloading it every session is most of what a cold start costs.
     """
 
-    found = _fetch(client, f"/{target}/{build}/skin/names", (target, build, "names"))
-    return found if isinstance(found, Mapping) else {}
+    key = (target, build, "names")
+    if key in _CACHE:
+        return _CACHE[key]
+
+    path = _names_path(target, build, client)
+    if path is not None and path.is_file():
+        try:
+            found = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(found, Mapping):
+                _CACHE[key] = found
+                return found
+        except (OSError, ValueError):
+            pass                       # a bad cache file is not worth keeping
+
+    found = _fetch(client, f"/{target}/{build}/skin/names", key)
+    if not isinstance(found, Mapping):
+        return {}
+    drawable = {name: entries for name, entries in found.items()
+                if any(entry.get("graphicID") or entry.get("kind") == "skin"
+                       for entry in entries)}
+    _CACHE[key] = drawable
+    if path is not None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(drawable, separators=(",", ":")),
+                            encoding="utf-8")
+        except OSError:
+            pass                       # an unwritable cache is not an error
+    return drawable
+
+
+def _names_path(target: str, build: str, client=None):
+    """Where the index is cached, under an EXACT build.
+
+    Never under `latest`: that names a moving target, so the file would still
+    be served after EVE moved on and nothing would ever refetch it.
+    """
+
+    root = CACHE_ROOT.get("path")
+    if not root:
+        return None
+    exact = str(build or "")
+    if exact in ("", "latest"):
+        answer = _fetch(client, f"/{target}/latest/build", (target, "latest", "build"))
+        exact = str((answer or {}).get("build") or "")
+        if not exact:
+            return None
+    return Path(root) / NAMES_FILE.format(target=target, build=exact)
 
 
 def find(name: str, client=None, *, kind: str = "", build: str = "latest",
