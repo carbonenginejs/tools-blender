@@ -63,6 +63,12 @@ def parse_args(argv):
                         help="Scales the star's intensity into Blender sun energy; "
                              "0 leaves the environment as the only light")
     parser.add_argument("--render", default="")
+    parser.add_argument("--alliance", type=int, default=0,
+                        help="Alliance id; its logo goes on the alliance banner")
+    parser.add_argument("--corporation", type=int, default=0,
+                        help="Corporation id; its logo goes on the corp banner")
+    parser.add_argument("--character", type=int, default=0,
+                        help="Character id; its portrait goes on the CEO banner")
     parser.add_argument("--hull-record", default="",
                         help="A SOF hull record, whose decalSets name the decals "
                              "and carry their visibility groups. A built document "
@@ -84,7 +90,11 @@ def main():
     primary = ship_builder.build_ship(
         args.sof, args.resources,
         globals_overrides={"previewGlowScale": preview_quad.DEMO_EMISSION_STRENGTH},
-        decal_sets=decal_sets, hull_record=hull_record)
+        decal_sets=decal_sets, hull_record=hull_record,
+        owners={"alliance": args.alliance, "corporation": args.corporation,
+                "character": args.character},
+        cache_directory=os.path.join(os.path.dirname(os.path.abspath(args.out or ".")),
+                                     "carbon_logos"))
     ship_builder.hide_non_geometry()
     if primary is None:
         raise SystemExit("no geometry was assembled")

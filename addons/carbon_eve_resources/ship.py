@@ -23,7 +23,7 @@ import os
 import bpy
 import mathutils
 
-from . import placeholders
+from . import logos, placeholders
 from .quad import decals as decal_module
 from .quad import interface as quad_interface
 from .quad import nodes
@@ -1285,7 +1285,8 @@ BANNER_REFERENCES = (
 )
 
 
-def build_banner_sets(document, hull, collection, hull_sets=None):
+def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
+                      cache_directory=""):
     """Banners and the lights that shine on them.
 
     A banner is the quad a player's alliance, corporation or CEO logo is drawn
@@ -1325,7 +1326,8 @@ def build_banner_sets(document, hull, collection, hull_sets=None):
             # authored so nothing is lost, and not yet applied.
             obj["carbon_banner_angles"] = (float(item.get("angleX") or 0.0),
                                            float(item.get("angleY") or 0.0))
-            obj.data.materials.append(banner_material(slot, set_index, index))
+            obj.data.materials.append(
+                banner_material(slot, set_index, index, owners, cache_directory))
             attach_to_bone(obj, armature, item.get("bone"))
             built.append(obj)
             banners_built.append(obj)
@@ -1369,7 +1371,7 @@ def build_banner_sets(document, hull, collection, hull_sets=None):
     return built + lights
 
 
-def banner_material(slot, set_index, index):
+def banner_material(slot, set_index, index, owners=None, cache_directory=""):
     """A banner's surface: its placeholder if it has one, black if it does not.
 
     BLACK IS TRANSPARENT. Alpha comes from the image's luminance rather than
@@ -1394,7 +1396,16 @@ def banner_material(slot, set_index, index):
     tree.links.new(emission.outputs[0], mix.inputs[2])
     tree.links.new(mix.outputs[0], output.inputs["Surface"])
 
-    image = placeholders.banner_placeholder(slot)
+    # A real logo when we know whose ship this is; the placeholder otherwise.
+    image = None
+    if owners and cache_directory:
+        try:
+            image = logos.banner_logo(slot, owners, cache_directory)
+        except logos.LogoError as error:
+            print(f"  ! {error}")
+    if image is not None:
+        material["carbon_logo"] = image.name
+    image = image or placeholders.banner_placeholder(slot)
     if image is None:
         # No placeholder: black, and therefore invisible.
         emission.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
@@ -1408,6 +1419,9 @@ def banner_material(slot, set_index, index):
         luminance = tree.nodes.new("ShaderNodeRGBToBW")
         luminance.location = (-360, -160)
         tree.links.new(texture.outputs["Color"], emission.inputs["Color"])
+        # BLACK IS TRANSPARENT, for a real logo as much as a placeholder: the
+        # image server draws logos on black, so luminance is the alpha whether
+        # or not the PNG carries one.
         tree.links.new(texture.outputs["Color"], luminance.inputs["Color"])
         tree.links.new(luminance.outputs["Val"], mix.inputs["Fac"])
         emission.inputs["Strength"].default_value = 2.0
@@ -1435,7 +1449,8 @@ def item_matrix(item, hull):
 
 
 def build_ship(document_path, resources_directory, *, clear=True,
-               globals_overrides=None, decal_sets=None, hull_record=None):
+               globals_overrides=None, decal_sets=None, hull_record=None,
+               owners=None, cache_directory=""):
     """Builds a whole ship: geometry, areas, decals, and the SOF that drives it.
 
     ONE call, because the panel and the command line must produce the same
@@ -1478,7 +1493,8 @@ def build_ship(document_path, resources_directory, *, clear=True,
     plane_objects = build_plane_sets(document, primary, collection,
                                      (hull_record or {}).get("planeSets"))
     banner_objects = build_banner_sets(document, primary, collection,
-                                       (hull_record or {}).get("bannerSets"))
+                                       (hull_record or {}).get("bannerSets"),
+                                       owners, cache_directory)
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material
