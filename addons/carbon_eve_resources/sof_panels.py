@@ -820,6 +820,25 @@ def draw_slot(layout, settings, entry, *, compact=False):
         box.prop(entry, "gloss")
 
 
+def _collapsible(layout, idname, title, *, icon="NONE", default_closed=False):
+    """A collapsible section, where the UI supports one.
+
+    `UILayout.panel` arrived in Blender 4.1 and returns `(header, body)` with
+    the body None while collapsed. Older builds get a plain labelled column
+    instead of an exception -- a section that will not fold is a smaller
+    problem than a panel that will not draw.
+    """
+
+    maker = getattr(layout, "panel", None)
+    if maker is None:
+        column = layout.column(align=True)
+        column.label(text=title, icon=icon)
+        return column
+    header, body = maker(idname, default_closed=default_closed)
+    header.label(text=title, icon=icon)
+    return body
+
+
 def draw_material_groups(layout, settings, *, compact=False):
     """Every hull material slot, grouped by the AREA TYPE that owns it.
 
@@ -832,12 +851,14 @@ def draw_material_groups(layout, settings, *, compact=False):
     for area_type in settings.area_types():
         name = (sof_resolution.area_type_name(area_type) if area_type >= 0
                 else "whole ship")
-        column = layout.column(align=True)
-        column.label(text=name.upper(), icon="MATERIAL")
+        body = _collapsible(layout, f"carbon_area_{area_type}", name.upper(),
+                            icon="MATERIAL")
+        if body is None:
+            continue
         for entry in settings.materials:
             if entry.is_pattern or entry.area_type != area_type:
                 continue
-            draw_slot(column, settings, entry, compact=compact)
+            draw_slot(body, settings, entry, compact=compact)
 
 
 def draw_pattern_group(layout, settings, *, compact=False):
@@ -850,10 +871,12 @@ def draw_pattern_group(layout, settings, *, compact=False):
     patterns = [entry for entry in settings.materials if entry.is_pattern]
     if not patterns:
         return
-    column = layout.column(align=True)
-    column.label(text="PATTERN (whole ship)", icon="TEXTURE")
+    body = _collapsible(layout, "carbon_pattern", "PATTERN (whole ship)",
+                        icon="TEXTURE")
+    if body is None:
+        return
     for entry in patterns:
-        draw_slot(column, settings, entry, compact=compact)
+        draw_slot(body, settings, entry, compact=compact)
 
 
 class CARBON_PT_sof_materials(Panel):
