@@ -23,6 +23,7 @@ import os
 import bpy
 import mathutils
 
+from . import placeholders
 from .quad import decals as decal_module
 from .quad import interface as quad_interface
 from .quad import nodes
@@ -1131,7 +1132,7 @@ def attach_to_bone(obj, armature, bone_index):
     return True
 
 
-def build_plane_sets(document, hull, collection):
+def build_plane_sets(document, hull, collection, hull_sets=None):
     """One quad per `EvePlaneSetItem`, placed and coloured as the set says.
 
     A plane set is the ship's glowing panels and light strips: additive quads
@@ -1146,7 +1147,11 @@ def build_plane_sets(document, hull, collection):
         planes = plane_set.get("planes") or []
         if not planes:
             continue
-        group = attachment_collection(collection, "planes")
+        source = (hull_sets or [])[set_index] if set_index < len(hull_sets or []) else {}
+        group = attachment_collection(
+            collection, "planeSets",
+            str(source.get("visibilityGroupName") or "primary"),
+            source.get("visibilityGroup"))
         for index, item in enumerate(planes):
             mesh = bpy.data.meshes.new(f"planeset{set_index}_{index}")
             mesh.from_pydata(list(PLANE_CORNERS), [], [(0, 1, 2, 3)])
@@ -1168,14 +1173,43 @@ def build_plane_sets(document, hull, collection):
     return built
 
 
-def attachment_collection(parent, name):
-    """`<ship> > <name>`, beside the decals."""
+def attachment_collection(parent, kind, group="", visibility_hash=None):
+    """`<ship> > <kind> > <group>`, the shape every attachment set shares.
 
-    existing = next((c for c in parent.children if c.name.split(".")[0] == name), None)
-    if existing is not None:
-        return existing
-    child = bpy.data.collections.new(name)
-    parent.children.link(child)
+    This follows the SOF rather than the built ship. An `EveShip2` keeps its
+    attachments loose in one list; the SOF keeps them in named sets under a
+    visibility group, and the SOF is what gets exported -- so the SOF's shape is
+    the one worth having in the scene.
+
+    An attachment set is named by its VISIBILITY GROUP: that is the identity a
+    hull gives it, and what the client switches the whole set by. The group
+    carries it as a property so a consumer edits one value rather than one per
+    item, exactly as the decal sets do.
+
+    The hull record spells it twice, as a string and as an fnv1 hash. Both are
+    kept: the string is what a person reads, the hash is what the engine
+    compares.
+    """
+
+    root = next((c for c in parent.children if c.name.split(".")[0] == kind), None)
+    if root is None:
+        root = bpy.data.collections.new(kind)
+        parent.children.link(root)
+    if not group:
+        return root
+    child = next((c for c in root.children if c.name.split(".")[0] == group), None)
+    if child is None:
+        child = bpy.data.collections.new(group)
+        root.children.link(child)
+    if child.get("visibilityGroup") != group:
+        child["visibilityGroup"] = group
+    # As a STRING. The hash is fnv1 and unsigned 32-bit -- 4181794693 for
+    # "primary" -- and Blender's integer properties are signed, so storing it as
+    # a number raises rather than wrapping.
+    if visibility_hash is not None:
+        text = str(int(visibility_hash))
+        if child.get("visibilityGroupHash") != text:
+            child["visibilityGroupHash"] = text
     return child
 
 
@@ -1231,7 +1265,7 @@ BANNER_REFERENCES = (
 )
 
 
-def build_banner_sets(document, hull, collection):
+def build_banner_sets(document, hull, collection, hull_sets=None):
     """Banners and the lights that shine on them.
 
     A banner is the quad a player's alliance, corporation or CEO logo is drawn
@@ -1249,8 +1283,13 @@ def build_banner_sets(document, hull, collection):
         banners = banner_set.get("banners") or []
         if not banners:
             continue
-        group = attachment_collection(collection, "banners")
+        source = (hull_sets or [])[set_index] if set_index < len(hull_sets or []) else {}
+        group = attachment_collection(
+            collection, "bannerSets",
+            str(source.get("visibilityGroupName") or "primary"),
+            source.get("visibilityGroup"))
 
+        banners_built = []
         for index, item in enumerate(banners):
             reference = item.get("reference")
             slot = BANNER_REFERENCES[reference] if isinstance(reference, int)                 and 0 <= reference < len(BANNER_REFERENCES) else str(reference or "")
@@ -1266,9 +1305,10 @@ def build_banner_sets(document, hull, collection):
             # authored so nothing is lost, and not yet applied.
             obj["carbon_banner_angles"] = (float(item.get("angleX") or 0.0),
                                            float(item.get("angleY") or 0.0))
-            obj.data.materials.append(plane_material((1.0, 1.0, 1.0, 1.0), set_index, index))
+            obj.data.materials.append(banner_material(slot, set_index, index))
             attach_to_bone(obj, armature, item.get("bone"))
             built.append(obj)
+            banners_built.append(obj)
 
         for index, light in enumerate(banner_set.get("lights") or []):
             data = light.get("lightData") or {}
@@ -1279,13 +1319,26 @@ def build_banner_sets(document, hull, collection):
             colour = tuple(data.get("color") or (0.0, 0.0, 0.0, 0.0))
             lamp.color = tuple(colour[:3]) or (1.0, 1.0, 1.0)
             lamp.energy = float(data.get("brightness") or 1.0)
-            obj = bpy.data.objects.new(f"banner_light_{set_index}_{index}", lamp)
+            # The light belongs to ONE banner: the hull record pairs them, and
+            # the built radii are the banner's own scaling times the set's
+            # multipliers -- 12.566 by 0.3 gives the 3.77 inner radius exactly.
+            # So it hangs off its banner rather than sitting loose in the set,
+            # and moving the banner takes its light along.
+            owner = banners_built[index] if index < len(banners_built) else None
+            obj = bpy.data.objects.new(
+                f"{owner.name}_light" if owner else f"banner_light_{set_index}_{index}", lamp)
             group.objects.link(obj)
-            obj.matrix_world = item_matrix(data, hull)
+            world = item_matrix(data, hull)
+            obj.matrix_world = world
             obj["carbon_light_radius"] = float(data.get("radius") or 0.0)
             obj["carbon_light_inner_radius"] = float(data.get("innerRadius") or 0.0)
             obj["carbon_light_flags"] = int(data.get("flags") or 0)
-            attach_to_bone(obj, armature, data.get("boneIndex"))
+            if owner is not None:
+                obj.parent = owner
+                obj.matrix_parent_inverse = owner.matrix_world.inverted()
+                obj.matrix_world = world
+            else:
+                attach_to_bone(obj, armature, data.get("boneIndex"))
             lights.append(obj)
 
     if built or lights:
@@ -1294,6 +1347,55 @@ def build_banner_sets(document, hull, collection):
         if zero:
             print(f"    ! {zero} banner light(s) have a colour of zero in the document")
     return built + lights
+
+
+def banner_material(slot, set_index, index):
+    """A banner's surface: its placeholder if it has one, black if it does not.
+
+    BLACK IS TRANSPARENT. Alpha comes from the image's luminance rather than
+    from an alpha channel, so a placeholder is a bright outline floating where
+    the banner is instead of a black rectangle stuck to the hull -- and a slot
+    with no placeholder disappears entirely, which is the honest look for a
+    banner nobody has filled.
+    """
+
+    material = bpy.data.materials.new(f"banner {slot or set_index}.{index}")
+    material.use_nodes = True
+    tree = material.node_tree
+    tree.nodes.clear()
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    emission = tree.nodes.new("ShaderNodeEmission")
+    emission.location = (-200, -60)
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (-200, 120)
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    mix.location = (0, 0)
+    tree.links.new(transparent.outputs[0], mix.inputs[1])
+    tree.links.new(emission.outputs[0], mix.inputs[2])
+    tree.links.new(mix.outputs[0], output.inputs["Surface"])
+
+    image = placeholders.banner_placeholder(slot)
+    if image is None:
+        # No placeholder: black, and therefore invisible.
+        emission.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+        mix.inputs["Fac"].default_value = 0.0
+    else:
+        texture = tree.nodes.new("ShaderNodeTexImage")
+        texture.image = image
+        texture.location = (-560, 0)
+        texture.label = "placeholder"
+        texture.extension = "CLIP"
+        luminance = tree.nodes.new("ShaderNodeRGBToBW")
+        luminance.location = (-360, -160)
+        tree.links.new(texture.outputs["Color"], emission.inputs["Color"])
+        tree.links.new(texture.outputs["Color"], luminance.inputs["Color"])
+        tree.links.new(luminance.outputs["Val"], mix.inputs["Fac"])
+        emission.inputs["Strength"].default_value = 2.0
+
+    if hasattr(material, "surface_render_method"):
+        material.surface_render_method = "BLENDED"
+    material.use_backface_culling = False
+    return material
 
 
 def item_matrix(item, hull):
@@ -1313,7 +1415,7 @@ def item_matrix(item, hull):
 
 
 def build_ship(document_path, resources_directory, *, clear=True,
-               globals_overrides=None, decal_sets=None):
+               globals_overrides=None, decal_sets=None, hull_record=None):
     """Builds a whole ship: geometry, areas, decals, and the SOF that drives it.
 
     ONE call, because the panel and the command line must produce the same
@@ -1353,8 +1455,10 @@ def build_ship(document_path, resources_directory, *, clear=True,
 
     decal_objects = build_decals(document, primary, resources, family, decal_sets,
                                  collection)
-    plane_objects = build_plane_sets(document, primary, collection)
-    banner_objects = build_banner_sets(document, primary, collection)
+    plane_objects = build_plane_sets(document, primary, collection,
+                                     (hull_record or {}).get("planeSets"))
+    banner_objects = build_banner_sets(document, primary, collection,
+                                       (hull_record or {}).get("bannerSets"))
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material

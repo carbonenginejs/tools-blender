@@ -72,16 +72,19 @@ def parse_args(argv):
 
 def main():
     args = parse_args(sys.argv)
-    decal_sets = []
+    hull_record = {}
     if args.hull_record:
         with open(args.hull_record, encoding="utf-8") as handle:
-            decal_sets = (json.load(handle) or {}).get("decalSets") or []
-        print(f"  hull record: {len(decal_sets)} decal set(s)")
+            hull_record = json.load(handle) or {}
+        print(f"  hull record: {len(hull_record.get('decalSets') or [])} decal set(s), "
+              f"{len(hull_record.get('planeSets') or [])} plane set(s), "
+              f"{len(hull_record.get('bannerSets') or [])} banner set(s)")
+    decal_sets = hull_record.get("decalSets") or []
 
     primary = ship_builder.build_ship(
         args.sof, args.resources,
         globals_overrides={"previewGlowScale": preview_quad.DEMO_EMISSION_STRENGTH},
-        decal_sets=decal_sets)
+        decal_sets=decal_sets, hull_record=hull_record)
     ship_builder.hide_non_geometry()
     if primary is None:
         raise SystemExit("no geometry was assembled")
