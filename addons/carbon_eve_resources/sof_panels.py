@@ -355,6 +355,7 @@ def _material_named(self, context):
     from . import service_access, sof_material_nodes, sof_materials
 
     obj = getattr(self, "id_data", None)
+    _lowercase(self, "material")
     chosen = str(self.material or "")
     if not isinstance(obj, bpy.types.Object) or not chosen or chosen == CUSTOM_MATERIAL:
         return
@@ -437,6 +438,26 @@ class CARBON_SOF_Material(PropertyGroup):
         name="Gloss", default=0.5, min=0.0, max=1.0, update=_colour_edited)
 
 
+#: The name fields a DNA is made of. A DNA is case-INSENSITIVE and written in
+#: lower case, so anything typed into one is normalised on the way in rather
+#: than only on the way out: the field a person reads should say what the DNA
+#: says, and a material name is handed straight to a case-sensitive route.
+NAME_FIELDS = ("hull", "faction", "race", "pattern", "respath_insert",
+               "layout_names", "mesh_material1", "mesh_material2",
+               "mesh_material3", "mesh_material4", "pattern_material5",
+               "pattern_material6")
+
+
+def _lowercase(owner, *fields) -> None:
+    """Lowercases name fields in place, without tripping their updates."""
+
+    with applying():
+        for field in fields:
+            value = str(getattr(owner, field, "") or "")
+            if value != value.lower():
+                setattr(owner, field, value.lower())
+
+
 def _component_update(self, context):
     """A part changed, so the DNA that names the ship changes with it.
 
@@ -451,6 +472,7 @@ def _component_update(self, context):
 
     if _APPLYING["depth"] != 0:
         return
+    _lowercase(self, *NAME_FIELDS)
     # Written inside `applying()` so the string does not read itself back. It
     # would otherwise, and a command switched on but not yet filled in has no
     # arguments -- so composing it produced a DNA without the command, and
@@ -689,9 +711,12 @@ class CARBON_SOF_Settings(PropertyGroup):
             self.use_layout = bool(layouts)
             self.layout_names = ";".join(layouts)
 
-            # Verbatim, not recomposed: the fields were just filled from it, so
-            # anything the recompose dropped would be lost silently.
-            self.dna = dna
+            # Verbatim apart from the case, not recomposed: the fields were
+            # just filled from it, so anything a recompose dropped would be
+            # lost silently. Lower case because that is what a DNA is -- the
+            # runtime lowercases before it parses, and a stored `MDE3_T3` is
+            # the same ship wearing a different spelling.
+            self.dna = dna.strip().lower()
         return True
 
     def bind_materials(self, obj) -> dict:

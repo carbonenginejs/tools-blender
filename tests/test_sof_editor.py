@@ -129,11 +129,25 @@ class EditorTests(unittest.TestCase):
         self.settings.use_respath = False
         self.assertNotIn("respathinsert?", self.settings.dna)
 
+    def test_a_typed_dna_is_stored_lower_case(self):
+        # A DNA is case-insensitive and written in lower case. `MDE3_T3` is the
+        # same ship wearing a different spelling, and storing it that way meant
+        # the field said one thing while the runtime read another.
+        self.settings.dna = "MDE3_T3:Legion_Minmatar:Minmatar"
+        self.assertEqual(self.settings.dna, "mde3_t3:legion_minmatar:minmatar")
+
+    def test_a_typed_name_field_is_lower_cased(self):
+        # It is handed to a case-sensitive route, so the case is not cosmetic.
+        self.settings.dna = "mde3_t3:legion_minmatar:minmatar"
+        self.settings.use_mesh = True
+        self.settings.mesh_material1 = "Black_DeadStar_Coated"
+        self.assertEqual(self.settings.mesh_material1, "black_deadstar_coated")
+
     def test_the_dna_is_kept_verbatim_on_the_way_in(self):
         # Recomposing on read would silently drop anything the editor does not
-        # model yet.
+        # model yet. Verbatim apart from the case, which is normalised.
         self.settings.read_dna(FULL)
-        self.assertEqual(self.settings.dna, FULL)
+        self.assertEqual(self.settings.dna, FULL.lower())
 
 
 if __name__ == "__main__":
