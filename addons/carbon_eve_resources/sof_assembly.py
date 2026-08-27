@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Optional, Sequence
+from typing import Mapping, Optional, Sequence, Callable
 
 import bpy
 
@@ -54,8 +54,14 @@ def apply_mesh_areas(
     *,
     prefix: str = "",
     shader_library: str = "",
+    progress: Optional[Callable[[str], None]] = None,
 ) -> AssemblyReport:
-    """Assigns one approximate material per SOF area onto the imported slots."""
+    """Assigns one approximate material per SOF area onto the imported slots.
+
+    `progress` is called with a line per area, so a long assembly says what it
+    is doing instead of looking like a hang. It is optional because nothing
+    about the assembly depends on being watched.
+    """
 
     report = AssemblyReport()
     slots = _slot_table(objects)
@@ -63,7 +69,11 @@ def apply_mesh_areas(
         report.warnings.append(f"{mesh.name}: imported geometry has no material slots")
         return report
 
-    for area in mesh.areas:
+    buildable = [area for area in mesh.areas if should_build_material(area)]
+    for position, area in enumerate(mesh.areas, start=1):
+        if progress is not None and should_build_material(area):
+            done = sum(1 for other in buildable if mesh.areas.index(other) < mesh.areas.index(area))
+            progress(f"{mesh.name}: area {done + 1}/{len(buildable)} {area.name}")
         if not should_build_material(area):
             report.skipped_areas += 1
             continue

@@ -991,6 +991,10 @@ class _BackgroundJob:
     result: Any = None
     error: Optional[BaseException] = None
     thread: Optional[threading.Thread] = None
+    #: The worker's own line, e.g. "Downloading 10/23: ab1_t1_a.dds". Written
+    #: from the worker thread and read by the poll timer, which is why it is a
+    #: plain string and nothing cleverer.
+    progress: str = ""
 
 
 def _prefs(context):
@@ -1078,7 +1082,9 @@ def _fetch_sof_resources(paths: tuple[str, ...], prefs) -> tuple[dict[str, Path]
     download_root = _download_path(prefs)
     resolved: dict[str, Path] = {}
     missing: list[str] = []
-    for logical_path in paths:
+    total = len(paths)
+    for index, logical_path in enumerate(paths, start=1):
+        _set_progress(f"Downloading {index}/{total}: {logical_path.rsplit('/', 1)[-1]}")
         try:
             entry = _catalog.get(logical_path)
             fetched = materialize_resource(
@@ -1135,6 +1141,7 @@ def _assemble_sof_document(
             resolved,
             prefix=f"{mesh.name}.",
             shader_library=str(_shader_library()),
+            progress=_set_progress,
         )
         materials += report.materials
         slots += report.assigned_slots
@@ -1186,6 +1193,30 @@ def _launch_job(
         bpy.app.timers.register(_poll_job, first_interval=0.15)
 
 
+
+def _redraw_sidebars() -> None:
+    """Repaints the sidebar so a progress line actually appears."""
+
+    window_manager = getattr(bpy.context, "window_manager", None)
+    for window in getattr(window_manager, "windows", []) or []:
+        for area in window.screen.areas:
+            if area.type == "VIEW_3D":
+                area.tag_redraw()
+
+
+def _set_progress(line: str) -> None:
+    """Called from the WORKER thread, so it only writes a plain string.
+
+    Anything more -- touching a PropertyGroup, tagging a redraw -- is not safe
+    off the main thread, and Blender's failure mode for that is a crash rather
+    than an exception.
+    """
+
+    job = _job
+    if job is not None:
+        job.progress = str(line)
+
+
 def _poll_job():
     global _job, _catalog, _preview_collection, _cache_stats_loaded
     if not _registered:
@@ -1194,6 +1225,15 @@ def _poll_job():
     if job is None:
         return None
     if job.thread is not None and job.thread.is_alive():
+        # A long job with no visible progress reads as a hang. The worker
+        # writes its own line as it goes; this is the only place allowed to
+        # touch Blender data, so it copies that line across and asks for a
+        # redraw rather than the worker doing either.
+        line = job.progress
+        state = getattr(bpy.context.window_manager, "carbon_eve_resources", None)
+        if state is not None and line and state.status != line:
+            state.status = line
+            _redraw_sidebars()
         return 0.15
 
     _job = None
