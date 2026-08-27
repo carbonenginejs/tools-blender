@@ -30,6 +30,7 @@ from bpy.props import (BoolProperty, CollectionProperty, FloatProperty,
                        StringProperty)
 from bpy.types import Operator, Panel, PropertyGroup
 
+from . import sof_resolution
 from .quad import interface as quad_interface
 
 
@@ -169,6 +170,14 @@ class CARBON_SOF_Material(PropertyGroup):
         name="Material", default="",
         description="The SOF material this slot uses. Editing a colour below "
                     "leaves that material and marks the slot custom")
+    #: WHERE the value came from, which the value itself no longer knows. By
+    #: the time colours reach a shader they are four numbers in a constant
+    #: buffer that cannot tell an override from a default, so a consumer
+    #: looking at a red hull has no way to see whether the DNA asked for red or
+    #: the faction simply is red -- and only one of those is exportable.
+    source: StringProperty(
+        name="From", default=sof_resolution.SOURCE_FACTION,
+        description="Whether this slot was named by the DNA or supplied by the faction")
     diffuse: FloatVectorProperty(
         name="Diffuse", subtype="COLOR", size=3, min=0.0, soft_max=1.0,
         default=(0.0, 0.0, 0.0), update=_colour_edited,
@@ -222,19 +231,57 @@ class CARBON_SOF_Settings(PropertyGroup):
     materials: CollectionProperty(type=CARBON_SOF_Material)
 
     def compose_dna(self) -> str:
-        """`hull:faction:race`, with the pattern appended when there is one.
+        """The DNA these components and material slots describe.
 
-        The spelling a consumer already uses, so a DNA built here can be pasted
-        straight into the loader.
+        Composed through `sof_resolution`, which writes the runtime's own
+        grammar and sorts the commands the way `EveSOFDNA` does -- so a DNA
+        built here can be pasted straight into the loader, and two edits that
+        reach the same ship produce the same text.
+
+        Only slots the DNA OWNS are written. A slot showing the faction's
+        material is not an override, and writing it out would freeze today's
+        faction colour into the DNA -- the ship would stop following its
+        faction the moment anyone rebuilt it.
         """
 
-        parts = [self.hull, self.faction, self.race]
-        if not any(parts):
+        if not any((self.hull, self.faction, self.race)):
             return ""
-        dna = ":".join(part or "" for part in parts)
+        materials = []
+        for index in range(1, sof_resolution.MATERIAL_SLOTS + 1):
+            entry = self.slot(index)
+            owned = (entry is not None
+                     and entry.source == sof_resolution.SOURCE_DNA
+                     and entry.material
+                     and entry.material != CUSTOM_MATERIAL)
+            materials.append(entry.material if owned else sof_resolution.NONE)
+
+        dna = sof_resolution.compose([self.hull], self.faction, self.race)
         if self.pattern:
-            dna = dna + ":pattern?" + self.pattern
-        return dna
+            parts = [part for part in str(self.pattern).split(";") if part]
+            if parts:
+                dna = sof_resolution.with_pattern(dna, parts[0], parts[1:])
+        return sof_resolution.with_materials(dna, materials)
+
+    def stamp_sources(self) -> None:
+        """Records, per slot, whether the DNA named it or the faction gave it.
+
+        Called after a build, when the slots hold resolved colours and nothing
+        else. The colours cannot answer this -- resolution has already happened
+        and thrown the question away -- so the DNA is read for it instead.
+        """
+
+        try:
+            sources = sof_resolution.slot_sources(self.dna)
+        except sof_resolution.DnaError:
+            return
+        for found in sources:
+            entry = self.slot(found.index, found.is_pattern)
+            if entry is None:
+                continue
+            with applying():
+                entry.source = found.source
+                if found.material:
+                    entry.material = found.material
 
     def slot(self, index, pattern=False):
         for entry in self.materials:
@@ -264,6 +311,50 @@ class CARBON_SOF_OT_apply(Operator):
         objects = len(ship_objects(obj))
         self.report({"INFO"}, "Wrote %d socket(s) across %d object(s)" % (written, objects))
         return {"FINISHED"}
+
+
+class CARBON_SOF_OT_rebuild(Operator):
+    """The SOF Builder: resolve the edited SOF, and rebuild what hangs off it.
+
+    A hull does not know its faction's colours, so changing the faction cannot
+    be pushed straight into the scene the way a colour can -- there is nothing
+    in Blender that knows what the new faction resolves to. Resolution belongs
+    to tools-core, which owns the rules (the DNA's materials win unless `none`,
+    then the faction per area, then the primary area), so this recomposes the
+    DNA from what was edited and asks for the answer rather than guessing it.
+
+    Reimplementing the resolution here would be a second copy of those rules,
+    drifting quietly while looking right -- the expensive kind of wrong.
+    """
+
+    bl_idname = "carbon.sof_rebuild"
+    bl_label = "Rebuild from SOF"
+    bl_description = ("Recompose the DNA from these components and rebuild the "
+                      "ship, so every child follows the change")
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        obj = context.object
+        while obj is not None and not getattr(obj, "carbon_sof", None).dna:
+            obj = obj.parent
+        if obj is None:
+            self.report({"ERROR"}, "No ship to rebuild")
+            return {"CANCELLED"}
+
+        settings = obj.carbon_sof
+        dna = settings.compose_dna()
+        if not dna:
+            self.report({"ERROR"}, "Fill in at least the hull, faction and race")
+            return {"CANCELLED"}
+        settings.dna = dna
+
+        state = getattr(context.window_manager, "carbon_eve_resources", None)
+        if state is None:
+            self.report({"ERROR"}, "Resource browser is not registered")
+            return {"CANCELLED"}
+        state.dna = dna
+        self.report({"INFO"}, f"Rebuilding {dna}")
+        return bpy.ops.carbon.eve_resource_build_sof_dna(refresh=True)
 
 
 class CARBON_SOF_OT_export_material(Operator):
@@ -457,6 +548,7 @@ CLASSES = (
     CARBON_SOF_Material,
     CARBON_SOF_Settings,
     CARBON_SOF_OT_apply,
+    CARBON_SOF_OT_rebuild,
     CARBON_SOF_OT_export_material,
     CARBON_SOF_OT_ensure_slots,
     CARBON_PT_sof,

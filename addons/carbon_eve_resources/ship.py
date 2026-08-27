@@ -1132,16 +1132,26 @@ def populate_sof(obj, document, family):
     except Exception:
         pass                      # already registered, which is fine
 
+    from . import sof_resolution
+
     settings = obj.carbon_sof
     dna = str(document.get("dna") or "")
     if dna:
-        # hull:faction:race, with an optional trailing :pattern?...
-        head, _, tail = dna.partition(":pattern?")
-        parts = head.split(":")
-        settings.hull = parts[0] if len(parts) > 0 else ""
-        settings.faction = parts[1] if len(parts) > 1 else ""
-        settings.race = parts[2] if len(parts) > 2 else ""
-        settings.pattern = tail
+        try:
+            parsed = sof_resolution.parse(dna)
+        except sof_resolution.DnaError:
+            parsed = None
+        if parsed is not None:
+            settings.hull = parsed.hull
+            settings.faction = parsed.faction
+            settings.race = parsed.race
+            settings.pattern = ";".join(parsed.pattern)
+        # Setting a component recomposes the DNA from the fields, and the
+        # slots are still empty at this point -- so the composed text would
+        # drop the very material commands this DNA was built with. The
+        # document's own DNA is the authority; put it back, then read the
+        # slots' provenance out of it.
+        settings.dna = dna
 
     # The material slots, read back from what the areas resolved to. The hull
     # material is the honest source: every area shares the faction's colours.
@@ -1179,6 +1189,11 @@ def populate_sof(obj, document, family):
             with sof_panels.applying():
                 for field, value in found.items():
                     setattr(entry, field, value)
+
+    # The colours are in the slots now, and they no longer know where they came
+    # from -- resolution happened upstream and threw the question away. The DNA
+    # still knows, so read it back out before anyone looks at the panel.
+    settings.stamp_sources()
 
     print(f"  SOF: {settings.dna or '(no dna in the document)'}")
 

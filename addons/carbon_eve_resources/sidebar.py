@@ -22,7 +22,7 @@ from __future__ import annotations
 import bpy
 from bpy.types import Panel
 
-from . import sof_panels
+from . import sof_panels, sof_resolution
 
 CATEGORY = "Carbon"
 
@@ -99,7 +99,16 @@ class CARBON_PT_sidebar_sof(Panel):
         layout.label(text=ship.name.split("_")[0], icon="OUTLINER_OB_ARMATURE")
         for field in ("hull", "faction", "race", "pattern"):
             layout.prop(settings, field)
-        layout.operator("carbon.sof_apply", icon="FILE_REFRESH")
+        row = layout.row()
+        row.enabled = False
+        row.prop(settings, "dna", text="DNA")
+        # Two different jobs, and confusing them wastes a rebuild. `Apply`
+        # pushes what is already here down to the children; `Rebuild` asks
+        # tools-core what the edited SOF actually resolves to, which is the
+        # only way a faction change can reach the scene at all.
+        buttons = layout.row(align=True)
+        buttons.operator("carbon.sof_apply", text="Apply", icon="FILE_REFRESH")
+        buttons.operator("carbon.sof_rebuild", text="Rebuild", icon="PLAY")
 
 
 class CARBON_PT_sidebar_materials(Panel):
@@ -123,14 +132,22 @@ class CARBON_PT_sidebar_materials(Panel):
         for entry in ship.carbon_sof.materials:
             box = layout.box()
             header = box.row(align=True)
+            # A slot the faction supplied looks identical to one the DNA asked
+            # for once the colours are resolved, so the panel has to say which
+            # -- only one of the two is the ship's own and survives a rebuild.
+            from_dna = entry.source == sof_resolution.SOURCE_DNA
             header.label(text=("Pattern " if entry.is_pattern else "Material ")
-                              + str(entry.index))
+                              + str(entry.index),
+                         icon="DECORATE_KEYFRAME" if from_dna else "DECORATE")
             name = header.row(align=True)
             name.alert = entry.material == sof_panels.CUSTOM_MATERIAL
             name.prop(entry, "material", text="")
             if entry.material == sof_panels.CUSTOM_MATERIAL:
                 header.operator("carbon.sof_export_material", text="", icon="EXPORT"
                                 ).slot = f"{entry.index}:{int(entry.is_pattern)}"
+            if not entry.material:
+                box.label(text="supplied by the faction "
+                               + (ship.carbon_sof.faction or "?"))
             values = box.row(align=True)
             values.prop(entry, "diffuse", text="")
             values.prop(entry, "fresnel", text="")
