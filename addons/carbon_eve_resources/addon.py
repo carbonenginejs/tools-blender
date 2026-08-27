@@ -158,32 +158,23 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
     gr2: PointerProperty(type=_gr2_settings())
 
     def draw(self, context):
+        # Two paths, and the licence. Everything else here belonged to the
+        # resource browser or to running tools-core locally; both are on their
+        # way out, and neither is a question to put to someone installing a zip.
         layout = self.layout
-        terms = layout.box()
-        terms.label(text="EVE Creator License", icon="CHECKMARK" if _creator_terms_accepted(self) else "LOCKED")
-        terms.label(text=CREATOR_TERMS_TITLE)
-        terms.label(text=f"Published revision: {CREATOR_TERMS_REVISION}")
-        row = terms.row(align=True)
-        row.operator(EVE_RESOURCE_OT_open_creator_terms.bl_idname, text="Read Official Terms", icon="URL")
-        if _creator_terms_accepted(self):
-            terms.label(text=f"Accepted: {self.creator_terms_accepted_at or 'this revision'}")
-            row.operator(EVE_RESOURCE_OT_revoke_creator_terms.bl_idname, text="Revoke", icon="X")
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        accepted = _creator_terms_accepted(self)
+        row = layout.row(align=True)
+        row.label(text="I accept the EVE Online Creator License",
+                  icon="CHECKBOX_HLT" if accepted else "CHECKBOX_DEHLT")
+        row.operator(EVE_RESOURCE_OT_open_creator_terms.bl_idname, text="", icon="URL")
+        if accepted:
+            row.operator(EVE_RESOURCE_OT_revoke_creator_terms.bl_idname, text="Revoke")
         else:
-            row.operator(EVE_RESOURCE_OT_accept_creator_terms.bl_idname, text="Review and Accept", icon="CHECKMARK")
+            row.operator(EVE_RESOURCE_OT_accept_creator_terms.bl_idname, text="Accept")
         layout.prop(self, "cache_directory")
-        layout.prop(self, "download_directory")
-        sof = layout.box()
-        sof.label(text="SOF assembly", icon="OUTLINER_OB_MESH")
-        sof.prop(self, "tools_core_directory")
-        sof.prop(self, "node_executable")
-        sof.prop(self, "bundle_directory")
-        layout.prop(self, "auto_load")
-        layout.prop(self, "result_limit")
-        layout.label(text="Default channel: Tranquility (TQ)", icon="WORLD")
-        layout.label(
-            text=f"Latest-build checks: at most once every {_format_wait(LATEST_BUILD_CHECK_INTERVAL_SECONDS)}",
-            icon="TIME",
-        )
+        layout.prop(self, "bundle_directory")
 
 
 class EVE_RESOURCE_OT_open_creator_terms(Operator):

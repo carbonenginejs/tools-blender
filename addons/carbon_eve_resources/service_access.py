@@ -1,7 +1,8 @@
 """One tools-core client for the panels to share.
 
-Made once and kept, because UI callbacks fire often. Returns None when
-tools-core is not configured; callers fall back to plain text fields.
+The hosted service by default, so an installed add-on needs nothing but the
+zip. A local tools-core checkout is used only when one is configured, which is
+for people working on tools-core itself.
 """
 
 from __future__ import annotations
@@ -20,63 +21,57 @@ def _preferences(context):
     return getattr(addon, "preferences", None)
 
 
-def _without_preferences() -> str:
-    """A tools-core checkout for a run that has no add-on preferences.
+def service_url(context=None) -> str:
+    from .tools_remote import DEFAULT_SERVICE_URL
 
-    A script that imports the package rather than enabling it as an add-on --
-    the preview builder does exactly that -- has no preferences at all, so
-    every service call silently did nothing and ships came out unbound with no
-    error to show for it.
-
-    `CJS_TOOLS_CORE` first, then the sibling checkout, which is where tools-core
-    sits in an organization clone. Neither is a guess about a person's setup:
-    one they set themselves, one is the repository layout.
-    """
-
-    import os
-
-    named = str(os.environ.get("CJS_TOOLS_CORE", "") or "").strip()
-    if named and (Path(named) / "bin" / "cjs-tools-service.js").is_file():
-        return named
-    sibling = Path(__file__).resolve().parents[3] / "tools-core"
-    if (sibling / "bin" / "cjs-tools-service.js").is_file():
-        return str(sibling)
-    return ""
+    prefs = _preferences(context or bpy.context)
+    return str(getattr(prefs, "service_url", "") or "").strip() or DEFAULT_SERVICE_URL
 
 
 def client(context=None):
-    """A started client, or None when tools-core is not configured."""
+    """A client for the service, or None when neither can be reached."""
 
     prefs = _preferences(context or bpy.context)
     root = str(getattr(prefs, "tools_core_directory", "") or "").strip()
     node = str(getattr(prefs, "node_executable", "") or "node").strip() or "node"
-    if not root:
-        root = _without_preferences()
-    if not root:
-        return None
+    url = service_url(context)
 
-    # Rebuilt only when the settings that define it change, so a redraw reuses
-    # the running sidecar.
-    key = (root, node)
+    key = (root, node, url)
     if _CLIENT["client"] is not None and _CLIENT["key"] == key:
         return _CLIENT["client"]
 
-    from .tools_service import ToolsServiceClient
+    made = _local(root, node) if root else None
+    if made is None:
+        from .tools_remote import RemoteToolsClient
 
-    try:
-        cache = Path(bpy.path.abspath(
-            str(getattr(prefs, "cache_directory", "") or "").strip() or root))
-        made = ToolsServiceClient(
-            node_executable=node,
-            service_script=Path(bpy.path.abspath(root)) / "bin" / "cjs-tools-service.js",
-            cache_root=cache,
-        )
-    except Exception as exc:
-        print(f"[CarbonEngineJS SOF] tools-core unavailable: {exc}")
-        return None
+        try:
+            made = RemoteToolsClient(url)
+        except Exception as exc:
+            print(f"[CarbonEngineJS SOF] service unavailable: {exc}")
+            return None
+
     _CLIENT["client"] = made
     _CLIENT["key"] = key
     return made
+
+
+def _local(root: str, node: str):
+    """A client for a local checkout, or None when it cannot be built."""
+
+    from .tools_service import ToolsServiceClient
+
+    script = Path(bpy.path.abspath(root)) / "bin" / "cjs-tools-service.js"
+    if not script.is_file():
+        return None
+    try:
+        return ToolsServiceClient(
+            node_executable=node,
+            service_script=script,
+            cache_root=Path(bpy.path.abspath(root)),
+        )
+    except Exception as exc:
+        print(f"[CarbonEngineJS SOF] local tools-core unavailable: {exc}")
+        return None
 
 
 def forget():
