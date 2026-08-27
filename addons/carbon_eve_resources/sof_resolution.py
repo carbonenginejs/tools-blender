@@ -49,6 +49,58 @@ SOURCE_DNA = "dna"
 SOURCE_FACTION = "faction"
 
 
+#: The area types, by their value. From `EveSOFDataArea.AreaType`.
+#:
+#: This is the key material resolution actually turns on: a faction stores four
+#: material names PER AREA TYPE, so two areas differ in the same slot exactly
+#: when their types differ. A ship-wide material panel cannot express that.
+#:
+#: 5 is Wreck, which the faction's own area table has no slot for -- it comes
+#: from the generic data instead -- and 11 doubles as TYPE_NO_OVERWRITE.
+AREA_TYPES = (
+    "primary", "glass", "sails", "reactor", "darkhull", "wreck",
+    "rock", "monument", "ornament", "simpleprimary", "turret",
+)
+TYPE_PRIMARY = 0
+
+#: An area whose own type names no material falls back to PRIMARY rather than
+#: going unpainted, which is why a hull that authors only its primary area
+#: still shades everything.
+AREA_TYPE_FALLBACK = TYPE_PRIMARY
+
+
+def area_type_name(area_type) -> str:
+    """A readable name for an area type value."""
+
+    try:
+        index = int(area_type)
+    except (TypeError, ValueError):
+        return "?"
+    if 0 <= index < len(AREA_TYPES):
+        return AREA_TYPES[index]
+    return f"type {index}"
+
+
+def is_blocked(blocked_materials, index: int) -> bool:
+    """Whether an area vetoes the DNA's override for slot `index` (1-based).
+
+    `blockedMaterials` is a bitmask on the HULL AREA, so it is authored per
+    area and per slot: mde3_t3's sails carry 12, which is bits 2 and 3, and
+    those sails therefore keep the faction's Mtl3 and Mtl4 no matter what a
+    skin asks for. Ignoring it paints a skin's colours onto areas the hull
+    author deliberately protected.
+    """
+
+    try:
+        mask = int(blocked_materials or 0)
+    except (TypeError, ValueError):
+        return False
+    slot = int(index) - 1
+    if slot < 0 or slot >= 32:
+        return False
+    return bool((mask >> slot) & 1)
+
+
 class DnaError(ValueError):
     """Raised when a DNA cannot be read as one."""
 
@@ -219,6 +271,44 @@ def slot_sources(dna: str | Dna) -> tuple[SlotSource, ...]:
 
     # A pattern's layers are ALWAYS in the DNA -- there is no faction fallback
     # for them, which is how a SKIN repaints a hull whose faction says nothing.
+    pattern = parsed.pattern
+    for index in range(1, PATTERN_SLOTS + 1):
+        material = pattern[index] if len(pattern) > index else ""
+        found.append(SlotSource(index=index, source=SOURCE_DNA,
+                                material=material, is_pattern=True))
+    return tuple(found)
+
+
+def area_slot_sources(dna: str | Dna, area_type=TYPE_PRIMARY,
+                      blocked_materials=0) -> tuple[SlotSource, ...]:
+    """What decided each slot FOR ONE AREA, which is the honest question.
+
+    `slot_sources` answers it for the ship, which is only right for an area
+    that blocks nothing. The two differ exactly where a hull author set a
+    `blockedMaterials` bit: that area keeps the faction's material in that slot
+    while its neighbours take the skin's, on the same ship, in the same slot
+    number.
+
+    The area type is carried for the caller's benefit -- which faction entry a
+    faction-sourced slot reads is `areaType:slot`, falling back to primary --
+    but this does not resolve the value. tools-core does that.
+    """
+
+    parsed = dna if isinstance(dna, Dna) else parse(dna)
+    found = []
+    for index, material in enumerate(parsed.materials, start=1):
+        blocked = is_blocked(blocked_materials, index)
+        override = bool(material) and material != NONE and not blocked
+        found.append(SlotSource(
+            index=index,
+            source=SOURCE_DNA if override else SOURCE_FACTION,
+            material=material if override else "",
+        ))
+
+    # Pattern layers never consult the area type: the pattern branch of the
+    # resolution chain does not look at it, so PMtl values are the same on
+    # every area whose shader asks for them. Only the pattern TEXTURE is
+    # per-area, and that is a separate mechanism we do not rely on.
     pattern = parsed.pattern
     for index in range(1, PATTERN_SLOTS + 1):
         material = pattern[index] if len(pattern) > index else ""

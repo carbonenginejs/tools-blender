@@ -7,6 +7,7 @@ ADDONS = Path(__file__).resolve().parents[1] / "addons"
 if str(ADDONS) not in sys.path:
     sys.path.insert(0, str(ADDONS))
 
+from carbon_eve_resources import sof_resolution  # noqa: E402
 from carbon_eve_resources.sof_resolution import (  # noqa: E402
     NONE,
     SOURCE_DNA,
@@ -142,6 +143,69 @@ class SlotSourceTests(unittest.TestCase):
 
     def test_every_slot_is_reported(self):
         self.assertEqual(len(slot_sources(PLAIN)), 6)
+
+
+
+class AreaTypeTests(unittest.TestCase):
+    def test_names_the_types(self):
+        self.assertEqual(sof_resolution.area_type_name(0), "primary")
+        self.assertEqual(sof_resolution.area_type_name(2), "sails")
+        self.assertEqual(sof_resolution.area_type_name(5), "wreck")
+
+    def test_an_unknown_type_is_reported_not_guessed(self):
+        self.assertEqual(sof_resolution.area_type_name(99), "type 99")
+        self.assertEqual(sof_resolution.area_type_name(None), "?")
+
+
+class BlockedMaterialTests(unittest.TestCase):
+    # mde3_t3's two sails areas carry blockedMaterials 12, read from the live
+    # hull record: bits 2 and 3, so slots 3 and 4 keep the faction's material
+    # however loudly a skin asks for its own.
+    SAILS = 12
+
+    def test_the_real_sails_mask(self):
+        blocked = [index for index in (1, 2, 3, 4)
+                   if sof_resolution.is_blocked(self.SAILS, index)]
+        self.assertEqual(blocked, [3, 4])
+
+    def test_nothing_is_blocked_by_zero(self):
+        self.assertFalse(any(sof_resolution.is_blocked(0, index)
+                             for index in (1, 2, 3, 4)))
+
+    def test_a_missing_mask_blocks_nothing(self):
+        self.assertFalse(sof_resolution.is_blocked(None, 1))
+
+
+class AreaSlotSourceTests(unittest.TestCase):
+    SKIN = ("mde3_t3:minmatarbase:minmatar"
+            ":material?skin_a;skin_b;skin_c;skin_d")
+
+    def test_an_unblocked_area_takes_every_skin_material(self):
+        sources = [s for s in sof_resolution.area_slot_sources(self.SKIN, 0, 0)
+                   if not s.is_pattern]
+        self.assertEqual([s.source for s in sources], [SOURCE_DNA] * 4)
+
+    def test_a_blocked_slot_keeps_the_faction_on_that_area_only(self):
+        # The whole point: same ship, same slot number, two different answers.
+        hull = sof_resolution.area_slot_sources(self.SKIN, 0, 0)
+        sails = sof_resolution.area_slot_sources(self.SKIN, 2, 12)
+        self.assertEqual(hull[2].source, SOURCE_DNA)
+        self.assertEqual(sails[2].source, SOURCE_FACTION)
+        self.assertEqual(sails[2].material, "")
+        self.assertEqual(hull[2].material, "skin_c")
+
+    def test_unblocked_slots_are_untouched_by_the_mask(self):
+        sails = sof_resolution.area_slot_sources(self.SKIN, 2, 12)
+        self.assertEqual([s.source for s in sails[:2]], [SOURCE_DNA] * 2)
+
+    def test_pattern_layers_ignore_the_area_entirely(self):
+        # The pattern branch never consults the area type, so PMtl values are
+        # the same on every area that asks for them.
+        for area_type, mask in ((0, 0), (2, 12), (5, 15)):
+            patterns = [s for s in sof_resolution.area_slot_sources(SKINNED, area_type, mask)
+                        if s.is_pattern]
+            self.assertEqual([s.material for s in patterns],
+                             ["pmtl_a", "pmtl_b"])
 
 
 if __name__ == "__main__":

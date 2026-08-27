@@ -434,6 +434,15 @@ def assemble(document_path, resources_directory, *, clear=True,
             if not isinstance(index, int) or index >= slots:
                 warnings.append(f"{area.get('name')}: index {index} outside {slots} slots")
                 continue
+            # Which AREA this material is. The document does not carry the area
+            # TYPE that chose its materials -- `Tr2MeshArea` keeps name, index
+            # and count and drops it -- so record what it does carry, and let a
+            # later pass recover the type from the hull record by matching it.
+            material["carbon_area"] = str(area.get("name") or "")
+            material["carbon_area_index"] = int(index)
+            material["carbon_area_count"] = int(area.get("count") or 1)
+            material["carbon_area_shader"] = str(
+                area.get("effect", {}).get("effectFilePath", "")).rsplit("/", 1)[-1].lower()
             for offset in range(max(1, area.get("count") or 1)):
                 if index + offset < slots:
                     target.data.materials[index + offset] = material
@@ -1153,42 +1162,78 @@ def populate_sof(obj, document, family):
         # slots' provenance out of it.
         settings.dna = dna
 
-    # The material slots, read back from what the areas resolved to. The hull
-    # material is the honest source: every area shares the faction's colours.
-    wanted = [(index, False) for index in (1, 2, 3, 4)] + [(index, True) for index in (1, 2)]
-    for index, is_pattern in wanted:
-        if settings.slot(index, is_pattern) is None:
+    # One group of four slots PER AREA TYPE, because that is how a faction
+    # stores them: four material names keyed `areaType:slot`. A single group
+    # for the whole ship cannot express a hull and its sails disagreeing about
+    # slot 3, and pushing one group everywhere paints the hull's colours onto
+    # the sails.
+    #
+    # The two pattern layers stay ship-wide -- the pattern branch of the
+    # resolution chain never consults the area type.
+    by_type = {}
+    for target in sof_panels.ship_objects(obj):
+        for slot in getattr(target, "material_slots", []):
+            material = slot.material
+            if material is None or not material.use_nodes:
+                continue
+            area_type = material.get("carbon_area_type", None)
+            if area_type is None or int(area_type) < 0:
+                continue
+            group = next((n for n in material.node_tree.nodes
+                          if n.bl_idname == "ShaderNodeGroup" and n.node_tree
+                          and "Pattern" not in n.node_tree.name), None)
+            if group is None:
+                continue
+            # First material of a type wins as the representative. Areas of one
+            # type resolve identically by construction, so any of them answers.
+            by_type.setdefault(int(area_type),
+                               (group, int(material.get("carbon_blocked_materials", 0) or 0)))
+
+    if not by_type:
+        # No area types were recovered -- no hull record, most likely. One
+        # ship-wide group is what we can honestly offer, and it is what the
+        # tool did before area types were carried at all.
+        group = next((n for slot in obj.material_slots if slot.material
+                      and slot.material.use_nodes
+                      for n in slot.material.node_tree.nodes
+                      if n.bl_idname == "ShaderNodeGroup" and n.node_tree
+                      and "Pattern" not in n.node_tree.name), None)
+        if group is not None:
+            by_type[-1] = (group, 0)
+
+    wanted = [(index, False, area_type) for area_type in sorted(by_type)
+              for index in (1, 2, 3, 4)]
+    wanted += [(index, True, -1) for index in (1, 2)]
+    for index, is_pattern, area_type in wanted:
+        entry = settings.slot(index, is_pattern, area_type)
+        if entry is None:
             entry = settings.materials.add()
             entry.index = index
             entry.is_pattern = is_pattern
-
-    material = next((slot.material for slot in obj.material_slots
-                     if slot.material and slot.material.use_nodes), None)
-    group = None
-    if material is not None:
-        group = next((n for n in material.node_tree.nodes
-                      if n.bl_idname == "ShaderNodeGroup" and n.node_tree
-                      and "Pattern" not in n.node_tree.name), None)
-    if group is not None:
-        for entry in settings.materials:
-            sockets = sof_panels.PATTERN_SOCKETS if entry.is_pattern else sof_panels.MATERIAL_SOCKETS
-            # Read EVERY value before writing any of them. Assigning a field
-            # fires the update that pushes the whole slot back into the
-            # material, so reading and writing in the same pass overwrites the
-            # sockets still to be read -- which silently gave every slot the
-            # default gloss of 0.5 instead of the authored 0.774.
-            found = {}
-            for field, pattern in sockets.items():
-                socket = group.inputs.get(pattern.format(entry.index))
-                if socket is None:
-                    continue
-                found[field] = (float(socket.default_value) if field == "gloss"
-                                else tuple(socket.default_value)[:3])
-            # Filling FROM the SOF, so the colour updates must not read as a
-            # person editing them and mark the slot custom.
-            with sof_panels.applying():
-                for field, value in found.items():
-                    setattr(entry, field, value)
+            entry.area_type = area_type
+        source = by_type.get(area_type) or next(iter(by_type.values()), None)
+        if source is None:
+            continue
+        group, blocked = source
+        entry.blocked = blocked
+        sockets = sof_panels.PATTERN_SOCKETS if is_pattern else sof_panels.MATERIAL_SOCKETS
+        # Read EVERY value before writing any of them. Assigning a field
+        # fires the update that pushes the whole slot back into the
+        # material, so reading and writing in the same pass overwrites the
+        # sockets still to be read -- which silently gave every slot the
+        # default gloss of 0.5 instead of the authored 0.774.
+        found = {}
+        for field, pattern in sockets.items():
+            socket = group.inputs.get(pattern.format(index))
+            if socket is None:
+                continue
+            found[field] = (float(socket.default_value) if field == "gloss"
+                            else tuple(socket.default_value)[:3])
+        # Filling FROM the SOF, so the colour updates must not read as a
+        # person editing them and mark the slot custom.
+        with sof_panels.applying():
+            for field, value in found.items():
+                setattr(entry, field, value)
 
     # The colours are in the slots now, and they no longer know where they came
     # from -- resolution happened upstream and threw the question away. The DNA
@@ -1840,6 +1885,25 @@ def build_ship(document_path, resources_directory, *, clear=True,
     ship = [primary] + list(decal_objects) + list(plane_objects) + list(banner_objects)
     apply_ship_globals(ship, globals_overrides)
     drive_ship_sockets(ship, primary)
+
+    # Recover each material's AREA TYPE from the hull record before the SOF
+    # panels are filled. The built document dropped it -- a `Tr2MeshArea` keeps
+    # name, index and count and not the type that chose its materials -- and
+    # without it every material looks alike, so an edit meant for the hull
+    # reaches the sails too.
+    from . import sof_areas
+    stamped = sof_areas.stamp_ship(ship, hull_record)
+    if stamped["materials"]:
+        types = ", ".join(f"{name} x{count}"
+                          for name, count in sorted(stamped["types"].items()))
+        print(f"  areas: {stamped['matched']}/{stamped['materials']} identified"
+              f"{' (' + types + ')' if types else ''}")
+        if stamped["unmatched"]:
+            # Said out loud: an unidentified area is one no material edit will
+            # reach, which is better than one every edit reaches by mistake.
+            print(f"  areas: {len(stamped['unmatched'])} not identified, "
+                  f"left as built")
+
     populate_sof(primary, document, family)
     prune_empty_collections()
     align_names(collection)

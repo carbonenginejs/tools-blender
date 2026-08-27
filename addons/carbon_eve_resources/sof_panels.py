@@ -66,12 +66,23 @@ def ship_objects(obj):
     return found
 
 
-def push_to_materials(obj, values):
-    """Writes `{socket name: value}` into every quad group the ship uses.
+def push_to_materials(obj, values, *, area_type=None, blocked_slot=None):
+    """Writes `{socket name: value}` into the quad groups this change belongs to.
 
     Sockets are addressed by NAME, never by index: which sockets a member binds
     depends on which quad it is, so `quadsailsv5` and `quadv5` do not agree on
     position. A name a material does not have is skipped rather than guessed at.
+
+    `area_type` restricts the write to areas of one type, which is what a
+    faction material actually is: the faction stores four material names PER
+    AREA TYPE, so writing one set into every material paints a hull's colours
+    onto its sails. Left as None the write reaches everything, which is right
+    only for values that genuinely are ship-wide.
+
+    `blocked_slot` is the 1-based slot a DNA override is being written for. An
+    area whose `blockedMaterials` vetoes that slot keeps the faction's material
+    and must be skipped -- mde3_t3's sails block slots 3 and 4, so a skin
+    repaints its hull and booster but only half its sails.
     """
 
     written = 0
@@ -82,6 +93,16 @@ def push_to_materials(obj, values):
             if material is None or not material.use_nodes or material.name in seen:
                 continue
             seen.add(material.name)
+            if area_type is not None:
+                found = material.get("carbon_area_type", None)
+                # An area nobody could identify is left alone rather than
+                # swept up by every edit: painting it with a type it may not
+                # have is worse than leaving it as it was built.
+                if found is None or int(found) != int(area_type):
+                    continue
+            if blocked_slot is not None and sof_resolution.is_blocked(
+                    material.get("carbon_blocked_materials", 0), blocked_slot):
+                continue
             for node in material.node_tree.nodes:
                 if node.bl_idname != "ShaderNodeGroup" or not node.node_tree:
                     continue
@@ -98,17 +119,26 @@ def push_to_materials(obj, values):
 
 
 def _material_update(self, context):
-    """Pushes one slot's values to the ship it belongs to."""
+    """Pushes one slot's values to the areas that slot actually governs.
+
+    Which areas those are is the whole question. A hull material belongs to one
+    AREA TYPE and must not reach the others; a pattern layer is ship-wide,
+    because the pattern branch of the resolution chain never consults the area
+    type; and a DNA override skips any area that blocks its slot.
+    """
 
     obj = getattr(self, "id_data", None)
     if not isinstance(obj, bpy.types.Object):
         return
     sockets = PATTERN_SOCKETS if self.is_pattern else MATERIAL_SOCKETS
+    area_type = None if self.is_pattern or self.area_type < 0 else self.area_type
+    blocked = (self.index if not self.is_pattern
+               and self.source == sof_resolution.SOURCE_DNA else None)
     push_to_materials(obj, {
         sockets["diffuse"].format(self.index): tuple(self.diffuse) + (1.0,),
         sockets["gloss"].format(self.index): self.gloss,
         sockets["fresnel"].format(self.index): tuple(self.fresnel) + (1.0,),
-    })
+    }, area_type=area_type, blocked_slot=blocked)
 
 
 #: Set while a slot is being filled from the SOF, so the update callbacks know
@@ -178,6 +208,16 @@ class CARBON_SOF_Material(PropertyGroup):
     source: StringProperty(
         name="From", default=sof_resolution.SOURCE_FACTION,
         description="Whether this slot was named by the DNA or supplied by the faction")
+    #: Which AREA TYPE this slot governs, or -1 for a value that is genuinely
+    #: ship-wide. A faction holds four material names per area type, so the
+    #: same slot number is a different material on a hull area than on a sails
+    #: area -- one panel per ship cannot say that, and pushing one set of
+    #: values everywhere paints the hull's colours onto the sails.
+    area_type: IntProperty(default=-1)
+    #: The area's `blockedMaterials` mask, so a DNA override knows which areas
+    #: refuse it. Authored on the hull area, and the only place a skin can be
+    #: overruled per slot.
+    blocked: IntProperty(default=0)
     diffuse: FloatVectorProperty(
         name="Diffuse", subtype="COLOR", size=3, min=0.0, soft_max=1.0,
         default=(0.0, 0.0, 0.0), update=_colour_edited,
@@ -271,23 +311,53 @@ class CARBON_SOF_Settings(PropertyGroup):
         """
 
         try:
-            sources = sof_resolution.slot_sources(self.dna)
+            parsed = sof_resolution.parse(self.dna)
         except sof_resolution.DnaError:
             return
-        for found in sources:
-            entry = self.slot(found.index, found.is_pattern)
-            if entry is None:
+
+        # Per area, not per ship. Two areas can disagree about the same slot
+        # number -- an area that blocks a slot keeps the faction's material
+        # while its neighbours take the skin's -- so asking once for the whole
+        # ship would answer for whichever area happened to be built first.
+        for entry in self.materials:
+            sources = sof_resolution.area_slot_sources(
+                parsed,
+                entry.area_type if entry.area_type >= 0 else sof_resolution.TYPE_PRIMARY,
+                entry.blocked,
+            )
+            found = next((source for source in sources
+                          if source.index == entry.index
+                          and source.is_pattern == entry.is_pattern), None)
+            if found is None:
                 continue
             with applying():
                 entry.source = found.source
                 if found.material:
                     entry.material = found.material
 
-    def slot(self, index, pattern=False):
+    def slot(self, index, pattern=False, area_type=-1):
+        """One slot, keyed by area type as well as number.
+
+        The area type is part of the key because the same slot NUMBER is a
+        different material on a hull area than on a sails area. Looking one up
+        by number alone returns whichever area happened to be built first,
+        which is how a hull's colours end up on the sails.
+        """
+
         for entry in self.materials:
-            if entry.index == index and entry.is_pattern == pattern:
+            if (entry.index == index and entry.is_pattern == pattern
+                    and entry.area_type == area_type):
                 return entry
         return None
+
+    def area_types(self) -> tuple:
+        """The area types this ship actually has slots for, in order."""
+
+        found = []
+        for entry in self.materials:
+            if not entry.is_pattern and entry.area_type not in found:
+                found.append(entry.area_type)
+        return tuple(sorted(found))
 
 
 class CARBON_SOF_OT_apply(Operator):
@@ -385,8 +455,13 @@ class CARBON_SOF_OT_export_material(Operator):
             self.report({"ERROR"}, "No ship to export from")
             return {"CANCELLED"}
 
-        index, _, pattern = self.slot.partition(":")
-        entry = obj.carbon_sof.slot(int(index or 1), pattern == "1")
+        # `index:isPattern:areaType`. The area type is part of the key: the
+        # same slot number is a different material on a hull area than on a
+        # sails area, so exporting by number alone would write out whichever
+        # area happened to be built first.
+        parts = (self.slot.split(":") + ["", ""])[:3]
+        entry = obj.carbon_sof.slot(int(parts[0] or 1), parts[1] == "1",
+                                    int(parts[2] or -1))
         if entry is None:
             self.report({"ERROR"}, "That slot is not there")
             return {"CANCELLED"}

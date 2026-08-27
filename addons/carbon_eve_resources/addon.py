@@ -1100,6 +1100,44 @@ def _fetch_sof_resources(paths: tuple[str, ...], prefs) -> tuple[dict[str, Path]
     return resolved, missing
 
 
+def _hull_record(dna: str) -> dict:
+    """The hull record for a DNA, or an empty dict if it cannot be had.
+
+    Returns empty rather than raising: a ship whose areas could not be typed is
+    still a ship, and the failure is reported alongside the other assembly
+    problems instead of taking the build down with it.
+    """
+
+    from . import sof_areas, sof_resolution  # noqa: F401
+    from .tools_service import ToolsServiceClient, ToolsServiceError
+
+    try:
+        hull = sof_resolution.parse(dna).hull
+    except sof_resolution.DnaError:
+        return {}
+    if not hull:
+        return {}
+
+    prefs = _prefs(bpy.context)
+    root = str(prefs.tools_core_directory or "").strip()
+    if not root:
+        return {}
+    try:
+        client = ToolsServiceClient(
+            node_executable=str(prefs.node_executable or "node").strip() or "node",
+            service_script=Path(bpy.path.abspath(root)) / "bin" / "cjs-tools-service.js",
+            cache_root=_cache_path(prefs),
+        )
+        # The RESOURCE build. `latest` resolves to two different numbers, one
+        # for resources and one for the SDE, and a SOF route handed the SDE
+        # build quietly acquires a whole second client build.
+        record = client._request("GET", f"/eve/latest/sof/hulls/{hull}")
+    except (ToolsServiceError, OSError, ValueError) as exc:
+        print(f"[CarbonEngineJS SOF] hull record unavailable for {hull}: {exc}")
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
 def _assemble_sof_document(
     bundle: SofBundle,
     primary_only: bool,
@@ -1152,6 +1190,22 @@ def _assemble_sof_document(
         for item in objects:
             item["carbon_sof_dna"] = assembly.dna
             item["carbon_sof_geometry"] = mesh.geometry_path
+
+    # Recover each material's AREA TYPE. A faction stores four material names
+    # per area type, so without this every material looks alike and an edit
+    # meant for the hull reaches the sails as well. The built document cannot
+    # answer it -- `Tr2MeshArea` drops the area type -- so it comes from the
+    # hull record, where it was authored.
+    from . import sof_areas
+    hull_record = _hull_record(assembly.dna)
+    if hull_record:
+        stamped = sof_areas.stamp_ship(bpy.data.objects, hull_record)
+        if stamped["types"]:
+            problems.append("areas: " + ", ".join(
+                f"{name} x{count}" for name, count in sorted(stamped["types"].items())))
+        if stamped["unmatched"]:
+            problems.append(f"areas: {len(stamped['unmatched'])} could not be "
+                            "identified and are left as built")
 
     for problem in problems:
         print(f"[CarbonEngineJS SOF] {problem}")

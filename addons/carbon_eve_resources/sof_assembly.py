@@ -99,6 +99,14 @@ def apply_mesh_areas(
             plan = plan_material(area, prefix=prefix)
             material = build_material(plan, resources, report, shader_library=shader_library)
         report.materials += 1
+        # Which AREA this material is. The built document does not say -- a
+        # `Tr2MeshArea` keeps name, index and count and drops the area type
+        # that decided its materials -- so what is recorded here is what a
+        # later pass can match against the hull record to recover it.
+        material["carbon_area"] = area.name
+        material["carbon_area_index"] = int(area.index)
+        material["carbon_area_count"] = int(area.count)
+        material["carbon_area_shader"] = area.shader
         for slot_index in targets:
             target_object, local_index = slots[slot_index]
             target_object.data.materials[local_index] = material
