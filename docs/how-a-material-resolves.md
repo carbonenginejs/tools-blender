@@ -17,10 +17,20 @@ to every child, because no single source holds them.
    A slot of `none` is not an override; it is an absence, and the search
    continues.
 
-2. **Otherwise the FACTION supplies it**, per area.
+2. **Otherwise the FACTION supplies it**, per AREA TYPE.
 
-   A faction's `areaMaterials` map `areaType:slotIndex` to a material name, so
-   the same slot resolves differently on a hull area than on a booster area.
+   This is the part that catches people. A ship does not have four material
+   slots; it has four per area type. A faction's `areaMaterials` map
+   `areaType:slotIndex` to a material name, so the same slot NUMBER is a
+   different material on a hull area than on a sails area.
+
+   Measured on `mde3_t3:legion_minmatar`: primary `Mtl4DiffuseColor` is
+   `(0.076, 0.065, 0.047)` and sails `Mtl4DiffuseColor` is
+   `(0.002, 0.003, 0.004)`. A consumer that pushes one set of values into
+   every material on the ship overwrites the second with the first.
+
+   The eleven types are `primary, glass, sails, reactor, darkhull, wreck,
+   rock, monument, ornament, simpleprimary, turret`.
 
 3. **Failing that, the primary area is tried**, and then the generic wreck data.
 
@@ -28,9 +38,24 @@ to every child, because no single source holds them.
    before giving up, so a hull that authors only its primary area still shades
    its other areas.
 
-**Pattern materials are always in the DNA.** The `pattern` command carries the
-pattern name and its two layer materials, so a pattern's colours are never a
-faction lookup — which is why a SKIN can repaint a hull that has no faction
+## What a skin may not repaint
+
+A hull area carries `blockedMaterials`, a bitmask over the four slots. It is
+consulted in exactly one place — the DNA-override step above — so it means
+precisely *"a SKIN may not repaint this slot on this area"*, and nothing else.
+It does not touch faction materials or patterns.
+
+`mde3_t3`'s two sails areas carry `12`, which is bits 2 and 3. A skin naming
+four materials repaints that hull and its booster with all four, and its sails
+with only the first two.
+
+*Read from the runtime and confirmed on the live hull record; the visual
+consequence has not been observed.*
+
+**Pattern materials are always in the DNA**, and they are ship-wide. The `pattern` command carries the
+pattern name and its two layer materials, and the pattern branch of the chain
+never consults the area type -- so PMtl values are the same on every area whose
+shader asks for them. A pattern's colours are never a faction lookup — which is why a SKIN can repaint a hull that has no faction
 override at all.
 
 ## The shader only ever sees the answer
