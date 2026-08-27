@@ -1154,18 +1154,7 @@ def build_plane_sets(document, hull, collection):
             obj = bpy.data.objects.new(f"plane_{set_index}_{index}", mesh)
             group.objects.link(obj)
 
-            # Built explicitly rather than by setting location/rotation/scale
-            # and reading matrix_world back: a freshly created object has not
-            # been evaluated, so matrix_world is still identity and every plane
-            # ends up wherever its bone is, at the armature's inverse scale.
-            x, y, z, w = tuple(item.get("rotation") or (0.0, 0.0, 0.0, 1.0))
-            local = mathutils.Matrix.LocRotScale(
-                mathutils.Vector(tuple(item.get("position") or (0.0, 0.0, 0.0))),
-                mathutils.Quaternion((w, x, y, z)),
-                mathutils.Vector(tuple(item.get("scaling") or (1.0, 1.0, 1.0))))
-            # The item's transform is in the MODEL's space, like a decal's.
-            world = (hull.matrix_world @ local) if hull is not None else local
-            obj.matrix_world = world
+            obj.matrix_world = item_matrix(item, hull)
 
             colour = tuple(item.get("color") or (1.0, 1.0, 1.0, 1.0))
             obj["carbon_plane_color"] = colour
@@ -1220,6 +1209,109 @@ def plane_material(colour, set_index, index):
     return material
 
 
+#: What a banner's `reference` names -- `EveSOFDataHullBanner.Usage`, verbatim.
+#:
+#: Twenty-four of them, not three. A hull carries more than the alliance, corp
+#: and CEO slots people think of: vertical and horizontal banners, the target
+#: and current system's, publicity posters and five recruitment panels. mde3_t3
+#: alone uses a VERTICAL_BANNER, which a three-entry table would have named "3".
+BANNER_REFERENCES = (
+    "alliance_logo", "corp_logo", "ceo_portrait",
+    "vertical_banner", "horizontal_banner",
+    "target_system_alliance_logo", "target_system_vertical_banner",
+    "target_system_horizontal_banner",
+    "target_system_info_0", "target_system_info_1", "target_system_info_2",
+    "target_system_info_3", "target_system_info_4", "target_system_status",
+    "current_system_alliance_logo", "current_system_vertical_banner",
+    "current_system_horizontal_banner",
+    "publicity_poster", "publicity_portrait",
+    "recruitment_information_0", "recruitment_information_1",
+    "recruitment_information_2", "recruitment_information_3",
+    "recruitment_information_4",
+)
+
+
+def build_banner_sets(document, hull, collection):
+    """Banners and the lights that shine on them.
+
+    A banner is the quad a player's alliance, corporation or CEO logo is drawn
+    on, and a banner set carries its own lights -- the fittings that light the
+    logo rather than scene lighting.
+
+    The logo itself is an EXTERNAL parameter: which image lands here depends on
+    who owns the ship, so the slot is recorded and left empty rather than filled
+    with a guess.
+    """
+
+    armature = hull.parent if hull is not None and hull.parent is not None         and hull.parent.type == "ARMATURE" else None
+    built, lights = [], []
+    for set_index, banner_set in enumerate(find_typed(document, "EveBannerSet")):
+        banners = banner_set.get("banners") or []
+        if not banners:
+            continue
+        group = attachment_collection(collection, "banners")
+
+        for index, item in enumerate(banners):
+            reference = item.get("reference")
+            slot = BANNER_REFERENCES[reference] if isinstance(reference, int)                 and 0 <= reference < len(BANNER_REFERENCES) else str(reference or "")
+            mesh = bpy.data.meshes.new(f"bannerset{set_index}_{index}")
+            mesh.from_pydata(list(PLANE_CORNERS), [], [(0, 1, 2, 3)])
+            mesh.update()
+            obj = bpy.data.objects.new(f"banner_{slot or set_index}_{index}", mesh)
+            group.objects.link(obj)
+            obj.matrix_world = item_matrix(item, hull)
+            obj["carbon_banner_reference"] = int(reference or 0)
+            obj["carbon_banner_slot"] = slot
+            # angleX and angleY tilt the banner about its own axes; kept as
+            # authored so nothing is lost, and not yet applied.
+            obj["carbon_banner_angles"] = (float(item.get("angleX") or 0.0),
+                                           float(item.get("angleY") or 0.0))
+            obj.data.materials.append(plane_material((1.0, 1.0, 1.0, 1.0), set_index, index))
+            attach_to_bone(obj, armature, item.get("bone"))
+            built.append(obj)
+
+        for index, light in enumerate(banner_set.get("lights") or []):
+            data = light.get("lightData") or {}
+            lamp = bpy.data.lights.new(f"bannerlight{set_index}_{index}", "POINT")
+            # radius is the reach, innerRadius the falloff start; Blender has one
+            # size, so the inner radius is what the lamp's own radius becomes.
+            lamp.shadow_soft_size = float(data.get("innerRadius") or 0.0) * 0.01
+            colour = tuple(data.get("color") or (0.0, 0.0, 0.0, 0.0))
+            lamp.color = tuple(colour[:3]) or (1.0, 1.0, 1.0)
+            lamp.energy = float(data.get("brightness") or 1.0)
+            obj = bpy.data.objects.new(f"banner_light_{set_index}_{index}", lamp)
+            group.objects.link(obj)
+            obj.matrix_world = item_matrix(data, hull)
+            obj["carbon_light_radius"] = float(data.get("radius") or 0.0)
+            obj["carbon_light_inner_radius"] = float(data.get("innerRadius") or 0.0)
+            obj["carbon_light_flags"] = int(data.get("flags") or 0)
+            attach_to_bone(obj, armature, data.get("boneIndex"))
+            lights.append(obj)
+
+    if built or lights:
+        print(f"  built {len(built)} banner(s) and {len(lights)} banner light(s)")
+        zero = sum(1 for light in lights if max(light.data.color) == 0.0)
+        if zero:
+            print(f"    ! {zero} banner light(s) have a colour of zero in the document")
+    return built + lights
+
+
+def item_matrix(item, hull):
+    """An attachment's world transform, from a position/rotation/scaling triple.
+
+    Built explicitly because a freshly created object has not been evaluated:
+    reading matrix_world back at this point gives identity, which puts every
+    attachment at its bone rather than where the document says.
+    """
+
+    x, y, z, w = tuple(item.get("rotation") or (0.0, 0.0, 0.0, 1.0))
+    local = mathutils.Matrix.LocRotScale(
+        mathutils.Vector(tuple(item.get("position") or (0.0, 0.0, 0.0))),
+        mathutils.Quaternion((w, x, y, z)),
+        mathutils.Vector(tuple(item.get("scaling") or (1.0, 1.0, 1.0))))
+    return (hull.matrix_world @ local) if hull is not None else local
+
+
 def build_ship(document_path, resources_directory, *, clear=True,
                globals_overrides=None, decal_sets=None):
     """Builds a whole ship: geometry, areas, decals, and the SOF that drives it.
@@ -1262,11 +1354,12 @@ def build_ship(document_path, resources_directory, *, clear=True,
     decal_objects = build_decals(document, primary, resources, family, decal_sets,
                                  collection)
     plane_objects = build_plane_sets(document, primary, collection)
+    banner_objects = build_banner_sets(document, primary, collection)
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material
     # sockets are driven from the hull.
-    ship = [primary] + list(decal_objects) + list(plane_objects)
+    ship = [primary] + list(decal_objects) + list(plane_objects) + list(banner_objects)
     apply_ship_globals(ship, globals_overrides)
     drive_ship_sockets(ship, primary)
     populate_sof(primary, document, family)
