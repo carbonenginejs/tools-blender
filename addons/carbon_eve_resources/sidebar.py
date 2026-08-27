@@ -27,24 +27,49 @@ from . import sof_panels, sof_resolution
 CATEGORY = "Carbon"
 
 
-def _ship_of(context):
-    """The ship the selection belongs to, or None.
+def ships_in_file():
+    """Every ship in the blend, in name order."""
 
-    A consumer clicks a decal far more often than the hull, so walking up to the
-    ship is what makes the panels usable at all -- without it every tool would
-    read as empty for most selections.
+    return [obj for obj in bpy.data.objects
+            if getattr(obj, "carbon_sof", None) is not None and obj.carbon_sof.dna]
+
+
+def _ship_of(context):
+    """The ship the SELECTION belongs to, or None.
+
+    A consumer clicks a decal far more often than the hull, so walking up to
+    the ship is what makes the panels usable at all -- without it every tool
+    would read as empty for most selections.
+
+    What it must NOT do is fall back to whichever ship happens to come first in
+    the file. It used to, and with two ships open every edit landed on the same
+    one however carefully the other was selected -- an attribute editor that
+    changes a ship the person is not touching.
+
+    The one honest exception is a file holding exactly one ship: then there is
+    nothing to be ambiguous about, and requiring a selection would only be
+    pedantry.
     """
 
-    obj = context.object
+    obj = context.object if context else None
     while obj is not None:
         if getattr(obj, "carbon_sof", None) is not None and obj.carbon_sof.dna:
             return obj
         obj = obj.parent
-    for candidate in bpy.data.objects:
-        settings = getattr(candidate, "carbon_sof", None)
-        if settings is not None and settings.dna:
-            return candidate
-    return None
+
+    ships = ships_in_file()
+    return ships[0] if len(ships) == 1 else None
+
+
+def _no_ship(layout, context):
+    """Says which of the two reasons there is no ship to show."""
+
+    if len(ships_in_file()) > 1:
+        # Different problem, different remedy: there IS a ship, and the panel
+        # is refusing to guess which.
+        layout.label(text="Select part of a ship", icon="RESTRICT_SELECT_ON")
+    else:
+        layout.label(text="No ship in the scene", icon="INFO")
 
 
 class CARBON_PT_sidebar_dna(Panel):
@@ -92,7 +117,7 @@ class CARBON_PT_sidebar_sof(Panel):
         layout.use_property_split = True
         ship = _ship_of(context)
         if ship is None:
-            layout.label(text="No ship in the scene", icon="INFO")
+            _no_ship(layout, context)
             return
 
         settings = ship.carbon_sof
@@ -168,7 +193,7 @@ class CARBON_PT_sidebar_attributes(Panel):
         layout.use_property_split = True
         ship = _ship_of(context)
         if ship is None:
-            layout.label(text="No ship in the scene", icon="INFO")
+            _no_ship(layout, context)
             return
         for name, label in self.VALUES:
             if name in ship.keys():
