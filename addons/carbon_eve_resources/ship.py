@@ -528,19 +528,32 @@ def drive_ship_sockets(objects, source):
     print(f"  drove {driven} per-ship socket(s) across {materials} material group(s)")
 
 
-def collection_name(ship, kind, group):
-    """A collection name that is unique BY CONSTRUCTION.
+#: How wide the KIND field is before a set's own name.
+#:
+#: Padded so the names line up as columns in the outliner, which is the whole
+#: reason for the underscores:
+#:
+#:     decalSets______primary
+#:     planeSets______primary
+#:     bannerSets_____primary
+#:
+#: Fifteen is the longest kind plus a gap. A longer kind simply takes its own
+#: width rather than being cut, because a truncated name is worse than a ragged
+#: column.
+KIND_FIELD = 15
 
-    Blender's IDs of one type share a single namespace, so two collections
-    cannot both be called "primary" -- it appends .001, and with two ships in a
-    scene it reaches .003. The suffix is not just untidy: it means the name
-    stops being the thing it names, so an exporter reading names sees
-    "primary.002" and a person cannot tell which ship it belongs to.
 
-    Scoping by ship and kind removes the collision rather than surviving it.
+def collection_name(kind, group):
+    """A set's collection name: the kind, padded, then the set's own name.
+
+    Blender's IDs of one type share ONE namespace, so a second ship's
+    `decalSets______primary` becomes `.001`. That is accepted rather than
+    engineered around: the collection sits inside its ship, and the
+    `visibilityGroup` property carries the meaning, so the suffix costs nothing
+    a reader needs.
     """
 
-    return ".".join(part for part in (ship, kind, group) if part)
+    return f"{kind:_<{KIND_FIELD}}{group}" if group else kind
 
 
 
@@ -582,13 +595,13 @@ def decal_collection(group, visibility_group="", parent=None):
     """
 
     root_parent = parent or bpy.context.scene.collection
-    root_name = collection_name(root_parent.name, "decalSets", "")
-    root = next((c for c in root_parent.children if c.name == root_name), None)
+    root_name = "decalSets"
+    root = next((c for c in root_parent.children if c.name.split(".")[0] == root_name), None)
     if root is None:
         root = bpy.data.collections.new(root_name)
         root_parent.children.link(root)
-    child_name = collection_name(root_parent.name, "decalSets", group)
-    child = next((c for c in root.children if c.name == child_name), None)
+    child_name = collection_name("decalSets", group)
+    child = next((c for c in root.children if c.name.split(".")[0] == child_name), None)
     if child is None:
         child = bpy.data.collections.new(child_name)
         root.children.link(child)
@@ -1227,15 +1240,15 @@ def attachment_collection(parent, kind, group="", visibility_hash=None):
     compares.
     """
 
-    root_name = collection_name(parent.name, kind, "")
-    root = next((c for c in parent.children if c.name == root_name), None)
+    root_name = kind
+    root = next((c for c in parent.children if c.name.split(".")[0] == root_name), None)
     if root is None:
         root = bpy.data.collections.new(root_name)
         parent.children.link(root)
     if not group:
         return root
-    child_name = collection_name(parent.name, kind, group)
-    child = next((c for c in root.children if c.name == child_name), None)
+    child_name = collection_name(kind, group)
+    child = next((c for c in root.children if c.name.split(".")[0] == child_name), None)
     if child is None:
         child = bpy.data.collections.new(child_name)
         root.children.link(child)
