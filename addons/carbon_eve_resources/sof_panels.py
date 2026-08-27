@@ -570,6 +570,82 @@ class CARBON_PT_sof_components(Panel):
         layout.prop(settings, "pattern")
 
 
+def draw_slot(layout, settings, entry, *, compact=False):
+    """One material slot: what it is, where it came from, what it holds.
+
+    Shared by both panels on purpose. The same slot NUMBER appears once per
+    area type, so a label of "Material 1" alone renders the groups as
+    indistinguishable duplicates -- which is exactly what they are not.
+    """
+
+    box = layout.box()
+    header = box.row(align=True)
+    # A slot the faction supplied looks identical to one the DNA asked for
+    # once the colours are resolved, so the panel has to say which -- only one
+    # of the two is the ship's own and survives a rebuild.
+    from_dna = entry.source == sof_resolution.SOURCE_DNA
+    label = ("Pattern " if entry.is_pattern else "Material ") + str(entry.index)
+    header.label(text=label, icon="DECORATE_KEYFRAME" if from_dna else "DECORATE")
+    name = header.row(align=True)
+    name.alert = entry.material == CUSTOM_MATERIAL
+    name.prop(entry, "material", text="")
+    if entry.material == CUSTOM_MATERIAL:
+        header.operator("carbon.sof_export_material", text="", icon="EXPORT"
+                        ).slot = f"{entry.index}:{int(entry.is_pattern)}:{entry.area_type}"
+    if not entry.is_pattern and sof_resolution.is_blocked(entry.blocked, entry.index):
+        # The one case where a slot ignores a skin: the hull author blocked it
+        # on this area.
+        box.label(text="this area blocks skin overrides here", icon="LOCKED")
+    elif not entry.material:
+        box.label(text="supplied by the faction " + (settings.faction or "?"))
+    if compact:
+        values = box.row(align=True)
+        values.prop(entry, "diffuse", text="")
+        values.prop(entry, "fresnel", text="")
+        values.prop(entry, "gloss", text="")
+    else:
+        box.use_property_split = True
+        box.prop(entry, "diffuse")
+        box.prop(entry, "fresnel")
+        box.prop(entry, "gloss")
+
+
+def draw_material_groups(layout, settings, *, compact=False):
+    """Every hull material slot, grouped by the AREA TYPE that owns it.
+
+    The grouping is the point. Four slots per area type is what a faction
+    actually stores, so a hull and its sails legitimately both have a
+    "Material 3" holding different materials. Listing them flat makes that read
+    as a duplicate rather than as two different things with the same number.
+    """
+
+    for area_type in settings.area_types():
+        name = (sof_resolution.area_type_name(area_type) if area_type >= 0
+                else "whole ship")
+        column = layout.column(align=True)
+        column.label(text=name.upper(), icon="MATERIAL")
+        for entry in settings.materials:
+            if entry.is_pattern or entry.area_type != area_type:
+                continue
+            draw_slot(column, settings, entry, compact=compact)
+
+
+def draw_pattern_group(layout, settings, *, compact=False):
+    """The two pattern layers, which are ship-wide on purpose.
+
+    The pattern branch of the resolution chain never consults the area type, so
+    these are the same on every area whose shader asks for them.
+    """
+
+    patterns = [entry for entry in settings.materials if entry.is_pattern]
+    if not patterns:
+        return
+    column = layout.column(align=True)
+    column.label(text="PATTERN (whole ship)", icon="TEXTURE")
+    for entry in patterns:
+        draw_slot(column, settings, entry, compact=compact)
+
+
 class CARBON_PT_sof_materials(Panel):
     """The faction's materials, which every area of the hull reads."""
 
@@ -585,15 +661,7 @@ class CARBON_PT_sof_materials(Panel):
         if not settings.materials:
             layout.operator(CARBON_SOF_OT_ensure_slots.bl_idname, icon="ADD")
             return
-        for entry in settings.materials:
-            if entry.is_pattern:
-                continue
-            box = layout.box()
-            box.label(text="Material %d" % entry.index)
-            box.use_property_split = True
-            box.prop(entry, "diffuse")
-            box.prop(entry, "fresnel")
-            box.prop(entry, "gloss")
+        draw_material_groups(layout, settings)
 
 
 class CARBON_PT_sof_patterns(Panel):
@@ -608,15 +676,7 @@ class CARBON_PT_sof_patterns(Panel):
     def draw(self, context):
         settings = context.object.carbon_sof
         layout = self.layout
-        for entry in settings.materials:
-            if not entry.is_pattern:
-                continue
-            box = layout.box()
-            box.label(text="Pattern Material %d" % entry.index)
-            box.use_property_split = True
-            box.prop(entry, "diffuse")
-            box.prop(entry, "fresnel")
-            box.prop(entry, "gloss")
+        draw_pattern_group(layout, settings)
 
 
 CLASSES = (

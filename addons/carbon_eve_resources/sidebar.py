@@ -130,59 +130,12 @@ class CARBON_PT_sidebar_materials(Panel):
         # Leading with the colours would suggest they are the thing being
         # chosen, which is a material editor's model rather than the SOF's.
         #
-        # Grouped by AREA TYPE, because that is how a faction stores them:
-        # four material names keyed `areaType:slot`. The hull and the sails are
-        # separate groups even when they resolve to the same colours today.
+        # One presentation, shared with the Properties panels: the same slot
+        # NUMBER exists once per area type, so anything that draws them without
+        # the grouping renders two different materials as a duplicate pair.
         settings = ship.carbon_sof
-        for area_type in settings.area_types():
-            column = layout.column(align=True)
-            name = (sof_resolution.area_type_name(area_type) if area_type >= 0
-                    else "whole ship")
-            header = column.row()
-            header.label(text=name.upper(), icon="MATERIAL")
-            for entry in settings.materials:
-                if entry.is_pattern or entry.area_type != area_type:
-                    continue
-                _draw_slot(column, ship, entry)
-
-        patterns = [entry for entry in settings.materials if entry.is_pattern]
-        if patterns:
-            column = layout.column(align=True)
-            # Ship-wide on purpose: the pattern branch of the resolution chain
-            # never consults the area type, so these are the same on every area
-            # whose shader asks for them.
-            column.label(text="PATTERN (whole ship)", icon="TEXTURE")
-            for entry in patterns:
-                _draw_slot(column, ship, entry)
-
-
-def _draw_slot(layout, ship, entry):
-    """One material slot: what it is, where it came from, what it holds."""
-
-    box = layout.box()
-    header = box.row(align=True)
-    # A slot the faction supplied looks identical to one the DNA asked for
-    # once the colours are resolved, so the panel has to say which -- only
-    # one of the two is the ship's own and survives a rebuild.
-    from_dna = entry.source == sof_resolution.SOURCE_DNA
-    label = ("Pattern " if entry.is_pattern else "Material ") + str(entry.index)
-    header.label(text=label, icon="DECORATE_KEYFRAME" if from_dna else "DECORATE")
-    name = header.row(align=True)
-    name.alert = entry.material == sof_panels.CUSTOM_MATERIAL
-    name.prop(entry, "material", text="")
-    if entry.material == sof_panels.CUSTOM_MATERIAL:
-        header.operator("carbon.sof_export_material", text="", icon="EXPORT"
-                        ).slot = f"{entry.index}:{int(entry.is_pattern)}:{entry.area_type}"
-    if not entry.is_pattern and sof_resolution.is_blocked(entry.blocked, entry.index):
-        # Worth saying, because it is the one case where a slot ignores the
-        # skin: the hull author blocked it on this area.
-        box.label(text="this area blocks skin overrides here", icon="LOCKED")
-    elif not entry.material:
-        box.label(text="supplied by the faction " + (ship.carbon_sof.faction or "?"))
-    values = box.row(align=True)
-    values.prop(entry, "diffuse", text="")
-    values.prop(entry, "fresnel", text="")
-    values.prop(entry, "gloss", text="")
+        sof_panels.draw_material_groups(layout, settings, compact=True)
+        sof_panels.draw_pattern_group(layout, settings, compact=True)
 
 
 class CARBON_PT_sidebar_attributes(Panel):
