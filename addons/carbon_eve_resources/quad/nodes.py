@@ -1585,7 +1585,7 @@ def _blend_lanes(tree, weights, sockets, x, y):
     return total
 
 
-def _time_value(tree, location=(-900, -400)):
+def time_value(tree, location=(-900, -400)):
     """A Value node driven by the scene clock, in seconds.
 
     Shader trees have no clock, so the shimmer would otherwise be frozen. A
@@ -1651,7 +1651,7 @@ def build_heat_uv_group() -> bpy.types.ShaderNodeTree:
     scroll.location = (100, -400)
     scroll.label = "speed x time"
     links.new(speed, scroll.inputs[0])
-    links.new(_time_value(tree), scroll.inputs[1])
+    links.new(time_value(tree), scroll.inputs[1])
 
     for index, sign in ((1, 1.0), (2, -1.0)):
         signed = nodes.new("ShaderNodeMath")

@@ -533,15 +533,15 @@ def drive_ship_sockets(objects, source):
 #: Every name is the thing it means on the left, padded, then whatever makes it
 #: unique on the right, so the unique column lines up and can be read down:
 #:
-#:     decalSets______mde3_t3
-#:     primary________mde3_t3
-#:     Killmarks______mde3_t3
+#:     decalSets_____________________mde3_t3
+#:     primary_______________________mde3_t3.decalSets
+#:     Killmarks_____________________mde3_t3
 #:
 #: The meaning is the array name for a set collection, the visibility group for
 #: a group, and the item's own name for an object. A name longer than the field
 #: takes its own width rather than being cut, because a truncated name is worse
 #: than a ragged column.
-NAME_FIELD = 15
+NAME_FIELD = 30
 
 
 def unique_name(meaning, unique):
@@ -1355,7 +1355,7 @@ BANNER_REFERENCES = (
 
 
 def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
-                      cache_directory=""):
+                      cache_directory="", resources=None):
     """Banners and the lights that shine on them.
 
     A banner is the quad a player's alliance, corporation or CEO logo is drawn
@@ -1395,7 +1395,8 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
             obj["carbon_banner_angles"] = (float(item.get("angleX") or 0.0),
                                            float(item.get("angleY") or 0.0))
             obj.data.materials.append(
-                banner_material(slot, set_index, index, owners, cache_directory))
+                banner_material(slot, set_index, index, owners, cache_directory,
+                                banner_set.get("effect"), resources))
             attach_to_bone(obj, armature, item.get("bone"))
             stamp_identity(obj, slot, "banner",
                            str(source.get("visibilityGroupName") or "primary"))
@@ -1442,66 +1443,199 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
     return built + lights
 
 
-def banner_material(slot, set_index, index, owners=None, cache_directory=""):
-    """A banner's surface: its placeholder if it has one, black if it does not.
+def banner_material(slot, set_index, index, owners=None, cache_directory="",
+                    effect=None, resources=None):
+    """A banner: a logo behind two SCROLLING layers and a mask, ADDED to the scene.
 
-    BLACK IS TRANSPARENT. Alpha comes from the image's luminance rather than
-    from an alpha channel, so a placeholder is a bright outline floating where
-    the banner is instead of a black rectangle stuck to the hull -- and a slot
-    with no placeholder disappears entirely, which is the honest look for a
-    banner nobody has filled.
+    Measured from `banner.fx` rather than guessed:
+
+        uv1    = uv * Layer1Transform.xy + Layer1Transform.zw + LayerScroll.xy * t
+        uv2    = uv * Layer2Transform.xy + Layer2Transform.zw + LayerScroll.zw * t
+        rim    = (1 - |dot(view, normal)|)^2 + 1
+        colour = Mask * Layer2 * Layer1 * (Image * rim) * Color
+        alpha  = Layer2.a * Layer1.a * Image.a
+        out    = colour * alpha, with the target's own alpha written as ZERO
+
+    That last line matters: writing alpha zero is ADDITIVE blending, not the
+    alpha blend this had before. A banner adds light to whatever is behind it
+    rather than covering it.
+
+    `LayerScroll` is (10, 0, 1, -0.3) here: the first layer races sideways while
+    the second drifts slowly the other way, which is what makes a hologram look
+    alive. Both are driven by frame time.
+
+    The maps are the hull's own -- hologram noise, pulse and interlace.
     """
 
-    material = bpy.data.materials.new(f"banner {slot or set_index}.{index}")
+    material = bpy.data.materials.new(unique_name(f"banner_{slot or set_index}", ""))
     material.use_nodes = True
     tree = material.node_tree
     tree.nodes.clear()
     output = tree.nodes.new("ShaderNodeOutputMaterial")
-    emission = tree.nodes.new("ShaderNodeEmission")
-    emission.location = (-200, -60)
-    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
-    transparent.location = (-200, 120)
-    mix = tree.nodes.new("ShaderNodeMixShader")
-    mix.location = (0, 0)
-    tree.links.new(transparent.outputs[0], mix.inputs[1])
-    tree.links.new(emission.outputs[0], mix.inputs[2])
-    tree.links.new(mix.outputs[0], output.inputs["Surface"])
+    output.location = (760, 0)
 
-    # A real logo when we know whose ship this is; the placeholder otherwise.
-    image = None
+    constants = {str(c.get("name")): list(c.get("value") or [])
+                 for c in ((effect or {}).get("constParameters") or [])}
+    layer1_transform = constants.get("Layer1Transform", [1.0, 1.0, 0.0, 0.0])
+    layer2_transform = constants.get("Layer2Transform", [1.0, 1.0, 0.0, 0.0])
+    scroll = constants.get("LayerScroll", [0.0, 0.0, 0.0, 0.0])
+    tint = constants.get("Color", [1.0, 1.0, 1.0, 1.0])
+
+    # The SAME clock the heat shimmer uses. Writing a second one here got the
+    # expression right and the VARIABLE wrong -- `frame / fps` needs `fps`
+    # declared as a driver variable, and without it the expression fails
+    # silently and every layer sits still at time zero.
+    time_socket = nodes.time_value(tree, (-1500, 300))
+
+    def scrolled(transform, rate, row):
+        """One layer's UV: scaled, offset, and carried along by time."""
+
+        coordinate = tree.nodes.new("ShaderNodeUVMap")
+        coordinate.location = (-1500, row)
+        mapping = tree.nodes.new("ShaderNodeMapping")
+        mapping.location = (-1300, row)
+        mapping.inputs["Scale"].default_value = (float(transform[0]), float(transform[1]), 1.0)
+        mapping.inputs["Location"].default_value = (float(transform[2]), float(transform[3]), 0.0)
+        tree.links.new(coordinate.outputs["UV"], mapping.inputs["Vector"])
+
+        offset = tree.nodes.new("ShaderNodeVectorMath")
+        offset.operation = "SCALE"
+        offset.location = (-1120, row - 140)
+        offset.inputs[0].default_value = (float(rate[0]), float(rate[1]), 0.0)
+        tree.links.new(time_socket, offset.inputs["Scale"])
+
+        moved = tree.nodes.new("ShaderNodeVectorMath")
+        moved.operation = "ADD"
+        moved.location = (-940, row)
+        tree.links.new(mapping.outputs["Vector"], moved.inputs[0])
+        tree.links.new(offset.outputs[0], moved.inputs[1])
+        return moved.outputs[0]
+
+    def sample(name, vector, row):
+        node = tree.nodes.new("ShaderNodeTexImage")
+        node.location = (-720, row)
+        node.label = name
+        node.extension = "REPEAT"
+        image = _banner_image(name, effect, resources)
+        if image is not None:
+            node.image = image
+        if vector is not None:
+            tree.links.new(vector, node.inputs["Vector"])
+        return node
+
+    layer1 = sample("Layer1Map", scrolled(layer1_transform, scroll[:2], 520), 520)
+    layer2 = sample("Layer2Map", scrolled(layer2_transform, scroll[2:4], 200), 200)
+    mask = sample("MaskMap", None, -140, )
+
+    logo = None
     if owners and cache_directory:
         try:
-            image = logos.banner_logo(slot, owners, cache_directory)
+            logo = logos.banner_logo(slot, owners, cache_directory)
         except logos.LogoError as error:
             print(f"  ! {error}")
-    if image is not None:
-        material["carbon_logo"] = image.name
-    image = image or placeholders.banner_placeholder(slot)
-    if image is None:
-        # No placeholder: black, and therefore invisible.
-        emission.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
-        mix.inputs["Fac"].default_value = 0.0
-    else:
-        texture = tree.nodes.new("ShaderNodeTexImage")
-        texture.image = image
-        texture.location = (-560, 0)
-        texture.label = "placeholder"
-        texture.extension = "CLIP"
-        luminance = tree.nodes.new("ShaderNodeRGBToBW")
-        luminance.location = (-360, -160)
-        tree.links.new(texture.outputs["Color"], emission.inputs["Color"])
-        # BLACK IS TRANSPARENT, for a real logo as much as a placeholder: the
-        # image server draws logos on black, so luminance is the alpha whether
-        # or not the PNG carries one.
-        tree.links.new(texture.outputs["Color"], luminance.inputs["Color"])
-        tree.links.new(luminance.outputs["Val"], mix.inputs["Fac"])
-        emission.inputs["Strength"].default_value = 2.0
+    if logo is not None:
+        material["carbon_logo"] = logo.name
+    logo = logo or placeholders.banner_placeholder(slot)
+
+    image_node = tree.nodes.new("ShaderNodeTexImage")
+    image_node.location = (-720, -440)
+    image_node.label = "ImageMap"
+    image_node.extension = "CLIP"
+    if logo is not None:
+        image_node.image = logo
+
+    # rim = (1 - |dot(view, normal)|)^2 + 1, brighter edge on as the shader has it.
+    weight = tree.nodes.new("ShaderNodeLayerWeight")
+    weight.location = (-720, 700)
+    squared = tree.nodes.new("ShaderNodeMath")
+    squared.operation = "MULTIPLY"
+    squared.location = (-540, 700)
+    tree.links.new(weight.outputs["Facing"], squared.inputs[0])
+    tree.links.new(weight.outputs["Facing"], squared.inputs[1])
+    rim = tree.nodes.new("ShaderNodeMath")
+    rim.operation = "ADD"
+    rim.location = (-380, 700)
+    rim.label = "rim"
+    rim.inputs[1].default_value = 1.0
+    tree.links.new(squared.outputs[0], rim.inputs[0])
+
+    lit = tree.nodes.new("ShaderNodeVectorMath")
+    lit.operation = "SCALE"
+    lit.location = (-460, -440)
+    lit.label = "logo x rim"
+    tree.links.new(image_node.outputs["Color"], lit.inputs[0])
+    tree.links.new(rim.outputs[0], lit.inputs["Scale"])
+
+    def multiply(a, b, row, label):
+        node = tree.nodes.new("ShaderNodeVectorMath")
+        node.operation = "MULTIPLY"
+        node.location = (-260, row)
+        node.label = label
+        tree.links.new(a, node.inputs[0])
+        tree.links.new(b, node.inputs[1])
+        return node.outputs[0]
+
+    colour = multiply(layer1.outputs["Color"], lit.outputs[0], 340, "layer1 x logo")
+    colour = multiply(layer2.outputs["Color"], colour, 160, "x layer2")
+    colour = multiply(mask.outputs["Color"], colour, -20, "x mask")
+
+    tinted = tree.nodes.new("ShaderNodeVectorMath")
+    tinted.operation = "MULTIPLY"
+    tinted.location = (-60, -20)
+    tinted.label = "x Color"
+    tinted.inputs[1].default_value = tuple(float(v) for v in tint[:3])
+    tree.links.new(colour, tinted.inputs[0])
+
+    # alpha = Layer1.a * Layer2.a * Image.a, and the colour is premultiplied by
+    # it exactly as the shader does before writing.
+    alpha = tree.nodes.new("ShaderNodeMath")
+    alpha.operation = "MULTIPLY"
+    alpha.location = (-60, -280)
+    tree.links.new(layer1.outputs["Alpha"], alpha.inputs[0])
+    tree.links.new(layer2.outputs["Alpha"], alpha.inputs[1])
+    with_image = tree.nodes.new("ShaderNodeMath")
+    with_image.operation = "MULTIPLY"
+    with_image.location = (100, -280)
+    with_image.label = "alpha"
+    tree.links.new(alpha.outputs[0], with_image.inputs[0])
+    tree.links.new(image_node.outputs["Alpha"], with_image.inputs[1])
+
+    premultiplied = tree.nodes.new("ShaderNodeVectorMath")
+    premultiplied.operation = "SCALE"
+    premultiplied.location = (260, -20)
+    premultiplied.label = "colour x alpha"
+    tree.links.new(tinted.outputs[0], premultiplied.inputs[0])
+    tree.links.new(with_image.outputs[0], premultiplied.inputs["Scale"])
+
+    emission = tree.nodes.new("ShaderNodeEmission")
+    emission.location = (440, -20)
+    tree.links.new(premultiplied.outputs[0], emission.inputs["Color"])
+
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (440, 160)
+    add = tree.nodes.new("ShaderNodeAddShader")
+    add.location = (600, 60)
+    tree.links.new(transparent.outputs[0], add.inputs[0])
+    tree.links.new(emission.outputs[0], add.inputs[1])
+    tree.links.new(add.outputs[0], output.inputs["Surface"])
 
     if hasattr(material, "surface_render_method"):
         material.surface_render_method = "BLENDED"
     material.use_backface_culling = False
     return material
 
+
+def _banner_image(name, effect, resources):
+    """One of the banner's own maps, out of the bundle."""
+
+    path = next((r.get("resourcePath") for r in ((effect or {}).get("resources") or [])
+                 if r.get("name") == name), None)
+    local = (resources or {}).get(str(path or ""))
+    if not local or not os.path.exists(str(local)):
+        return None
+    image = bpy.data.images.load(str(local), check_existing=True)
+    image.colorspace_settings.name = "Non-Color"
+    return image
 
 def item_matrix(item, hull):
     """An attachment's world transform, from a position/rotation/scaling triple.
@@ -1565,7 +1699,7 @@ def build_ship(document_path, resources_directory, *, clear=True,
                                      (hull_record or {}).get("planeSets"))
     banner_objects = build_banner_sets(document, primary, collection,
                                        (hull_record or {}).get("bannerSets"),
-                                       owners, cache_directory)
+                                       owners, cache_directory, resources)
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material
