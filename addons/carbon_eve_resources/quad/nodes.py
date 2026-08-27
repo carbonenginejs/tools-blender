@@ -701,7 +701,7 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         # influence, Shimmer speed, Shimmer size and Shimmer strength, and
         # exposing only .x silently drops three of them. A renamed constant is
         # excluded: renaming is the statement that one lane is the meaningful
-        # one, which is why GeneralData stays a single PaintMaskInfluence.
+        # one, which is why GeneralData stays a single PaintMapInfluence.
         lanes = [] if exposed != name else annotation.components()
         if len(lanes) > 1:
             for index, lane in enumerate(lanes):

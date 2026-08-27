@@ -253,19 +253,24 @@ class Family:
 
 PREFIXES = ("unpackedskinned_", "unpacked_", "skinned_", "static_")
 
-#: Constants exposed to a consumer under a clearer name than Carbon's own.
+#: Constants exposed under the name of the LANE that is actually read.
 #:
-#: `GeneralData` is a vec4 whose only read lane is `.x`, and Carbon's annotation
-#: names that lane -- as `PaintMapInfluence`. The spelling here is
-#: `PaintMaskInfluence` instead, to match the name the add-on already drives in
-#: `sof_shading.GROUP_INPUT_DEFAULTS`; one name that works with the existing
-#: wiring beats two that nearly agree.
+#: `GeneralData` is a vec4 whose only read lane is `.x`, and a socket called
+#: GeneralData says nothing about what it does. Carbon's own annotation names
+#: that lane `PaintMapInfluence`, so that is the spelling used here -- CARBON'S
+#: name, not a clearer one invented for the occasion.
 #:
-#: The Carbon name stays the key everywhere else, so a SOF document's constants
-#: still resolve. Anything applying authored values must translate through
-#: `socket_name`, or those values stop applying without saying so.
+#: The rule this follows, and the reason it is worth a note: the values a
+#: consumer edits are Trinity's constant buffer data, so they carry Trinity's
+#: names. An invented name is a second vocabulary to keep in step with the
+#: first, and the drift is silent -- the earlier spelling here was
+#: `PaintMaskInfluence`, one letter from Carbon's and wrong.
+#:
+#: The Carbon CONSTANT name stays the key everywhere else, so a SOF document's
+#: constants still resolve. Anything applying authored values must translate
+#: through `socket_name`, or those values stop applying without saying so.
 SOCKET_RENAMES = {
-    "GeneralData": "PaintMaskInfluence",
+    "GeneralData": "PaintMapInfluence",
 }
 
 

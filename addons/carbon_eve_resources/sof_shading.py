@@ -60,7 +60,7 @@ SHADER_NODE_GROUPS: Mapping[str, str] = {
 # Carbon vector parameters are (x, y, z, w); a float input takes x.
 GROUP_SCALAR_INPUTS = frozenset({
     "Mtl1Gloss", "Mtl2Gloss", "Mtl3Gloss", "Mtl4Gloss",
-    "PaintMaskInfluence", "dirtLevel",
+    "PaintMapInfluence", "dirtLevel",
 })
 
 # Authored groups do not always spell a Carbon parameter the way SOF does, so
@@ -79,7 +79,7 @@ GROUP_INPUT_ALIASES: Mapping[str, tuple[str, ...]] = {
 # the authored library happens to default to. The paint mask is the faction's
 # own colour layer, so it is on unless a build says otherwise.
 GROUP_INPUT_DEFAULTS: Mapping[str, float] = {
-    "PaintMaskInfluence": 1.0,
+    "PaintMapInfluence": 1.0,
 }
 
 

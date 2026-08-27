@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ADDONS = ROOT / "addons"
 PACKAGES = (
     ("io_scene_carbon_gr2", "0.1.3"),
-    ("carbon_eve_resources", "0.2.3"),
+    ("carbon_eve_resources", "0.3.0"),
 )
 PACKAGE_DOCUMENTS = (
     "LICENSE",

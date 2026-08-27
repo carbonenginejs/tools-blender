@@ -490,7 +490,7 @@ class SocketNaming(unittest.TestCase):
         # Only .x is read, and Carbon's annotation names that lane. The spelling
         # matches sof_shading.GROUP_INPUT_DEFAULTS so existing wiring drives it.
         from carbon_eve_resources.quad import socket_name
-        self.assertEqual(socket_name("GeneralData"), "PaintMaskInfluence")
+        self.assertEqual(socket_name("GeneralData"), "PaintMapInfluence")
 
     def test_carbon_names_the_same_lane(self):
         base = load_family().member("quadv5.fx")
