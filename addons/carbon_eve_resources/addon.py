@@ -777,7 +777,9 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
         cache_root = _cache_path(prefs)
 
         def fetch():
-            return sof_fetch.fetch_ship(dna, client, cache_root, progress=_set_progress)
+            return sof_fetch.fetch_ship(dna, client, cache_root,
+                                        progress=_set_progress,
+                                        cancelled=_job_cancelled)
 
         _launch_job(context, "sof_fetch",
                     lambda: _run_with_cache_stats(fetch, cache_root),
@@ -838,6 +840,30 @@ class EVE_RESOURCE_OT_clear_cache(Operator):
             lambda: clear_payload_cache(cache_root),
             "Clearing downloaded payloads and previews",
         )
+        return {"FINISHED"}
+
+
+class EVE_RESOURCE_OT_cancel(Operator):
+    """Stops the running fetch.
+
+    Cooperative: a Python thread cannot be killed, so the flag is checked
+    between files and the fetch stops at the next one. Whatever was already
+    downloaded stays in the cache and counts next time.
+    """
+
+    bl_idname = "carbon.eve_resource_cancel"
+    bl_label = "Cancel"
+    bl_description = "Stop the running fetch; downloaded files are kept"
+
+    @classmethod
+    def poll(cls, context):
+        state = getattr(context.window_manager, "carbon_eve_resources", None)
+        return state is not None and state.busy and _job is not None
+
+    def execute(self, context):
+        if _job is not None:
+            _job.cancelled = True
+            context.window_manager.carbon_eve_resources.status = "Cancelling..."
         return {"FINISHED"}
 
 
@@ -1054,10 +1080,13 @@ class _BackgroundJob:
     result: Any = None
     error: Optional[BaseException] = None
     thread: Optional[threading.Thread] = None
-    #: The worker's own line, e.g. "Downloading 10/23: ab1_t1_a.dds". Written
+    #: The worker's own line, e.g. "Resolving 10/23: ab1_t1_a.dds". Written
     #: from the worker thread and read by the poll timer, which is why it is a
     #: plain string and nothing cleverer.
     progress: str = ""
+    #: Set by the cancel operator and read by the worker between files. A
+    #: thread cannot be killed, so the work has to agree to stop.
+    cancelled: bool = False
 
 
 def _prefs(context):
@@ -1315,6 +1344,12 @@ def _assemble_sof_document(
     if problems:
         summary += f"; {len(problems)} issue(s) logged to the console"
     return summary
+
+
+def _job_cancelled() -> bool:
+    """Whether the running job has been asked to stop."""
+
+    return _job is not None and _job.cancelled
 
 
 def _launch_job(
@@ -1687,6 +1722,7 @@ classes = (
     EVE_RESOURCE_OT_refresh_cache_stats,
     EVE_RESOURCE_OT_clear_cache,
     EVE_RESOURCE_OT_prune_cache,
+    EVE_RESOURCE_OT_cancel,
 )
 
 

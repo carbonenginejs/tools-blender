@@ -24,6 +24,50 @@ from . import nodes
 
 
 
+def load_texture(path, *, check_existing=True):
+    """A texture image, decoding BC7 when Blender cannot read it.
+
+    Blender loads DXT1, DXT5, BC4 and BC5 natively and answers BC7 with a 0x0
+    image and no data -- and BC7 is what EVE's albedo maps are.
+    """
+
+    from pathlib import Path
+
+    from ..dds import load_image, is_bc7
+
+    text = str(path)
+    # Sniffed, not judged by extension. Fetched files are cached under their
+    # content HASH with no extension at all, so an extension test sent every
+    # one of them to Blender, which answered BC7 with an empty image.
+    try:
+        with open(text, "rb") as handle:
+            head = handle.read(148)
+    except OSError:
+        head = b""
+
+    if head[:4] == b"DDS ":
+        if is_bc7(head):
+            try:
+                decoded = load_image(text)
+            except Exception as exc:
+                print(f"[CarbonEngineJS SOF] {text}: {exc}")
+                decoded = None
+            if decoded is not None:
+                return decoded
+        elif not text.lower().endswith(".dds"):
+            # Blender picks its decoder off the extension, so a DDS stored
+            # under a hash needs a name it can recognise.
+            named = Path(text).with_name(Path(text).name + ".dds")
+            if not named.is_file():
+                try:
+                    named.write_bytes(Path(text).read_bytes())
+                except OSError:
+                    named = None
+            if named is not None:
+                return bpy.data.images.load(str(named), check_existing=check_existing)
+    return bpy.data.images.load(text, check_existing=check_existing)
+
+
 def local_file(resources, path):
     """The on-disk file for a `res:/` path, as a STRING, or None.
 
@@ -215,7 +259,7 @@ def build_area_material(area, family, resources, index):
         local = local_file(resources, path)
         if socket is None or local is None:
             continue
-        image = bpy.data.images.load(local, check_existing=True)
+        image = load_texture(local)
         image.colorspace_settings.name = (
             "sRGB" if member.annotation(name).srgb else "Non-Color"
         )

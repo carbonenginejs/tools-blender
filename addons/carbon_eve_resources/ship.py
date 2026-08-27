@@ -26,6 +26,7 @@ import mathutils
 from . import logos, placeholders, sof_enums
 from .quad import decals as decal_module
 from .quad import interface as quad_interface
+from .quad import materials as quad_materials
 from .quad import nodes
 from .quad.materials import (build_area_material, ensure_projection,
                              fill_unbound_textures)
@@ -876,7 +877,7 @@ def build_decal_material(decal, resources, obj=None):
         local = resources.get(path)
         if not local or not os.path.exists(local):
             continue
-        image = bpy.data.images.load(local, check_existing=True)
+        image = quad_materials.load_texture(local)
         image.colorspace_settings.name = (
             "sRGB" if decal_module.DECAL_TEXTURES.get(name) else "Non-Color"
         )

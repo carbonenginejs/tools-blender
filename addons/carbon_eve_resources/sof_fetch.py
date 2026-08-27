@@ -115,9 +115,52 @@ def download(source_url: str, destination: Path, *, opener=urlopen,
     return destination
 
 
+def shared_index(shared_cache) -> dict:
+    """`res:/path -> hash` from an EVE install's own index, if it has one.
+
+    An installed client keeps `resfileindex.txt`, whose lines are
+    `logical path,storage path,md5,size,...`. With it a file needs no `resolve`
+    call at all, which is the slow part of a fetch.
+
+    Empty when there is no install or no index: the caller then resolves as
+    usual, which is slower but always works.
+    """
+
+    root = Path(shared_cache) if shared_cache else None
+    if root is None or not root.is_dir():
+        return {}
+    for name in ("resfileindex.txt", "tq/resfileindex.txt", "index_tq.txt"):
+        found = root / name
+        if not found.is_file():
+            continue
+        index = {}
+        try:
+            for line in found.read_text(encoding="utf-8", errors="replace").splitlines():
+                parts = line.split(",")
+                if len(parts) >= 2 and parts[0].lower().startswith("res:/"):
+                    index[parts[0].strip().lower()] = parts[1].strip()
+        except OSError:
+            return {}
+        return index
+    return {}
+
+
+def shared_file(index, logical_path: str, shared_cache):
+    """The file an EVE install already has for one resource, or None."""
+
+    if not index or not shared_cache:
+        return None
+    storage = index.get(str(logical_path).strip().lower())
+    if not storage:
+        return None
+    found = Path(shared_cache) / "ResFiles" / storage.replace("\\", "/")
+    return found if found.is_file() else None
+
+
 def fetch_ship(dna: str, client, cache_root, *, build: str = "",
                target: str = "eve", progress: Optional[Callable] = None,
-               opener=urlopen) -> tuple:
+               opener=urlopen, cancelled: Optional[Callable] = None,
+               shared_cache=None) -> tuple:
     """`(document, {res path: local file})` for one DNA.
 
     A resource that cannot be fetched is left OUT of the map rather than
@@ -137,7 +180,17 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
     resources = {}
     problems = []
 
+    index = shared_index(shared_cache) if shared_cache else {}
+    if index and progress is not None:
+        progress(f"{len(index)} files in the EVE cache")
+
     def one(path):
+        # The local EVE install first, when there is one: the file is already
+        # on disk under the same content hash, so there is nothing to resolve
+        # and nothing to download.
+        local = shared_file(index, path, shared_cache)
+        if local is not None:
+            return str(local)
         found = client.resolve_resource(path, exact, target=target)
         url = str(((found or {}).get("resolution") or found or {}).get("sourceUrl") or "")
         if not url:
@@ -154,7 +207,15 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
             path = running[finished]
             done += 1
             if progress is not None:
-                progress(f"{done}/{len(paths)} {path.rsplit('/', 1)[-1]}")
+                # Named for what it is doing. "12/50 gb2_t1_a.dds" reads as
+                # downloading, and the download is the fast part -- what takes
+                # the time is asking the service where each file lives.
+                progress(f"Resolving {done}/{len(paths)} {path.rsplit('/', 1)[-1]}")
+            if cancelled is not None and cancelled():
+                for pending in running:
+                    pending.cancel()
+                problems.append("cancelled")
+                break
             try:
                 resources[path] = finished.result()
             except Exception as exc:

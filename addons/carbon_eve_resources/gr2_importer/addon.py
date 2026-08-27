@@ -2015,8 +2015,7 @@ def register():
             bpy.utils.register_class(c)
         except (ValueError, RuntimeError):
             pass
-    if menu_func_import not in bpy.types.TOPBAR_MT_file_import._dyn_ui_initialize():
-        bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
+    bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
 
 def unregister():
     try:
