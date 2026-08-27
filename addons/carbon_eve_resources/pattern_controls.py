@@ -202,6 +202,7 @@ SHIP_VALUES = (
     ("carbon_ship_activation_strength", "activationStrength"),
     ("carbon_ship_kill_count", "killCount"),
     ("carbon_preview_glow_scale", "Glow scale (preview)"),
+    ("carbon_preview_banner_scale", "Banner scale (preview)"),
 )
 
 
