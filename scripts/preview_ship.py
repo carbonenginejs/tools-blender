@@ -63,14 +63,25 @@ def parse_args(argv):
                         help="Scales the star's intensity into Blender sun energy; "
                              "0 leaves the environment as the only light")
     parser.add_argument("--render", default="")
+    parser.add_argument("--hull-record", default="",
+                        help="A SOF hull record, whose decalSets name the decals "
+                             "and carry their visibility groups. A built document "
+                             "has neither.")
     return parser.parse_args(argv[argv.index("--") + 1:] if "--" in argv else [])
 
 
 def main():
     args = parse_args(sys.argv)
+    decal_sets = []
+    if args.hull_record:
+        with open(args.hull_record, encoding="utf-8") as handle:
+            decal_sets = (json.load(handle) or {}).get("decalSets") or []
+        print(f"  hull record: {len(decal_sets)} decal set(s)")
+
     primary = ship_builder.build_ship(
         args.sof, args.resources,
-        globals_overrides={"previewGlowScale": preview_quad.DEMO_EMISSION_STRENGTH})
+        globals_overrides={"previewGlowScale": preview_quad.DEMO_EMISSION_STRENGTH},
+        decal_sets=decal_sets)
     ship_builder.hide_non_geometry()
     if primary is None:
         raise SystemExit("no geometry was assembled")
