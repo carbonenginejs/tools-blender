@@ -12,6 +12,7 @@ Textures are used as downloaded: Blender reads EVE's DXT5 `.dds` natively.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
 from typing import Callable, Mapping, Optional
@@ -19,6 +20,10 @@ from urllib.request import Request, urlopen
 
 from .tools_remote import USER_AGENT
 
+
+#: How many files to fetch at once. Bounded: the work is somebody else's
+#: server, and a ship is only fifty files.
+WORKERS = 8
 
 #: The document names its resources with these keys.
 RESOURCE_KEYS = ("geometryResPath", "resourcePath", "resFilePath", "textureResFilePath")
@@ -131,18 +136,29 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
     paths = resource_paths(document)
     resources = {}
     problems = []
-    for index, path in enumerate(paths, start=1):
-        if progress is not None:
-            progress(f"{index}/{len(paths)} {path.rsplit('/', 1)[-1]}")
-        try:
-            found = client.resolve_resource(path, exact, target=target)
-            url = str(((found or {}).get("resolution") or found or {}).get("sourceUrl") or "")
-            if not url:
-                raise FetchError("no source url")
-            resources[path] = str(download(url, cache_file(cache_root, url),
-                                           opener=opener))
-        except Exception as exc:
-            problems.append(f"{path}: {exc}")
+
+    def one(path):
+        found = client.resolve_resource(path, exact, target=target)
+        url = str(((found or {}).get("resolution") or found or {}).get("sourceUrl") or "")
+        if not url:
+            raise FetchError("no source url")
+        return str(download(url, cache_file(cache_root, url), opener=opener))
+
+    # In parallel. A ship is fifty files, each a resolve and a download, and
+    # serially that is over two minutes of a person watching nothing happen.
+    # Bounded because the work is somebody else's server.
+    done = 0
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        running = {pool.submit(one, path): path for path in paths}
+        for finished in as_completed(running):
+            path = running[finished]
+            done += 1
+            if progress is not None:
+                progress(f"{done}/{len(paths)} {path.rsplit('/', 1)[-1]}")
+            try:
+                resources[path] = finished.result()
+            except Exception as exc:
+                problems.append(f"{path}: {exc}")
     return document, resources, problems
 
 

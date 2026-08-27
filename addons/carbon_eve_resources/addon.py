@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 import threading
@@ -757,9 +758,10 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
         return state is not None and not state.busy and _context_terms_accepted(context)
 
     def execute(self, context):
-        if not hasattr(bpy.ops.import_scene, "carbon_gr2"):
-            self.report({"ERROR"}, "Enable CarbonEngineJS GR2 Importer first")
-            return {"CANCELLED"}
+        # Fetched, not built. The document comes from the service and the files
+        # from CCP, so there is no bundle on disk, no Node and no checkout.
+        from . import service_access, sof_fetch
+
         state = context.window_manager.carbon_eve_resources
         prefs = _prefs(context)
         try:
@@ -767,36 +769,19 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
         except SofBuilderError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-        if not str(prefs.tools_core_directory).strip():
-            self.report({"ERROR"}, "Set the tools-core checkout in preferences first")
-            return {"CANCELLED"}
 
-        primary_only = not self.include_secondary_meshes
-        refresh = bool(self.refresh)
-        _launch_job(
-            context,
-            "sof_dna",
-            lambda: _run_with_cache_stats(
-                lambda: (
-                    build_bundle(
-                        dna,
-                        tools_core_directory=Path(bpy.path.abspath(prefs.tools_core_directory)),
-                        output_root=Path(bpy.path.abspath(prefs.bundle_directory)),
-                        cache_root=_cache_path(prefs),
-                        node_executable=str(prefs.node_executable).strip(),
-                        # Resolved to a NUMBER, because the build is part of
-                        # the bundle's path. Handing "latest" down would put
-                        # every build of a DNA in one folder again, where a new
-                        # one silently overwrites the last.
-                        build=_resource_build(),
-                        refresh=refresh,
-                    ),
-                    primary_only,
-                ),
-                _cache_path(prefs),
-            ),
-            f"Building {dna} with tools-core",
-        )
+        client = service_access.client(context)
+        if client is None:
+            self.report({"ERROR"}, "The CarbonEngineJS service is unreachable")
+            return {"CANCELLED"}
+        cache_root = _cache_path(prefs)
+
+        def fetch():
+            return sof_fetch.fetch_ship(dna, client, cache_root, progress=_set_progress)
+
+        _launch_job(context, "sof_fetch",
+                    lambda: _run_with_cache_stats(fetch, cache_root),
+                    f"Fetching {dna}")
         return {"FINISHED"}
 
 
@@ -1238,6 +1223,44 @@ def _hull_record(dna: str) -> dict:
     return record if isinstance(record, dict) else {}
 
 
+def _build_fetched_ship(document, resources, problems) -> str:
+    """Builds a ship from a fetched document and its cached files."""
+
+    import tempfile
+
+    from . import ship as ship_builder, sof_fetch
+
+    dna = str(document.get("dna") or "")
+    hull_record = _hull_record(dna)
+    problems = list(problems)
+
+    # `build_ship` reads a document from a path and resources from a manifest
+    # directory, so the two are written to a temporary folder. Nothing is kept:
+    # the FILES live in the shared cache, and this is only the map to them.
+    with tempfile.TemporaryDirectory(prefix="carbon-sof-") as temporary:
+        root = Path(temporary)
+        sof_fetch.write_document(document, root / "document.json")
+        (root / "manifest.json").write_text(json.dumps(resources), encoding="utf-8")
+        primary = ship_builder.build_ship(
+            str(root / "document.json"), str(root),
+            clear=False,
+            decal_sets=(hull_record.get("decalSets") or []),
+            hull_record=hull_record,
+            cache_directory=str(_cache_path(_prefs(bpy.context)) / "logos"),
+        )
+
+    if primary is None:
+        problems.append("no geometry was assembled")
+    if not hull_record and dna:
+        problems.append(f"no hull record for {dna}; decals and area types are unavailable")
+    for problem in problems:
+        print(f"[CarbonEngineJS SOF] {problem}")
+    summary = f"Loaded {dna or 'SOF document'}"
+    if problems:
+        summary += f"; {len(problems)} issue(s) logged to the console"
+    return summary
+
+
 def _assemble_sof_document(
     bundle: SofBundle,
     primary_only: bool,
@@ -1437,15 +1460,10 @@ def _poll_job():
             state.preview_error_path = ""
             state.status = f"Previewing {fetched.entry.logical_path}"
             _populate_results(context)
-        elif job.kind == "sof_dna":
-            (built, primary_only), stats = job.result
+        elif job.kind == "sof_fetch":
+            (document, resources, problems), stats = job.result
             _set_cache_stats(state, stats)
-            bundle = load_sof_bundle(built.directory)
-            source = "built" if built.created else "reused"
-            state.status = (
-                f"{_assemble_sof_document(bundle, primary_only, {}, list(bundle.unresolved(primary_only=primary_only)))}"
-                f" ({source} {built.directory.name})"
-            )
+            state.status = _build_fetched_ship(document, resources, problems)
         elif job.kind == "sof_document":
             (bundle, primary_only, (downloaded, missing)), stats = job.result
             _set_cache_stats(state, stats)
