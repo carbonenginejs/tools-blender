@@ -1913,9 +1913,60 @@ def build_ship(document_path, resources_directory, *, clear=True,
                   f"left as built")
 
     populate_sof(primary, document, family)
+    root = parent_to_root(ship, collection, document)
     prune_empty_collections()
     align_names(collection)
     return primary
+
+
+def parent_to_root(objects, collection, document):
+    """Gives the ship one object to move, and hangs everything under it.
+
+    A built ship has thirteen unparented objects -- the hull, its armature,
+    every banner, every plane -- so dragging the hull moved the hull and left
+    the rest behind.
+
+    Parented with an identity inverse because the root sits at the origin,
+    which is where the ship was built. Anything that already has a parent keeps
+    it: a banner's light belongs to its banner, not to the root.
+    """
+
+    dna = str(document.get("dna") or "ship")
+    root = bpy.data.objects.new(f"{dna.split(':')[0]}   {dna}", None)
+    root.empty_display_type = "ARROWS"
+    root.empty_display_size = 20.0
+    collection.objects.link(root)
+    stamp_identity(root, dna, "ship")
+
+    # Everything in the ship's COLLECTION, not just the objects the builder
+    # returned: the armatures and any secondary mesh are in neither that list
+    # nor anyone's parent chain, and they were the ones left behind.
+    wanted = list(objects)
+    pending = [collection]
+    while pending:
+        found = pending.pop()
+        wanted.extend(found.objects)
+        pending.extend(found.children)
+
+    adopted = 0
+    seen = set()
+    for obj in wanted:
+        if obj is root or obj.name in seen:
+            continue
+        seen.add(obj.name)
+        if obj.parent is not None:
+            continue
+        obj.parent = root
+        obj.matrix_parent_inverse.identity()
+        adopted += 1
+
+    # The SOF settings live here too, so selecting the root and editing the SOF
+    # works the same as selecting any part of the ship.
+    settings = getattr(root, "carbon_sof", None)
+    if settings is not None and dna:
+        settings.read_dna(dna)
+    print(f"  root: {adopted} object(s) parented to {root.name}")
+    return root
 
 
 def prune_empty_collections():
