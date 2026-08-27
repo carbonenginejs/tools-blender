@@ -89,6 +89,12 @@ Where something has no Carbon counterpart it says so where it is defined:
 - **Zero-user data is purged on save.** The GR2 importer creates an Action per
   animation and assigns none of them, so the dope sheet was empty in any saved
   file. Imported actions get a fake user, and the armature gets the idle one.
+- **A projection must be built from the REST position.** Blender's Texture
+  Coordinate is the DEFORMED position, so a posed bone slides the hull through
+  a pattern that stays put in space. Carbon projects from the raw model
+  position; `rest_position` is opt-in per mesh and absent in Blender 5, so the
+  builder stores `carbon_rest_position` at import, when the vertices are the
+  rest pose. Decals need their own copy.
 - **A skinned mesh must be parented to its armature.** The importer leaves them
   as siblings, which looks fine until the ship is moved and the geometry deforms
   against a rig that is no longer where it is.
