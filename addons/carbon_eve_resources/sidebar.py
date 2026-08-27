@@ -112,9 +112,14 @@ class CARBON_PT_sidebar_sof(Panel):
 
 
 class CARBON_PT_sidebar_materials(Panel):
-    """The faction's materials, which every area of the hull reads."""
+    """The material slots, grouped by the mesh area type that owns them.
 
-    bl_label = "Materials"
+    Named for what it lists. A faction stores four material names PER AREA
+    TYPE, so this is not one ship's materials -- it is a group of four per area
+    type the hull actually has.
+    """
+
+    bl_label = "Mesh Area Types"
     bl_parent_id = "CARBON_PT_sidebar_sof"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"

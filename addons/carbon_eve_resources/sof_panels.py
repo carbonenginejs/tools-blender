@@ -857,9 +857,14 @@ def draw_pattern_group(layout, settings, *, compact=False):
 
 
 class CARBON_PT_sof_materials(Panel):
-    """The faction's materials, which every area of the hull reads."""
+    """The material slots, grouped by the mesh area type that owns them.
 
-    bl_label = "Materials"
+    Named for what it lists. A faction stores four material names PER AREA
+    TYPE, so this is not one ship's materials -- it is a group of four per area
+    type the hull actually has.
+    """
+
+    bl_label = "Mesh Area Types"
     bl_parent_id = "CARBON_PT_sof"
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
