@@ -684,6 +684,7 @@ def build_decals(document, hull, resources, family, decal_sets=None, collection=
 
         obj = bpy.data.objects.new(decal.name, mesh)
         decal_collection(decal.group, decal.visibility_group, collection).objects.link(obj)
+        stamp_identity(obj, decal.sof_name, "decal", decal.visibility_group)
         obj.matrix_world = hull.matrix_world
         obj.parent = hull
         obj.matrix_parent_inverse = hull.matrix_world.inverted()
@@ -1111,6 +1112,26 @@ def populate_sof(obj, document, family):
 PLANE_CORNERS = ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (0.5, 0.5, 0.0), (-0.5, 0.5, 0.0))
 
 
+def stamp_identity(obj, name, kind, group=""):
+    """Records what a thing IS, apart from what it is called.
+
+    Blender's names are unique PER ID TYPE across the whole file, and a
+    collection does not scope them: a second ship's `Killmarks` becomes
+    `Killmarks.001` no matter where it sits. So a display name cannot be relied
+    on to carry meaning -- it is already `.001` the moment two ships are open.
+
+    The SOF's own name goes on the object as a property instead. An exporter
+    reads that and is unaffected by however Blender chose to spell the name.
+    """
+
+    if name:
+        obj["carbon_sof_name"] = str(name)
+    obj["carbon_sof_kind"] = str(kind)
+    if group:
+        obj["carbon_visibility_group"] = str(group)
+    return obj
+
+
 def quad_mesh(name):
     """A unit quad WITH a UV map.
 
@@ -1216,6 +1237,8 @@ def build_plane_sets(document, hull, collection, hull_sets=None):
             obj["carbon_plane_effect"] = str(effect)
             obj.data.materials.append(plane_material(colour, set_index, index))
             attach_to_bone(obj, armature, item.get("boneIndex"))
+            stamp_identity(obj, f"plane_{index}", "plane",
+                           str(source.get("visibilityGroupName") or "primary"))
             built.append(obj)
     if built:
         print(f"  built {len(built)} plane(s) from {len(find_typed(document, 'EvePlaneSet'))} set(s)")
@@ -1358,6 +1381,8 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
             obj.data.materials.append(
                 banner_material(slot, set_index, index, owners, cache_directory))
             attach_to_bone(obj, armature, item.get("bone"))
+            stamp_identity(obj, slot, "banner",
+                           str(source.get("visibilityGroupName") or "primary"))
             built.append(obj)
             banners_built.append(obj)
 
