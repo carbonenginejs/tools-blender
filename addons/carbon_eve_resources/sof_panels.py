@@ -258,24 +258,86 @@ class CARBON_SOF_Name(PropertyGroup):
     """One catalog entry. A `name` is all a search list needs."""
 
 
-def catalog_items(context=None):
-    """Fills the window's material list, once, and returns how many it holds.
+#: Catalogs already asked for, so a draw does not queue the same fetch on
+#: every redraw.
+_REQUESTED = set()
 
-    The catalog lives on the WINDOW MANAGER rather than in the blend: it is
-    1149 names that belong to a tools-core build, not to this file, and saving
-    a copy into every .blend would make each one carry a stale snapshot of a
-    catalog it does not own.
+
+def _populate(kind):
+    """Fills one catalog list. Runs from a TIMER, never from a draw.
+
+    Adding to a CollectionProperty while Blender is drawing the UI crashes the
+    process outright -- it is not an exception, the window simply goes -- and
+    the fetch it needs would block the redraw as well. So a draw only ever
+    reads what is already there, and asks for the rest to happen afterwards.
     """
 
     from . import service_access, sof_materials
 
+    try:
+        window = bpy.context.window_manager
+        items = getattr(window, f"carbon_sof_{kind}", None)
+        if items is None or len(items):
+            return None
+        client = service_access.client()
+        if kind == "ships":
+            from . import sof_lookup
+
+            names = [name for name, entries in sof_lookup.names(client).items()
+                     if any(entry.get("graphicID") or entry.get("kind") == "skin"
+                            for entry in entries)]
+        else:
+            names = sof_materials.catalog(client, kind=kind)
+        for name in sorted(names):
+            items.add().name = name
+    except Exception as exc:
+        print(f"[CarbonEngineJS SOF] {kind} catalog unavailable: {exc}")
+    return None                       # a one-shot timer
+
+
+def catalog_items(kind="materials", context=None):
+    """How many names one catalog holds, fetching it in the background if new.
+
+    Safe to call from a draw: it reads a length and, at most, registers a timer.
+    The list appears on the next redraw.
+    """
+
     window = (context or bpy.context).window_manager
-    items = window.carbon_sof_materials
-    if len(items):
-        return len(items)
-    for name in sof_materials.catalog(service_access.client(context)):
-        items.add().name = name
-    return len(items)
+    items = getattr(window, f"carbon_sof_{kind}", None)
+    if items is None:
+        return 0
+    count = len(items)
+    if count == 0 and kind not in _REQUESTED:
+        _REQUESTED.add(kind)
+        bpy.app.timers.register(lambda kind=kind: _populate(kind),
+                                first_interval=0.0)
+    return count
+
+
+def draw_name_search(layout, owner, field, *, kind="materials", text="",
+                     icon="NONE"):
+    """A field that only accepts a name the catalog actually has.
+
+    Falls back to a plain text field while the catalog is still arriving, or
+    when it cannot be fetched at all, so the panel is usable either way rather
+    than showing a control with nothing in it.
+    """
+
+    if catalog_items(kind):
+        layout.prop_search(owner, field, bpy.context.window_manager,
+                           f"carbon_sof_{kind}", text=text, icon=icon)
+    else:
+        layout.prop(owner, field, text=text)
+
+
+def forget_catalogs():
+    """Lets the catalogs be fetched again, after a build change."""
+
+    _REQUESTED.clear()
+    for kind in ("materials", "patterns", "hulls", "factions", "races", "ships"):
+        items = getattr(bpy.context.window_manager, f"carbon_sof_{kind}", None)
+        if items is not None:
+            items.clear()
 
 
 def _material_named(self, context):
@@ -376,9 +438,91 @@ class CARBON_SOF_Material(PropertyGroup):
 
 
 def _component_update(self, context):
-    """A component changed, so the DNA that names the ship changes with it."""
+    """A part changed, so the DNA that names the ship changes with it.
 
-    self.dna = self.compose_dna()
+    One half of a two-way field: choose parts and the string is written for
+    you. The other half is `_dna_typed`.
+
+    Skipped while values are arriving FROM a DNA, or typing one would
+    immediately recompose over the text just parsed -- and a recompose is
+    canonical, so a DNA carrying a command the editor does not model yet would
+    be silently rewritten without it.
+    """
+
+    if _APPLYING["depth"] != 0:
+        return
+    # Written inside `applying()` so the string does not read itself back. It
+    # would otherwise, and a command switched on but not yet filled in has no
+    # arguments -- so composing it produced a DNA without the command, and
+    # parsing that DNA switched the command straight back off. Turning `Mesh`
+    # on and then naming a material could not work at all.
+    with applying():
+        self.dna = self.compose_dna()
+
+
+def _identity_typed(self, context):
+    """A name, type id or skin id was entered, so the DNA becomes what it draws.
+
+    The same two-way rule as the DNA field, one level up: a person knows a ship
+    by its NAME, the SOF knows it by a hull, a faction and a race, and nothing
+    in a DNA says "Tengu" anywhere. Whichever of the three is filled in, the
+    others and the DNA follow.
+
+    A name that resolves to nothing is left exactly as typed. Clearing the DNA
+    would throw away a ship someone was working on because they mistyped a
+    search.
+    """
+
+    if _APPLYING["depth"] != 0:
+        return
+    from . import service_access, sof_lookup
+
+    client = service_access.client(context)
+    type_id, skin_id = int(self.type_id or 0), int(self.skin_id or 0)
+
+    name = str(self.ship_name or "").strip()
+    if name and self.get("_carbon_last_name", "") != name:
+        # A name can mean a type and a skin at once. A skin carries its own
+        # type, so it answers both questions and is preferred.
+        skins = sof_lookup.find(name, client, kind="skin")
+        types = sof_lookup.find(name, client, kind="type")
+        if skins:
+            skin_id = int(skins[0].get("skinID") or 0)
+            type_id = int(skins[0].get("typeID") or 0)
+        elif types:
+            skin_id = 0
+            type_id = int(types[0].get("typeID") or 0)
+
+    # A skin belongs to specific types, so one that does not fit the type in
+    # hand is dropped rather than carried: changing the type otherwise left a
+    # Rifter wearing an Abaddon's materials.
+    if skin_id and not sof_lookup.skin_applies(skin_id, type_id, client):
+        skin_id = 0
+
+    dna = sof_lookup.dna_for(type_id, skin_id, client)
+    if not dna:
+        return
+
+    with applying():
+        self.type_id = type_id
+        self.skin_id = skin_id
+        self["_carbon_last_name"] = name
+    # Outside `applying()` so the DNA field's own update fills in the parts
+    # below: one path in, and the panel cannot disagree with the string.
+    self.dna = dna
+
+
+def _dna_typed(self, context):
+    """A DNA was typed or pasted, so the parts below become what it says.
+
+    The other half of the two-way field. `read_dna` fills everything inside
+    `applying()`, so writing the parts does not recompose the string back over
+    what was just typed.
+    """
+
+    if _APPLYING["depth"] != 0:
+        return
+    self.read_dna(self.dna)
 
 
 class CARBON_SOF_Settings(PropertyGroup):
@@ -431,8 +575,9 @@ class CARBON_SOF_Settings(PropertyGroup):
 
     use_respath: BoolProperty(
         name="RespathInsert", default=False, update=_component_update,
-        description="Redirects resource paths, which is how a hull reaches an "
-                    "alternate set of textures")
+        description="Adjusts which BASE TEXTURES the hull loads, by inserting "
+                    "a segment into its resource paths. Free text: tools-core "
+                    "serves no catalog of them")
     respath_insert: StringProperty(name="Name", default="",
                                    update=_component_update)
 
@@ -445,17 +590,24 @@ class CARBON_SOF_Settings(PropertyGroup):
         name="Layouts", default="", update=_component_update,
         description="One or more layout names, separated by ;")
     dna: StringProperty(
-        name="DNA", default="",
-        description="hull:faction:race, and a pattern when there is one")
+        name="DNA", default="", update=_dna_typed,
+        description="hull:faction:race plus its commands. Type or paste one "
+                    "and the parts below become what it says; choose parts and "
+                    "it is written for you")
 
     #: What a consumer types instead of a DNA. Resolving either to a hull and a
     #: faction is tools-core's job; this holds the input and the answer.
+    ship_name: StringProperty(
+        name="Ship", default="", update=_identity_typed,
+        description="A ship or SKIN by name; the ids and the DNA follow")
     type_id: IntProperty(
-        name="Type ID", default=0, min=0,
-        description="Resolved to a hull and faction by tools-core")
-    skin: StringProperty(
-        name="Skin", default="",
-        description="A SKIN name, resolved to a pattern and faction")
+        name="Type ID", default=0, min=0, update=_identity_typed,
+        description="The type's graphic is what carries its hull, faction and "
+                    "race")
+    skin_id: IntProperty(
+        name="Skin ID", default=0, min=0, update=_identity_typed,
+        description="A SKIN's material set supplies the materials, the "
+                    "respathinsert and the faction")
 
     materials: CollectionProperty(type=CARBON_SOF_Material)
 
@@ -684,7 +836,12 @@ class CARBON_SOF_OT_apply(Operator):
 
 
 class CARBON_SOF_OT_rebuild(Operator):
-    """The SOF Builder: resolve the edited SOF, and rebuild what hangs off it.
+    """Resolve the edited SOF and rebuild what hangs off it.
+
+    Not on a panel any more: it did the same thing as loading the DNA with the
+    bundle refreshed, and two buttons for one action meant nobody could tell
+    which to press. Kept because it is the operator a script wants.
+
 
     A hull does not know its faction's colours, so changing the faction cannot
     be pushed straight into the scene the way a colour can -- there is nothing
@@ -892,30 +1049,14 @@ def draw_slot(layout, settings, entry, *, compact=False):
     # scrolls, and the value stays the NAME, so a slot showing `custom` or a
     # material from a build we cannot reach still displays what it holds
     # instead of snapping to whatever happens to be first.
-    if catalog_items():
-        name.prop_search(entry, "material", bpy.context.window_manager,
-                         "carbon_sof_materials", text="", icon="MATERIAL")
-    else:
-        name.prop(entry, "material", text="")
+    draw_name_search(name, entry, "material", icon="MATERIAL")
     if entry.material == CUSTOM_MATERIAL:
         header.operator("carbon.sof_export_material", text="", icon="EXPORT"
                         ).slot = f"{entry.index}:{int(entry.is_pattern)}:{entry.area_type}"
-    if not entry.is_pattern and sof_resolution.is_blocked(entry.blocked, entry.index):
-        # The one case where a slot ignores a skin: the hull author blocked it
-        # on this area.
-        box.label(text="this area blocks skin overrides here", icon="LOCKED")
-    elif not entry.material:
-        box.label(text="supplied by the faction " + (settings.faction or "?"))
-    if compact:
-        values = box.row(align=True)
-        values.prop(entry, "diffuse", text="")
-        values.prop(entry, "fresnel", text="")
-        values.prop(entry, "gloss", text="")
-    else:
-        box.use_property_split = True
-        box.prop(entry, "diffuse")
-        box.prop(entry, "fresnel")
-        box.prop(entry, "gloss")
+    # No colour widgets. A slot NAMES a material and the material holds the
+    # values -- they live in its node group, where they are shared and editable
+    # in one place. Repeating them per slot invited editing a copy of something
+    # that is not a copy, and made a picker look like a colour editor.
 
 
 def _collapsible(layout, idname, title, *, icon="NONE", default_closed=False):
@@ -1035,15 +1176,25 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Object.carbon_sof = PointerProperty(type=CARBON_SOF_Settings)
+    # A scratch SOF on the scene, for composing a DNA before any ship exists.
+    # Without it the builder had nothing to write into until something was
+    # already loaded, which is the wrong way round for a tool whose job is
+    # producing the thing that gets loaded.
+    bpy.types.Scene.carbon_sof = PointerProperty(type=CARBON_SOF_Settings)
     # On the window manager, not the blend: the catalog belongs to a tools-core
     # build, and a copy saved into a file would go stale in it.
-    bpy.types.WindowManager.carbon_sof_materials = CollectionProperty(type=CARBON_SOF_Name)
+    for kind in ("materials", "patterns", "hulls", "factions", "races", "ships"):
+        setattr(bpy.types.WindowManager, f"carbon_sof_{kind}",
+                CollectionProperty(type=CARBON_SOF_Name))
 
 
 def unregister():
-    if hasattr(bpy.types.WindowManager, "carbon_sof_materials"):
-        del bpy.types.WindowManager.carbon_sof_materials
-    if hasattr(bpy.types.Object, "carbon_sof"):
-        del bpy.types.Object.carbon_sof
+    for kind in ("materials", "patterns", "hulls", "factions", "races", "ships"):
+        name = f"carbon_sof_{kind}"
+        if hasattr(bpy.types.WindowManager, name):
+            delattr(bpy.types.WindowManager, name)
+    for owner in (bpy.types.Object, bpy.types.Scene):
+        if hasattr(owner, "carbon_sof"):
+            del owner.carbon_sof
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

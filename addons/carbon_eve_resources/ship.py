@@ -178,10 +178,14 @@ def find_meshes(document):
 
 
 def import_geometry(path):
-    import io_scene_carbon_gr2
+    # The importer ships inside this add-on now, so it is a sibling import
+    # rather than a separate add-on someone had to install. Registering it here
+    # as well keeps the script paths working, which run the builder without
+    # enabling anything.
+    from . import gr2_importer
 
     try:
-        io_scene_carbon_gr2.register()
+        gr2_importer.register()
     except Exception:
         pass  # already registered
     before = set(bpy.data.objects)

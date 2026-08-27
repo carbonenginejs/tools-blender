@@ -5,7 +5,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "addons" / "io_scene_carbon_gr2"))
+sys.path.insert(0, str(ROOT / "addons" / "carbon_eve_resources" / "gr2_importer"))
 
 from gr2.codecs import BITKNIT2_MAGIC, decompress_bitknit2  # noqa: E402
 

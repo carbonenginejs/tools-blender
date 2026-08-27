@@ -20,7 +20,7 @@ from mathutils import Matrix, Vector, Quaternion
 from .gr2 import Gr2Error, read_gr2
 
 
-ADDON_ID = __package__ or "io_scene_carbon_gr2"
+ADDON_ID = "carbon_eve_resources"   # preferences live on the one add-on now
 
 
 # =============================================================================
@@ -1998,14 +1998,32 @@ classes = (
 )
 
 def register():
+    # Tolerant of a class that is already registered, because the standalone
+    # add-on this used to be may still be installed and enabled beside us --
+    # both would claim `import_scene.carbon_gr2`. A hard failure there takes
+    # the whole add-on down at enable time, and the person is left with
+    # neither, which is worse than sharing an operator with our own twin.
     for c in classes:
-        bpy.utils.register_class(c)
-    bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
+        try:
+            bpy.utils.register_class(c)
+        except (ValueError, RuntimeError):
+            pass
+    if menu_func_import not in bpy.types.TOPBAR_MT_file_import._dyn_ui_initialize():
+        bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
 
 def unregister():
-    bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+    try:
+        bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+    except (ValueError, RuntimeError):
+        pass
+    # Unregistering something that never registered raises, and it raises
+    # DURING an enable that already failed -- which hides the real error behind
+    # a second one about a missing bl_rna.
     for c in reversed(classes):
-        bpy.utils.unregister_class(c)
+        try:
+            bpy.utils.unregister_class(c)
+        except (ValueError, RuntimeError):
+            pass
 
 if __name__ == "__main__":
     register()

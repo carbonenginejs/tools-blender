@@ -22,9 +22,9 @@ from __future__ import annotations
 import bpy
 from bpy.types import Panel
 
-from . import sof_panels, sof_resolution
+from . import sof_panels
 
-CATEGORY = "Carbon"
+CATEGORY = "CarbonEngineJS"
 
 
 def ships_in_file():
@@ -72,8 +72,74 @@ def _no_ship(layout, context):
         layout.label(text="No ship in the scene", icon="INFO")
 
 
+class CARBON_PT_sidebar_about(Panel):
+    """The add-on itself, and the licence its use depends on.
+
+    First in the tab because accepting the terms gates everything below it:
+    without acceptance the tools cannot fetch anything, and a person who has
+    not accepted needs to be told that before they wonder why nothing loads.
+    """
+
+    bl_label = "CarbonEngineJS"
+    bl_idname = "CARBON_PT_sidebar_about"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = CATEGORY
+    bl_order = 0
+
+    def draw(self, context):
+        from . import addon
+
+        # One row, two states. The terms, the revision and the acceptance date
+        # are all in Preferences already; repeating them here made a panel that
+        # is read once into the tallest thing in the tab.
+        prefs = addon._prefs(context)
+        accepted = addon._creator_terms_accepted(prefs)
+        row = self.layout.row(align=True)
+        # First person, because it is the person's statement and not a label
+        # on a document: ticking it IS the acceptance.
+        row.label(text="I accept the EVE Online Creator License",
+                  icon="CHECKBOX_HLT" if accepted else "CHECKBOX_DEHLT")
+        # The terms themselves, one click away rather than quoted at length.
+        row.operator(addon.EVE_RESOURCE_OT_open_creator_terms.bl_idname,
+                     text="", icon="URL")
+        # No revoke. It is a rare, destructive action and it sat one pixel from
+        # a link -- the wrong click there costs a person their acceptance.
+        # Preferences still has it.
+        if not accepted:
+            row.operator(addon.EVE_RESOURCE_OT_accept_creator_terms.bl_idname,
+                         text="Accept")
+
+        # The cache, which nothing else in the tab can reach any more. It is
+        # content-addressed, so an updated file arrives under a new name beside
+        # the one it replaces and the folder only grows -- 500MB for a handful
+        # of ships. Prune deletes what no kept build refers to; Clear throws
+        # away every payload and downloads them again.
+        state = getattr(context.window_manager, "carbon_eve_resources", None)
+        if state is None:
+            return
+        cache = self.layout.row(align=True)
+        cache.label(text=state.cache_summary, icon="DISK_DRIVE")
+        cache.operator(addon.EVE_RESOURCE_OT_refresh_cache_stats.bl_idname,
+                       text="", icon="FILE_REFRESH")
+        cache.operator(addon.EVE_RESOURCE_OT_prune_cache.bl_idname,
+                       text="", icon="SORTTIME")
+        cache.operator(addon.EVE_RESOURCE_OT_clear_cache.bl_idname,
+                       text="", icon="TRASH")
+
+
 class CARBON_PT_sidebar_dna(Panel):
-    """Composing a DNA, and loading a ship from one."""
+    """Composing a DNA, and loading a ship from it.
+
+    One tool, not two. The DNA string and the parts below it are two views of
+    the same thing: choose parts and the string is written, type a string and
+    the parts become what it says. Splitting them across two panels implied
+    they were separate steps.
+
+    This is NOT a SOF editor. A SOF editor would edit the actual SOF records --
+    hulls, factions, materials, patterns -- which this does not touch: it only
+    names them.
+    """
 
     bl_label = "SOF DNA Builder"
     bl_idname = "CARBON_PT_sidebar_dna"
@@ -84,72 +150,74 @@ class CARBON_PT_sidebar_dna(Panel):
     def draw(self, context):
         layout = self.layout
         layout.use_property_split = True
+        # No animation decorators. The dot beside every field is for keyframing
+        # it, and none of this is animated -- it was a column of noise down the
+        # whole panel.
+        layout.use_property_decorate = False
         state = getattr(context.window_manager, "carbon_eve_resources", None)
         ship = _ship_of(context)
+        # The ship's own settings when there is one, so the panel edits the
+        # loaded ship rather than a separate scratch DNA sitting beside it.
+        # Otherwise the scene's scratch SOF, so a DNA can be composed BEFORE
+        # anything is loaded -- which is what the tool is for.
+        settings = ship.carbon_sof if ship is not None else context.scene.carbon_sof
 
-        if ship is not None:
-            row = layout.row()
-            row.enabled = False
-            row.prop(ship.carbon_sof, "dna", text="Loaded")
-
-        if state is None:
-            layout.label(text="Resource browser is not registered", icon="ERROR")
-            return
-        layout.prop(state, "dna", text="DNA")
-        build = layout.row()
-        build.enabled = not state.busy
-        build.operator("carbon.eve_resource_build_sof_dna", icon="PLAY")
-        if state.status:
-            layout.label(text=state.status, icon="INFO")
-
-
-class CARBON_PT_sidebar_sof(Panel):
-    """The SOF a ship is built from."""
-
-    bl_label = "SOF Editor"
-    bl_idname = "CARBON_PT_sidebar_sof"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = CATEGORY
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        ship = _ship_of(context)
-        if ship is None:
-            _no_ship(layout, context)
-            return
-
-        settings = ship.carbon_sof
-
-        # The DNA first, because it is the thing being edited -- everything
-        # below is a view onto one part of this string.
-        row = layout.row()
-        row.enabled = False
-        row.prop(settings, "dna", text="DNA")
-
-        # Compulsory: a DNA without all three is not a DNA.
+        # What a person knows the ship by, first: a name, then the ids it
+        # resolves to, then the DNA those produce. Each fills the ones
+        # below it, and any of them can be filled in directly.
+        sof_panels.draw_name_search(layout, settings, "ship_name",
+                                    kind="ships", text="Ship",
+                                    icon="OUTLINER_OB_MESH")
+        ids = layout.row(align=True)
+        ids.prop(settings, "type_id", text="Type")
+        ids.prop(settings, "skin_id", text="Skin")
+        layout.prop(settings, "dna", text="DNA")
         required = layout.column(align=True)
-        for field in ("hull", "faction", "race"):
-            required.prop(settings, field)
+        for field, kind, icon in (("hull", "hulls", "MESH_DATA"),
+                                  ("faction", "factions", "COMMUNITY"),
+                                  ("race", "races", "WORLD")):
+            sof_panels.draw_name_search(required, settings, field, kind=kind,
+                                        text=field.title(), icon=icon)
 
         _command(layout, settings, "use_mesh", "carbon_cmd_mesh",
-                 [f"mesh_material{index}" for index in (1, 2, 3, 4)],
-                 note="`mesh` is how live skins spell `material`")
+                 [f"mesh_material{index}" for index in (1, 2, 3, 4)])
         _command(layout, settings, "use_pattern", "carbon_cmd_pattern",
                  ["pattern", "pattern_material5", "pattern_material6"])
         _command(layout, settings, "use_respath", "carbon_cmd_respath",
                  ["respath_insert"])
         _command(layout, settings, "use_layout", "carbon_cmd_layout",
-                 ["layout_names"],
-                 note="scatters hull extensions; every layout is a structure")
+                 ["layout_names"])
 
+        # Two actions, and they are genuinely different:
+        #   Load    -- go and build this DNA into a ship (tools-core, geometry,
+        #              textures). The slow one.
+        #   Refresh -- re-resolve the materials of the ship already here. No
+        #              geometry, no download.
+        # A third button that rebuilt the bundle was the same as Load with a
+        # flag set, and nobody could tell the two apart.
         buttons = layout.row(align=True)
-        buttons.operator("carbon.sof_apply", text="Apply", icon="FILE_REFRESH")
-        buttons.operator("carbon.sof_rebuild", text="Rebuild", icon="PLAY")
+        load = buttons.operator("carbon.eve_resource_build_sof_dna",
+                                text="Load Ship", icon="IMPORT")
+        load.dna = settings.dna
+        load.refresh = False
+        again = buttons.operator("carbon.eve_resource_build_sof_dna",
+                                 text="", icon="FILE_REFRESH")
+        again.dna = settings.dna
+        again.refresh = True
+        layout.operator("carbon.sof_apply", text="Refresh Materials",
+                        icon="MATERIAL")
+
+        if state is None:
+            layout.label(text="Resource browser is not registered", icon="ERROR")
+            return
+        # Only what is happening NOW. "Resource index is not loaded" described
+        # a local index this tool no longer uses -- everything comes from
+        # tools-core over the wire.
+        if state.busy and state.status:
+            layout.label(text=state.status, icon="SORTTIME")
 
 
-def _command(layout, settings, toggle, idname, fields, *, note=""):
+def _command(layout, settings, toggle, idname, fields):
     """One optional DNA command: a switch, and its arguments beneath it.
 
     The switch is the command's PRESENCE. A command that is off is absent from
@@ -161,14 +229,30 @@ def _command(layout, settings, toggle, idname, fields, *, note=""):
     if header is None:
         body = layout.column(align=True)
     target = header if header is not None else body
+    # Left-aligned: a property split puts the label in the right-hand column,
+    # which left every command's checkbox floating in the middle of the panel
+    # with its name beside it and nothing under either.
+    target.use_property_split = False
     target.prop(settings, toggle)
     if body is None:
         return
     body.enabled = bool(getattr(settings, toggle))
-    if note:
-        body.label(text=note, icon="INFO")
+    body.use_property_split = True
+    body.use_property_decorate = False
     for field in fields:
-        body.prop(settings, field)
+        if field.endswith(("material1", "material2", "material3", "material4",
+                           "material5", "material6")):
+            sof_panels.draw_name_search(body, settings, field, kind="materials",
+                                        text=field.split("_")[-1].title(),
+                                        icon="MATERIAL")
+        elif field == "pattern":
+            sof_panels.draw_name_search(body, settings, field, kind="patterns",
+                                        text="Pattern", icon="TEXTURE")
+        else:
+            # respathinsert has no catalog route on tools-core -- what is legit
+            # is per hull, and depends on which texture files actually exist --
+            # and layouts are a `;` separated list. Both stay text.
+            body.prop(settings, field)
 
 
 def _panel(layout, idname):
@@ -178,38 +262,6 @@ def _panel(layout, idname):
     if maker is None:
         return None, None
     return maker(idname, default_closed=True)
-
-
-class CARBON_PT_sidebar_materials(Panel):
-    """The material slots, grouped by the mesh area type that owns them.
-
-    Named for what it lists. A faction stores four material names PER AREA
-    TYPE, so this is not one ship's materials -- it is a group of four per area
-    type the hull actually has.
-    """
-
-    bl_label = "Mesh Area Types"
-    bl_parent_id = "CARBON_PT_sidebar_sof"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = CATEGORY
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = self.layout
-        ship = _ship_of(context)
-        if ship is None:
-            return
-        # The MATERIAL is what a consumer picks; the colours are what it holds.
-        # Leading with the colours would suggest they are the thing being
-        # chosen, which is a material editor's model rather than the SOF's.
-        #
-        # One presentation, shared with the Properties panels: the same slot
-        # NUMBER exists once per area type, so anything that draws them without
-        # the grouping renders two different materials as a duplicate pair.
-        settings = ship.carbon_sof
-        sof_panels.draw_material_groups(layout, settings, compact=True)
-        sof_panels.draw_pattern_group(layout, settings, compact=True)
 
 
 class CARBON_PT_sidebar_attributes(Panel):
@@ -235,6 +287,7 @@ class CARBON_PT_sidebar_attributes(Panel):
     def draw(self, context):
         layout = self.layout
         layout.use_property_split = True
+        layout.use_property_decorate = False
         ship = _ship_of(context)
         if ship is None:
             _no_ship(layout, context)
@@ -242,38 +295,12 @@ class CARBON_PT_sidebar_attributes(Panel):
         for name, label in self.VALUES:
             if name in ship.keys():
                 layout.prop(ship, f'["{name}"]', text=label)
-        layout.label(text="Drives every material and decal on this ship", icon="DRIVER")
-
-
-class CARBON_PT_sidebar_types(Panel):
-    """Items and skins."""
-
-    bl_label = "Type Browser"
-    bl_idname = "CARBON_PT_sidebar_types"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = CATEGORY
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        ship = _ship_of(context)
-        if ship is not None:
-            layout.prop(ship.carbon_sof, "type_id")
-            layout.prop(ship.carbon_sof, "skin")
-        # Honest about what is not built yet, rather than showing a control that
-        # does nothing: tools-core has no route that LISTS types, so a browser
-        # has to be built on the skin library's name index.
-        layout.label(text="Lookup is not wired yet", icon="INFO")
 
 
 CLASSES = (
+    CARBON_PT_sidebar_about,
     CARBON_PT_sidebar_dna,
-    CARBON_PT_sidebar_sof,
-    CARBON_PT_sidebar_materials,
     CARBON_PT_sidebar_attributes,
-    CARBON_PT_sidebar_types,
 )
 
 

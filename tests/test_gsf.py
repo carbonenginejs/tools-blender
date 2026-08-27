@@ -4,7 +4,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "addons" / "io_scene_carbon_gr2"))
+sys.path.insert(0, str(ROOT / "addons" / "carbon_eve_resources" / "gr2_importer"))
 
 from gr2.gsf import is_gsf_raw, project_gsf  # noqa: E402
 from gr2.reader import RawGr2  # noqa: E402

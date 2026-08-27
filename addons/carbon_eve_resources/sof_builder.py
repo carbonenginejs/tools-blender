@@ -56,6 +56,26 @@ def bundle_directory_name(dna: str) -> str:
     return DNA_DIRECTORY_PATTERN.sub("_", normalize_dna(dna)).strip("_") or "bundle"
 
 
+def bundle_directory(output_root, dna: str, build: str = "") -> Path:
+    """Where one DNA's bundle lives: `<root>/<dna>/<build>`.
+
+    The BUILD is part of the path, because a bundle is only true for the build
+    it was made from. Without it a new client build wrote its converted files
+    over the old ones -- or worse, was skipped entirely, because a bundle.json
+    already existed and nothing compared what it was built against. A ship
+    could sit there stale indefinitely with no way to see it.
+
+    Nested rather than joined into one name so that every bundle of a DNA is
+    together, and an old build is one folder to delete.
+    """
+
+    root = Path(output_root).expanduser() / bundle_directory_name(dna)
+    wanted = DNA_DIRECTORY_PATTERN.sub("_", str(build or "")).strip("_")
+    # An unresolved build ("latest") is not a build: it names a moving target,
+    # and using it as a folder name is how a stale bundle hides.
+    return root / wanted if wanted and wanted != "latest" else root
+
+
 def resolve_bundle_script(tools_core_directory: Path | str) -> Path:
     root = Path(tools_core_directory).expanduser()
     if not root.is_dir():
@@ -101,7 +121,7 @@ def build_bundle(
     """Builds one DNA into a bundle directory, reusing an existing build."""
 
     value = normalize_dna(dna)
-    destination = Path(output_root).expanduser() / bundle_directory_name(value)
+    destination = bundle_directory(output_root, value, str(build))
     if not refresh and (destination / "bundle.json").is_file():
         return BundleBuild(dna=value, directory=destination, created=False)
 

@@ -94,24 +94,36 @@ def material_values(material_record: Mapping[str, Any] | None) -> dict:
     return values
 
 
-def catalog(client=None, *, build: str = "latest", target: str = "eve") -> tuple:
-    """Every material name, sorted, cached per build.
+#: The list routes, by the name a caller asks for. Every one of them answers
+#: with an array of names.
+CATALOGS = ("materials", "patterns", "hulls", "factions", "races")
 
-    Returns an empty tuple when the service cannot be reached: a dropdown with
-    nothing in it is a visible, honest failure, and the slot keeps whatever
-    name it already had.
+
+def catalog(client=None, *, kind: str = "materials", build: str = "latest",
+            target: str = "eve") -> tuple:
+    """Every name of one kind, sorted, cached per build.
+
+    Hulls, factions, races, materials and patterns are all preset values -- a
+    DNA naming one that does not exist is not a DNA -- so each field searches
+    its own catalog rather than accepting free text.
+
+    Returns an empty tuple when the service cannot be reached, and the caller
+    falls back to a plain text field: a person without tools-core can still
+    read and type what is already there.
     """
 
-    key = (target, build)
+    wanted = str(kind or "materials")
+    if wanted not in CATALOGS:
+        raise ValueError(f"unknown catalog: {kind}")
+    key = (target, build, wanted)
     if key in _CATALOG:
         return _CATALOG[key]
     if client is None:
         return ()
     try:
-        # The catalog answers with an ARRAY, so it needs the call that tolerates
-        # one. `_request` insists on an object root and rejected every name in
-        # the list with a message about the root.
-        names = client.request_json("GET", f"/{target}/{build}/sof/materials")
+        # These answer with an ARRAY, so they need the call that tolerates one:
+        # `_request` insists on an object root.
+        names = client.request_json("GET", f"/{target}/{build}/sof/{wanted}")
     except Exception:
         return ()
     if not isinstance(names, Sequence) or isinstance(names, (str, bytes)):

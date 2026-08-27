@@ -735,6 +735,13 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
         "geometry, mesh areas, and textures"
     )
 
+    #: The DNA to build, when the caller has one in hand.
+    #:
+    #: The panel shows the SHIP's DNA once a ship is loaded, so reading the
+    #: browser's own field here built whatever was last typed there instead of
+    #: what the person was looking at -- usually nothing, which failed with a
+    #: message about an empty DNA while a perfectly good one was on screen.
+    dna: StringProperty(default="", options={"HIDDEN"})
     refresh: BoolProperty(
         name="Rebuild",
         description="Rebuild the bundle even when one already exists for this DNA",
@@ -760,7 +767,7 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
         state = context.window_manager.carbon_eve_resources
         prefs = _prefs(context)
         try:
-            dna = normalize_dna(state.dna)
+            dna = normalize_dna(self.dna or state.dna)
         except SofBuilderError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
@@ -781,6 +788,11 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
                         output_root=Path(bpy.path.abspath(prefs.bundle_directory)),
                         cache_root=_cache_path(prefs),
                         node_executable=str(prefs.node_executable).strip(),
+                        # Resolved to a NUMBER, because the build is part of
+                        # the bundle's path. Handing "latest" down would put
+                        # every build of a DNA in one folder again, where a new
+                        # one silently overwrites the last.
+                        build=_resource_build(),
                         refresh=refresh,
                     ),
                     primary_only,
@@ -845,6 +857,76 @@ class EVE_RESOURCE_OT_clear_cache(Operator):
             lambda: clear_payload_cache(cache_root),
             "Clearing downloaded payloads and previews",
         )
+        return {"FINISHED"}
+
+
+class EVE_RESOURCE_OT_prune_cache(Operator):
+    """Deletes cached files no kept build refers to any more.
+
+    The cache is content-addressed, so a file that changes upstream arrives
+    under a NEW name and sits beside the one it replaced. Nothing overwrites
+    and nothing notices, which means the cache only ever grows -- 379 MB of
+    ResFiles here for a handful of ships.
+
+    tools-core already knows which files matter: it reads each kept build's
+    indexes, unions every path they mention, and removes the rest. That is a
+    real answer rather than "delete everything and download it again", which is
+    what clearing the cache does.
+    """
+
+    bl_idname = "carbon.eve_resource_prune_cache"
+    bl_label = "Prune Old Builds"
+    bl_description = ("Delete cached files that no longer belong to a kept "
+                      "build; keeps the newest build's files")
+
+    keep_latest: IntProperty(
+        name="Builds to keep", default=1, min=1, max=10,
+        description="How many recent builds to keep files for")
+
+    @classmethod
+    def poll(cls, context):
+        state = getattr(context.window_manager, "carbon_eve_resources", None)
+        return state is not None and not state.busy
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        import subprocess
+
+        from .sof_builder import _spawn_options
+
+        prefs = _prefs(context)
+        root = str(prefs.tools_core_directory or "").strip()
+        if not root:
+            self.report({"ERROR"}, "Set the tools-core checkout in preferences first")
+            return {"CANCELLED"}
+        script = Path(bpy.path.abspath(root)) / "bin" / "cjs-tools-cache-prune.js"
+        if not script.is_file():
+            self.report({"ERROR"}, f"{script.name} is not in this tools-core checkout")
+            return {"CANCELLED"}
+
+        node = str(prefs.node_executable or "node").strip() or "node"
+        # `--only-targets` is required, not optional politeness: without it the
+        # tool checks EVERY target it can see and refuses to prune when one is
+        # unreachable, on the grounds that a target it cannot read is not a
+        # target with no files. Sound reasoning, and it means a scoped prune
+        # has to say so out loud.
+        command = [node, str(script), "--target", "eve", "--only-targets",
+                   "--keep-latest", str(int(self.keep_latest)),
+                   "--cache", str(_cache_path(prefs)), "--apply"]
+
+        def prune():
+            done = subprocess.run(command, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace",
+                                  **_spawn_options())
+            if done.returncode != 0:
+                raise ResourceIndexError(
+                    (done.stderr or done.stdout or "prune failed").strip()[:300])
+            return done.stdout.strip().splitlines()[-1:] or ["pruned"]
+
+        _launch_job(context, "prune_cache", prune,
+                    f"Pruning cached builds, keeping the newest {self.keep_latest}")
         return {"FINISHED"}
 
 
@@ -1100,6 +1182,31 @@ def _fetch_sof_resources(paths: tuple[str, ...], prefs) -> tuple[dict[str, Path]
     return resolved, missing
 
 
+def _resource_build(default: str = "latest") -> str:
+    """The RESOURCE build number `latest` currently means.
+
+    Two facets share the word `latest` -- resources and the SDE -- and they are
+    different numbers. This asks for the resource one, which is what a bundle
+    is built from.
+
+    Falls back to `latest` when the service cannot be reached: the bundle then
+    lands in the DNA's folder without a build under it, which is honest about
+    not knowing rather than inventing a number.
+    """
+
+    from . import service_access
+
+    client = service_access.client()
+    if client is None:
+        return default
+    try:
+        answer = client.request_json("GET", "/eve/latest/build")
+    except Exception:
+        return default
+    build = str((answer or {}).get("build") or "").strip()
+    return build or default
+
+
 def _hull_record(dna: str) -> dict:
     """The hull record for a DNA, or an empty dict if it cannot be had.
 
@@ -1144,77 +1251,47 @@ def _assemble_sof_document(
     downloaded: dict[str, Path],
     missing: list[str],
 ) -> str:
-    """Imports each document mesh and routes its SOF areas onto the slots."""
+    """Builds the whole ship from a bundle, through the one ship builder.
 
-    assembly = bundle.assembly
-    resolved: dict[str, Path] = dict(bundle.resources)
-    resolved.update(downloaded)
-    imported = 0
-    materials = 0
-    slots = 0
+    This used to import the meshes and route their areas onto material slots,
+    and stop there. That is a fraction of a ship: no decals, no plane or banner
+    sets, no per-ship values, and none of the drivers that carry them into the
+    shaders. A ship loaded from this panel was missing all of it while a ship
+    built by the preview script had it, because the two paths had quietly
+    become different builders.
+
+    There is one builder now. Whatever `build_ship` learns, this gets.
+    """
+
+    from . import ship as ship_builder
+
+    if bundle.document_path is None or bundle.directory is None:
+        return "This bundle has no document on disk to build from"
+
+    hull_record = _hull_record(bundle.assembly.dna)
     problems = list(missing)
-    for mesh in assembly.meshes:
-        if primary_only and mesh.role != "primary":
-            continue
-        geometry = resolved.get(mesh.geometry_path)
-        if geometry is None:
-            problems.append(f"{mesh.geometry_path}: geometry was not downloaded")
-            continue
-        before = {item.name for item in bpy.data.objects}
-        bpy.ops.import_scene.carbon_gr2("EXEC_DEFAULT", filepath=str(geometry))
-        objects = [
-            item
-            for item in bpy.data.objects
-            if item.name not in before and item.type == "MESH"
-        ]
-        if not objects:
-            problems.append(f"{mesh.geometry_path}: the GR2 importer created no mesh objects")
-            continue
-        imported += 1
-        slot_count = sum(len(item.data.materials) for item in objects)
-        problems.extend(area_slot_report(mesh, slot_count))
-        report = apply_mesh_areas(
-            mesh,
-            objects,
-            resolved,
-            prefix=f"{mesh.name}.",
-            shader_library=str(_shader_library()),
-            progress=_set_progress,
-        )
-        materials += report.materials
-        slots += report.assigned_slots
-        problems.extend(report.warnings)
-        problems.extend(
-            f"{path}: texture unavailable" for path in report.missing_textures
-        )
-        for item in objects:
-            item["carbon_sof_dna"] = assembly.dna
-            item["carbon_sof_geometry"] = mesh.geometry_path
+    primary = ship_builder.build_ship(
+        str(bundle.document_path),
+        str(bundle.directory),
+        decal_sets=(hull_record.get("decalSets") or []),
+        hull_record=hull_record,
+        cache_directory=str(_cache_path(_prefs(bpy.context)) / "logos"),
+    )
+    if primary is None:
+        problems.append("no geometry was assembled")
 
-    # Recover each material's AREA TYPE. A faction stores four material names
-    # per area type, so without this every material looks alike and an edit
-    # meant for the hull reaches the sails as well. The built document cannot
-    # answer it -- `Tr2MeshArea` drops the area type -- so it comes from the
-    # hull record, where it was authored.
-    from . import sof_areas
-    hull_record = _hull_record(assembly.dna)
-    if hull_record:
-        stamped = sof_areas.stamp_ship(bpy.data.objects, hull_record)
-        if stamped["types"]:
-            problems.append("areas: " + ", ".join(
-                f"{name} x{count}" for name, count in sorted(stamped["types"].items())))
-        if stamped["unmatched"]:
-            problems.append(f"areas: {len(stamped['unmatched'])} could not be "
-                            "identified and are left as built")
+    if not hull_record:
+        # Said out loud: without it the decals have no names or visibility
+        # groups and the areas cannot be typed, which is a visibly poorer ship
+        # rather than an error.
+        problems.append(f"no hull record for {bundle.assembly.dna}; decals and "
+                        "area types are unavailable")
 
     for problem in problems:
         print(f"[CarbonEngineJS SOF] {problem}")
-    summary = (
-        f"Assembled {assembly.dna or 'SOF document'}: {imported} meshes, "
-        f"{materials} area materials, {slots} slots"
-    )
+    summary = f"Loaded {bundle.assembly.dna or 'SOF document'}"
     if problems:
-        summary += f"; {len(problems)} issues logged to the console"
+        summary += f"; {len(problems)} issue(s) logged to the console"
     return summary
 
 
@@ -1589,7 +1666,7 @@ classes = (
     EVE_RESOURCE_OT_open_downloads,
     EVE_RESOURCE_OT_refresh_cache_stats,
     EVE_RESOURCE_OT_clear_cache,
-    EVE_RESOURCE_PT_browser,
+    EVE_RESOURCE_OT_prune_cache,
 )
 
 

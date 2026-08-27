@@ -96,6 +96,39 @@ class EditorTests(unittest.TestCase):
         self.assertFalse(self.settings.read_dna("not-a-dna"))
         self.assertEqual(self.settings.hull, "mde3_t3")
 
+    def test_choosing_parts_writes_the_dna(self):
+        self.settings.dna = "mde3_t3:legion_minmatar:minmatar"
+        self.settings.use_mesh = True
+        self.settings.mesh_material1 = "mtl_a"
+        self.assertIn("material?mtl_a;none;none;none", self.settings.dna)
+
+    def test_a_command_switched_on_but_empty_stays_on(self):
+        # It did not: composing an empty command produced a DNA without it, and
+        # parsing that DNA switched it straight back off -- so turning Mesh on
+        # and then naming a material could not work at all.
+        self.settings.dna = "mde3_t3:legion_minmatar:minmatar"
+        self.settings.use_mesh = True
+        self.assertTrue(self.settings.use_mesh)
+        self.assertNotIn("material?", self.settings.dna)
+
+    def test_typing_a_dna_populates_the_parts(self):
+        self.settings.dna = FULL
+        self.assertEqual(self.settings.hull, "mde3_t3")
+        self.assertTrue(self.settings.use_pattern)
+        self.assertEqual(self.settings.pattern_material5, "brown_dust_coated")
+
+    def test_a_typed_dna_is_not_recomposed_over(self):
+        # The text a person typed must survive being parsed: a recompose is
+        # canonical, so a DNA carrying a command the editor does not model yet
+        # would be quietly rewritten without it.
+        self.settings.dna = FULL
+        self.assertEqual(self.settings.dna, FULL)
+
+    def test_switching_a_command_off_removes_it_from_the_dna(self):
+        self.settings.dna = FULL
+        self.settings.use_respath = False
+        self.assertNotIn("respathinsert?", self.settings.dna)
+
     def test_the_dna_is_kept_verbatim_on_the_way_in(self):
         # Recomposing on read would silently drop anything the editor does not
         # model yet.

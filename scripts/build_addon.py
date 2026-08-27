@@ -6,9 +6,11 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 ADDONS = ROOT / "addons"
+#: One package now. The GR2 importer used to ship separately and had to be
+#: installed and enabled before this add-on could load anything; it is a
+#: component of this one, so there is a single thing to download.
 PACKAGES = (
-    ("io_scene_carbon_gr2", "0.1.3"),
-    ("carbon_eve_resources", "0.3.0"),
+    ("carbon_eve_resources", "0.4.0"),
 )
 PACKAGE_DOCUMENTS = (
     "LICENSE",

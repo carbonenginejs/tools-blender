@@ -123,6 +123,9 @@ class SofBundle:
     resources: Mapping[str, Path]
     build: str = ""
     directory: Optional[Path] = None
+    #: The document the manifest names, so a caller that wants to run the full
+    #: ship builder over this bundle does not have to guess the file name.
+    document_path: Optional[Path] = None
 
     def unresolved(self, *, primary_only: bool = False) -> tuple[str, ...]:
         """Document resources the bundle does not provide locally."""
@@ -193,6 +196,7 @@ def load_sof_bundle(path: Path | str) -> SofBundle:
         resources=resources,
         build=str(data.get("build", "") or ""),
         directory=root,
+        document_path=_bundle_path(root, document_name),
     )
 
 
