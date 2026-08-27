@@ -304,6 +304,35 @@ def drive_mask_values(group_node, obj):
                 added += 1
     return added
 
+
+#: The mesh attribute holding each vertex's UNDEFORMED position.
+#:
+#: Written by `ship.store_rest_position` at import. Kept as a name here so the
+#: two projections and the writer cannot drift apart.
+REST_POSITION = "carbon_rest_position"
+
+
+def model_position(nodes, location=(-1200, 0)):
+    """The position a projection is built from: the model's, not the frame's.
+
+    Carbon projects patterns and decals from the RAW model position -- the
+    vertex before skinning. Blender's Texture Coordinate gives the DEFORMED
+    position, so a posed bone slides the hull through a pattern that stays put
+    in space: the projection does not follow the bones, which is exactly how it
+    looked.
+
+    Falls back to object coordinates when the attribute is absent, so a mesh
+    that came from somewhere else still projects -- undeformed, but present.
+    """
+
+    attribute = nodes.new("ShaderNodeAttribute")
+    attribute.attribute_type = "GEOMETRY"
+    attribute.attribute_name = REST_POSITION
+    attribute.location = location
+    attribute.label = "model position (rest)"
+    return attribute.outputs["Vector"]
+
+
 def build_projection_group() -> bpy.types.ShaderNodeTree:
     """Builds the shared pattern-projection group.
 
@@ -343,8 +372,7 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
     output = nodes.new("NodeGroupOutput")
     output.location = (900, 0)
 
-    coordinate = nodes.new("ShaderNodeTexCoord")
-    coordinate.location = (-1200, 0)
+    rest = model_position(nodes, (-1200, 0))
 
     for index in (0, 1):
         for key in ("position", "rotation", "scaling", "mirrored", "wrap"):
@@ -377,7 +405,7 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
         # it when not.
         separate = nodes.new("ShaderNodeSeparateXYZ")
         separate.location = (-1000, base)
-        links.new(coordinate.outputs["Object"], separate.inputs[0])
+        links.new(rest, separate.inputs[0])
 
         absolute = nodes.new("ShaderNodeMath")
         absolute.operation = "ABSOLUTE"
@@ -1413,8 +1441,7 @@ def build_decal_projection_group() -> bpy.types.ShaderNodeTree:
 
     output = nodes.new("NodeGroupOutput")
     output.location = (400, 0)
-    coordinate = nodes.new("ShaderNodeTexCoord")
-    coordinate.location = (-700, 0)
+    rest = model_position(nodes, (-700, 0))
 
     def attribute(name, row):
         node = nodes.new("ShaderNodeAttribute")
@@ -1428,7 +1455,7 @@ def build_decal_projection_group() -> bpy.types.ShaderNodeTree:
     mapping.vector_type = "TEXTURE"
     mapping.location = (-400, 0)
     mapping.label = "inverse decal transform"
-    links.new(coordinate.outputs["Object"], mapping.inputs["Vector"])
+    links.new(rest, mapping.inputs["Vector"])
     links.new(attribute("carbon_decal_position", 240), mapping.inputs["Location"])
     links.new(attribute("carbon_decal_rotation", 120), mapping.inputs["Rotation"])
     links.new(attribute("carbon_decal_scaling", -60), mapping.inputs["Scale"])

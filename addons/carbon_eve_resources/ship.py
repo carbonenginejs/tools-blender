@@ -190,7 +190,42 @@ def import_geometry(path):
     keep_actions([action for action in bpy.data.actions if action not in known_actions],
                  [o for o in bpy.data.objects if o not in before and o.type == "ARMATURE"])
     parent_to_armature(created)
+    for mesh in created:
+        store_rest_position(mesh)
     return created
+
+
+#: The undeformed vertex position, stored as our own mesh attribute.
+#:
+#: Carbon projects patterns and decals from the RAW model position -- the
+#: vertex before skinning -- which is what fixes a pattern to the surface so it
+#: deforms with the hull. Blender's Texture Coordinate gives the DEFORMED
+#: position instead, so a posed bone slides the hull through a pattern that
+#: stays put in space.
+#:
+#: Blender's own `rest_position` would serve, but it is opt-in per mesh and the
+#: property does not exist in Blender 5. Writing it ourselves is also closer to
+#: the truth: this is the model position, which is what the shader means.
+REST_POSITION = "carbon_rest_position"
+
+
+def store_rest_position(mesh_object):
+    """Records each vertex's undeformed position on the mesh.
+
+    Called at import, when the vertices ARE the rest pose: no armature has been
+    evaluated yet, so the coordinates on the mesh datablock are the model's own.
+    """
+
+    data = getattr(mesh_object, "data", None)
+    if data is None or not hasattr(data, "attributes") or not data.vertices:
+        return None
+    if REST_POSITION in data.attributes:
+        return data.attributes[REST_POSITION]
+
+    attribute = data.attributes.new(REST_POSITION, "FLOAT_VECTOR", "POINT")
+    flat = [component for vertex in data.vertices for component in vertex.co]
+    attribute.data.foreach_set("vector", flat)
+    return attribute
 
 
 def parent_to_armature(meshes):
@@ -603,6 +638,10 @@ def build_decals(document, hull, resources, family):
             boned += 1
 
         skin_like_hull(obj, hull, order)
+        # A decal projects from the model position too, and its triangles are
+        # copies of the hull's -- so it needs its own copy of the rest pose
+        # before anything deforms it.
+        store_rest_position(obj)
         mesh.materials.append(build_decal_material(decal, resources, obj))
         built.append(obj)
 
