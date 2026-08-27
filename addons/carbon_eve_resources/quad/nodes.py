@@ -86,6 +86,10 @@ SHIP_PROPERTIES = {
     # this is a preview-only multiplier, named so nobody mistakes it for one of
     # Carbon's. See /docs/architecture/non-carbon-extensions.md.
     "previewGlowScale": ("carbon_preview_glow_scale", 1.0),
+    # Also NOT a Carbon value. A banner is additive and its logo is whatever
+    # colour its owner chose, so a dark logo adds almost nothing -- faithful,
+    # and unreadable. This lifts every banner on the ship at once.
+    "previewBannerScale": ("carbon_preview_banner_scale", 2.0),
 }
 
 #: How each per-ship property becomes its socket value. `v` is the property.

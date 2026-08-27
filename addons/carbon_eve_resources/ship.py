@@ -485,6 +485,8 @@ def apply_ship_globals(objects, overrides=None):
                                          description="shipData.x: opens the heat gate; heat is fully on by 0.02"),
         "carbon_preview_glow_scale": dict(min=0.0, max=1000.0, step=100, precision=2,
                                          description="Preview only, not a Carbon value: EVE blooms its glows and Blender does not"),
+        "carbon_preview_banner_scale": dict(min=0.0, max=100.0, step=25, precision=2,
+                                            description="Preview only: lifts every banner, since a dark logo adds almost nothing to an additive surface"),
         "carbon_ship_kill_count": dict(min=0.0, max=999.0, step=100, precision=0,
                                        description="displayData.x: whole kills, drawn as tally marks"),
     }
@@ -1429,13 +1431,15 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
                       cache_directory="", resources=None):
     """Banners and the lights that shine on them.
 
-    A banner is the quad a player's alliance, corporation or CEO logo is drawn
-    on, and a banner set carries its own lights -- the fittings that light the
-    logo rather than scene lighting.
+    A banner is the quad a logo is drawn on, and a banner set carries its own
+    lights -- the fittings that light the logo rather than scene lighting.
 
-    The logo itself is an EXTERNAL parameter: which image lands here depends on
-    who owns the ship, so the slot is recorded and left empty rather than filled
-    with a guess.
+    Which logo belongs on a set is the SET's key, one of the twenty-four
+    usages. mde3_t3 has two sets: two ALLIANCE banners and two CORPORATION
+    banners, and no CEO or vertical banner at all.
+
+    The image is an EXTERNAL parameter, so a set with nothing to show is not
+    built.
     """
 
     armature = hull.parent if hull is not None and hull.parent is not None         and hull.parent.type == "ARMATURE" else None
@@ -1450,17 +1454,40 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
             str(source.get("visibilityGroupName") or "primary"),
             source.get("visibilityGroup"))
 
+        # The USAGE is the SET's key, not the item's `reference`.
+        #
+        # An item's reference is its index within the set's own list; the set is
+        # what says which of the twenty-four usages it serves. Reading the item
+        # instead gave this hull one banner of each of four different usages
+        # when it actually has TWO alliance logos and TWO corporation logos --
+        # so three of them went looking for owners that were never asked for and
+        # came out blank.
+        usage = banner_set.get("key")
+        slot = BANNER_REFERENCES[usage] if isinstance(usage, int)             and 0 <= usage < len(BANNER_REFERENCES) else str(usage or "")
+        # No image, no banner. A banner exists to carry a picture: one with
+        # nothing resolved is an invisible quad that can still be selected,
+        # exported and puzzled over.
+        artwork = None
+        if owners and cache_directory:
+            try:
+                artwork = logos.banner_logo(slot, owners, cache_directory)
+            except logos.LogoError as error:
+                print(f"  ! {error}")
+        if artwork is None and placeholders.banner_placeholder(slot) is None:
+            print(f"  no image for the {slot or 'unnamed'} banner set; not building its "
+                  f"{len(banners)} banner(s)")
+            continue
+
         banners_built = []
         for index, item in enumerate(banners):
-            reference = item.get("reference")
-            slot = BANNER_REFERENCES[reference] if isinstance(reference, int)                 and 0 <= reference < len(BANNER_REFERENCES) else str(reference or "")
             mesh = quad_mesh(f"bannerset{set_index}_{index}")
             obj = remember_name(bpy.data.objects.new(
-                unique_name(f"banner_{slot or set_index}", collection.name), mesh),
+                unique_name(f"banner_{slot or set_index}_{index}", collection.name), mesh),
                 f"banner_{slot or set_index}", collection.name)
             group.objects.link(obj)
             obj.matrix_world = item_matrix(item, hull)
-            obj["carbon_banner_reference"] = int(reference or 0)
+            obj["carbon_banner_usage"] = int(usage or 0)
+            obj["carbon_banner_reference"] = int(item.get("reference") or 0)
             obj["carbon_banner_slot"] = slot
             # angleX and angleY tilt the banner about its own axes; kept as
             # authored so nothing is lost, and not yet applied.
@@ -1700,7 +1727,13 @@ def banner_material(slot, set_index, index, owners=None, cache_directory="",
         variable.targets[0].id_type = "OBJECT"
         variable.targets[0].id = ship_object
         variable.targets[0].data_path = '["carbon_ship_activation_strength"]'
-        driver.expression = "v"
+        booster = driver.variables.new()
+        booster.name = "b"
+        booster.type = "SINGLE_PROP"
+        booster.targets[0].id_type = "OBJECT"
+        booster.targets[0].id = ship_object
+        booster.targets[0].data_path = '["carbon_preview_banner_scale"]'
+        driver.expression = "v * b"
 
     transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
     transparent.location = (440, 160)
