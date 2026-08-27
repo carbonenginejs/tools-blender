@@ -1550,6 +1550,8 @@ def register():
     pattern_controls.register()
     from . import sof_panels
     sof_panels.register()
+    from . import sidebar
+    sidebar.register()
     _registered = True
     if not bpy.app.timers.is_registered(_auto_load):
         bpy.app.timers.register(_auto_load, first_interval=1.0)
@@ -1569,6 +1571,8 @@ def unregister():
     if _preview_collection is not None:
         bpy.utils.previews.remove(_preview_collection)
         _preview_collection = None
+    from . import sidebar
+    sidebar.unregister()
     from . import sof_panels
     sof_panels.unregister()
     from . import pattern_controls

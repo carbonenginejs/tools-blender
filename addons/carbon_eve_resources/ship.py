@@ -1174,8 +1174,11 @@ def populate_sof(obj, document, family):
                     continue
                 found[field] = (float(socket.default_value) if field == "gloss"
                                 else tuple(socket.default_value)[:3])
-            for field, value in found.items():
-                setattr(entry, field, value)
+            # Filling FROM the SOF, so the colour updates must not read as a
+            # person editing them and mark the slot custom.
+            with sof_panels.applying():
+                for field, value in found.items():
+                    setattr(entry, field, value)
 
     print(f"  SOF: {settings.dna or '(no dna in the document)'}")
 

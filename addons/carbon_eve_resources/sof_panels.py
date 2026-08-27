@@ -110,8 +110,54 @@ def _material_update(self, context):
     })
 
 
+#: Set while a slot is being filled from the SOF, so the update callbacks know
+#: the change did not come from a person.
+_APPLYING = {"depth": 0}
+
+
+class applying:
+    """Marks values as arriving FROM the SOF rather than from a consumer.
+
+    Without it, filling a slot from a faction record trips every colour's update
+    and marks the slot custom -- so a freshly loaded ship would claim every
+    material had been edited by hand.
+    """
+
+    def __enter__(self):
+        _APPLYING["depth"] += 1
+        return self
+
+    def __exit__(self, *_):
+        _APPLYING["depth"] -= 1
+        return False
+
+
+def _colour_edited(self, context):
+    """A colour changed. If a person did it, the slot is no longer the material.
+
+    In SOF a colour is not a value someone picks -- it belongs to a named
+    MATERIAL, and the slot names which one. Editing a colour directly therefore
+    means the slot has left that material behind, and saying so is what keeps
+    the material name honest rather than a stale label on values it no longer
+    describes.
+    """
+
+    if _APPLYING["depth"] == 0 and self.material and self.material != CUSTOM_MATERIAL:
+        self.material = CUSTOM_MATERIAL
+    _material_update(self, context)
+
+
+#: What a slot is called once its colours no longer match any named material.
+CUSTOM_MATERIAL = "custom"
+
+
 class CARBON_SOF_Material(PropertyGroup):
-    """One material slot, as the FACTION authors it.
+    """One material slot: the NAME of a SOF material, and the values it carries.
+
+    The name is the thing a consumer chooses. The colours below it are what that
+    material holds -- shown because they are useful to see, and editable at the
+    cost of the slot becoming `custom`, which is the honest description of
+    values that no longer belong to any named material.
 
     EVE's colours are HDR -- authored above one, three times normal is common --
     so these carry a soft maximum rather than a hard clamp.
@@ -119,16 +165,20 @@ class CARBON_SOF_Material(PropertyGroup):
 
     index: IntProperty(default=1, min=1, max=4)
     is_pattern: BoolProperty(default=False)
+    material: StringProperty(
+        name="Material", default="",
+        description="The SOF material this slot uses. Editing a colour below "
+                    "leaves that material and marks the slot custom")
     diffuse: FloatVectorProperty(
         name="Diffuse", subtype="COLOR", size=3, min=0.0, soft_max=1.0,
-        default=(0.0, 0.0, 0.0), update=_material_update,
+        default=(0.0, 0.0, 0.0), update=_colour_edited,
         description="Authored above 1 for HDR; 3x normal is common")
     fresnel: FloatVectorProperty(
         name="Fresnel", subtype="COLOR", size=3, min=0.0, soft_max=1.0,
-        default=(0.04, 0.04, 0.04), update=_material_update,
+        default=(0.04, 0.04, 0.04), update=_colour_edited,
         description="F0, the reflectance looking straight on")
     gloss: FloatProperty(
-        name="Gloss", default=0.5, min=0.0, max=1.0, update=_material_update)
+        name="Gloss", default=0.5, min=0.0, max=1.0, update=_colour_edited)
 
 
 def _component_update(self, context):
@@ -213,6 +263,64 @@ class CARBON_SOF_OT_apply(Operator):
         written = push_to_materials(obj, values)
         objects = len(ship_objects(obj))
         self.report({"INFO"}, "Wrote %d socket(s) across %d object(s)" % (written, objects))
+        return {"FINISHED"}
+
+
+class CARBON_SOF_OT_export_material(Operator):
+    """Writes a custom material out, so an edit can leave Blender.
+
+    A slot goes `custom` the moment a colour is edited, and a custom material
+    exists nowhere but this blend. Exporting it is what turns a local edit into
+    something a SOF can carry -- until it is written down it is a change nobody
+    else can see, which is the same trap as editing an object instead of its
+    SOF.
+    """
+
+    bl_idname = "carbon.sof_export_material"
+    bl_label = "Export Custom Material"
+    bl_description = "Write this slot's values to a JSON file beside the blend"
+    bl_options = {"REGISTER"}
+
+    slot: StringProperty(default="", options={"HIDDEN"})
+
+    def execute(self, context):
+        import json
+        import os
+
+        obj = context.object
+        while obj is not None and not getattr(obj, "carbon_sof", None).dna:
+            obj = obj.parent
+        if obj is None:
+            self.report({"ERROR"}, "No ship to export from")
+            return {"CANCELLED"}
+
+        index, _, pattern = self.slot.partition(":")
+        entry = obj.carbon_sof.slot(int(index or 1), pattern == "1")
+        if entry is None:
+            self.report({"ERROR"}, "That slot is not there")
+            return {"CANCELLED"}
+
+        settings = obj.carbon_sof
+        document = {
+            "schema": "carbon.sof-material",
+            "version": 1,
+            "name": f"{settings.hull or 'hull'}_{'pattern' if entry.is_pattern else 'material'}{entry.index}",
+            "from": {"hull": settings.hull, "faction": settings.faction,
+                     "dna": settings.dna},
+            "values": {
+                "diffuse": [round(v, 6) for v in entry.diffuse],
+                "fresnel": [round(v, 6) for v in entry.fresnel],
+                "gloss": round(entry.gloss, 6),
+            },
+        }
+
+        directory = os.path.dirname(bpy.data.filepath) or bpy.app.tempdir
+        path = os.path.join(directory, document["name"] + ".sof-material.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(document, handle, indent=2)
+            handle.write(chr(10))
+        self.report({"INFO"}, f"Wrote {os.path.basename(path)}")
+        print(f"  wrote {path}")
         return {"FINISHED"}
 
 
@@ -349,6 +457,7 @@ CLASSES = (
     CARBON_SOF_Material,
     CARBON_SOF_Settings,
     CARBON_SOF_OT_apply,
+    CARBON_SOF_OT_export_material,
     CARBON_SOF_OT_ensure_slots,
     CARBON_PT_sof,
     CARBON_PT_sof_source,
