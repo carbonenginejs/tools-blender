@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 from typing import Callable, Optional, Sequence
 
 
@@ -131,6 +132,25 @@ def build_bundle(
     return BundleBuild(dna=value, directory=destination, created=True, output=output)
 
 
+#: Windows: start the child without a console of its own.
+#:
+#: Blender's GUI process has no usable console, and a child that inherits its
+#: handles gets a broken one rather than none. Node asserts on that inside
+#: libuv before it runs a line of script -- "Assertion failed: process_title,
+#: file src/win/util.c" and exit code 3221226505 -- which reads as tools-core
+#: crashing when tools-core has not started yet.
+CREATE_NO_WINDOW = 0x08000000
+
+
+def _spawn_options() -> dict:
+    """Keeps the child's console and stdin predictable rather than inherited."""
+
+    options = {"stdin": subprocess.DEVNULL}
+    if sys.platform == "win32":
+        options["creationflags"] = CREATE_NO_WINDOW
+    return options
+
+
 def _run(command: Sequence[str], *, timeout: float, runner: Callable) -> str:
     try:
         completed = runner(
@@ -141,6 +161,7 @@ def _run(command: Sequence[str], *, timeout: float, runner: Callable) -> str:
             errors="replace",
             timeout=timeout,
             check=False,
+            **_spawn_options(),
         )
     except subprocess.TimeoutExpired as exc:
         raise SofBuilderError(f"tools-core timed out after {timeout:.0f}s") from exc
