@@ -1240,6 +1240,19 @@ def populate_sof(obj, document, family):
     # still knows, so read it back out before anyone looks at the panel.
     settings.stamp_sources()
 
+    # Point each area's shader at the MATERIAL its slot names, rather than
+    # leaving the values as loose constants nobody can trace. A material shared
+    # by two areas becomes one node group, so editing it later reaches both
+    # without anything walking the ship.
+    bound = settings.bind_materials(obj)
+    if bound["bound"]:
+        print(f"  materials: {bound['bound']} slot(s) bound to "
+              f"{bound['materials']} material group(s)")
+    if bound["missing"]:
+        # Named but unfetchable: those areas still show what they were built
+        # with, which is true, and saying so beats a silent black area.
+        print(f"  materials: could not fetch {', '.join(bound['missing'])}")
+
     print(f"  SOF: {settings.dna or '(no dna in the document)'}")
 
 

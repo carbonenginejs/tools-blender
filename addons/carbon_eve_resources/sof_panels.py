@@ -118,27 +118,73 @@ def push_to_materials(obj, values, *, area_type=None, blocked_slot=None):
     return written
 
 
-def _material_update(self, context):
-    """Pushes one slot's values to the areas that slot actually governs.
+def slot_materials(obj, entry):
+    """The area materials one slot governs.
 
-    Which areas those are is the whole question. A hull material belongs to one
-    AREA TYPE and must not reach the others; a pattern layer is ship-wide,
-    because the pattern branch of the resolution chain never consults the area
-    type; and a DNA override skips any area that blocks its slot.
+    A hull material belongs to one AREA TYPE and must not reach the others; a
+    pattern layer is ship-wide, because the pattern branch of the resolution
+    chain never consults the area type; and a DNA override skips any area whose
+    `blockedMaterials` vetoes its slot.
     """
+
+    wanted = None if entry.is_pattern or entry.area_type < 0 else entry.area_type
+    blocked = (entry.index if not entry.is_pattern
+               and entry.source == sof_resolution.SOURCE_DNA else None)
+    found = []
+    seen = set()
+    for target in ship_objects(obj):
+        for slot in getattr(target, "material_slots", []):
+            material = slot.material
+            if material is None or not material.use_nodes or material.name in seen:
+                continue
+            seen.add(material.name)
+            if wanted is not None:
+                area_type = material.get("carbon_area_type", None)
+                # An area nobody could identify is left alone rather than swept
+                # up by every edit.
+                if area_type is None or int(area_type) != int(wanted):
+                    continue
+            if blocked is not None and sof_resolution.is_blocked(
+                    material.get("carbon_blocked_materials", 0), blocked):
+                continue
+            found.append(material)
+    return found
+
+
+def bound_group_for(obj, entry):
+    """The material group this slot is reading, if it has been bound."""
+
+    from . import sof_material_nodes
+
+    for material in slot_materials(obj, entry):
+        tree = sof_material_nodes.bound_group(material, entry.index,
+                                              is_pattern=entry.is_pattern)
+        if tree is not None:
+            return tree
+    return None
+
+
+def _material_update(self, context):
+    """Writes this slot's values into the MATERIAL the slot is reading.
+
+    Nothing is pushed into shaders any more. Every area that names this
+    material is linked to one node group, so setting the group's values is the
+    whole update -- the areas are reading it, not holding copies of it.
+    """
+
+    from . import sof_material_nodes
 
     obj = getattr(self, "id_data", None)
     if not isinstance(obj, bpy.types.Object):
         return
-    sockets = PATTERN_SOCKETS if self.is_pattern else MATERIAL_SOCKETS
-    area_type = None if self.is_pattern or self.area_type < 0 else self.area_type
-    blocked = (self.index if not self.is_pattern
-               and self.source == sof_resolution.SOURCE_DNA else None)
-    push_to_materials(obj, {
-        sockets["diffuse"].format(self.index): tuple(self.diffuse) + (1.0,),
-        sockets["gloss"].format(self.index): self.gloss,
-        sockets["fresnel"].format(self.index): tuple(self.fresnel) + (1.0,),
-    }, area_type=area_type, blocked_slot=blocked)
+    tree = bound_group_for(obj, self)
+    if tree is None:
+        return
+    sof_material_nodes._fill(tree, {
+        "diffuse": tuple(self.diffuse),
+        "fresnel": tuple(self.fresnel),
+        "gloss": self.gloss,
+    })
 
 
 #: Set while a slot is being filled from the SOF, so the update callbacks know
@@ -174,8 +220,32 @@ def _colour_edited(self, context):
     """
 
     if _APPLYING["depth"] == 0 and self.material and self.material != CUSTOM_MATERIAL:
-        self.material = CUSTOM_MATERIAL
+        # A shared material is shared on purpose -- mde3_t3's hull and sails
+        # both read `black_deadstar_coated` -- so editing it in place would
+        # repaint every slot that names it. Going custom takes a private copy
+        # and leaves the original alone for everyone else.
+        _privatise(self, context)
+        with applying():
+            self.material = CUSTOM_MATERIAL
     _material_update(self, context)
+
+
+def _privatise(entry, context):
+    """Gives one slot its own copy of the material it is reading."""
+
+    from . import sof_material_nodes
+
+    obj = getattr(entry, "id_data", None)
+    if not isinstance(obj, bpy.types.Object):
+        return
+    tree = bound_group_for(obj, entry)
+    if tree is None:
+        return
+    owner = f"{obj.name} {'P' if entry.is_pattern else ''}{entry.index}"
+    private = sof_material_nodes.make_private(tree, owner)
+    for material in slot_materials(obj, entry):
+        sof_material_nodes.bind_slot(material, entry.index, private,
+                                     is_pattern=entry.is_pattern)
 
 
 #: What a slot is called once its colours no longer match any named material.
@@ -364,6 +434,42 @@ class CARBON_SOF_Settings(PropertyGroup):
                 dna = sof_resolution.with_pattern(dna, parts[0], parts[1:])
         return sof_resolution.with_materials(dna, materials)
 
+    def bind_materials(self, obj) -> dict:
+        """Points every area shader at the material groups its slots name.
+
+        This is the SOF's whole job on the scene side: name the material, and
+        let the shader read it. Nothing writes colours into a shader here.
+
+        A material's values are fetched once and land in its group; the areas
+        link to that group. A material shared by two areas is therefore one
+        datablock, and editing it later reaches both without anything walking
+        the ship.
+        """
+
+        from . import service_access, sof_material_nodes, sof_materials
+
+        client = service_access.client()
+        report = {"bound": 0, "materials": 0, "missing": []}
+        for entry in self.materials:
+            name = str(entry.material or "")
+            if not name or name == CUSTOM_MATERIAL:
+                continue
+            values = sof_materials.material_values(
+                sof_materials.material(name, client))
+            if not values:
+                # Named but unfetchable. Binding an empty group would paint the
+                # area black, which is worse than leaving it as it was built.
+                if name not in report["missing"]:
+                    report["missing"].append(name)
+                continue
+            tree = sof_material_nodes.material_group(name, values)
+            report["materials"] += 1
+            for material in slot_materials(obj, entry):
+                if sof_material_nodes.bind_slot(material, entry.index, tree,
+                                                is_pattern=entry.is_pattern):
+                    report["bound"] += 1
+        return report
+
     def stamp_sources(self) -> None:
         """Records, per slot, whether the DNA named it or the faction gave it.
 
@@ -448,16 +554,24 @@ class CARBON_SOF_OT_apply(Operator):
 
     def execute(self, context):
         obj = context.object
+        while obj is not None and not getattr(obj, "carbon_sof", None).dna:
+            obj = obj.parent
+        if obj is None:
+            self.report({"ERROR"}, "No ship to apply to")
+            return {"CANCELLED"}
+
         settings = obj.carbon_sof
-        values = {}
-        for entry in settings.materials:
-            sockets = PATTERN_SOCKETS if entry.is_pattern else MATERIAL_SOCKETS
-            values[sockets["diffuse"].format(entry.index)] = tuple(entry.diffuse) + (1.0,)
-            values[sockets["gloss"].format(entry.index)] = entry.gloss
-            values[sockets["fresnel"].format(entry.index)] = tuple(entry.fresnel) + (1.0,)
-        written = push_to_materials(obj, values)
-        objects = len(ship_objects(obj))
-        self.report({"INFO"}, "Wrote %d socket(s) across %d object(s)" % (written, objects))
+        settings.stamp_sources()
+        report = settings.bind_materials(obj)
+        message = "Bound %d slot(s) to %d material(s)" % (report["bound"],
+                                                          report["materials"])
+        if report["missing"]:
+            # Named but unfetchable, and said out loud: those areas are still
+            # showing whatever they were built with.
+            self.report({"WARNING"},
+                        message + "; could not fetch " + ", ".join(report["missing"]))
+        else:
+            self.report({"INFO"}, message)
         return {"FINISHED"}
 
 
