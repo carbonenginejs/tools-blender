@@ -1069,6 +1069,157 @@ def populate_sof(obj, document, family):
     print(f"  SOF: {settings.dna or '(no dna in the document)'}")
 
 
+#: A plane faces +Z in its own space -- ccpwgl's `PlaneNormal` is [0, 0, 1, 0]
+#: -- so the quad lies in local XY and the item's scaling sizes it.
+#:
+#: The corner OFFSETS themselves live in a vertex constant buffer the engine
+#: fills (planeglow reads `cb0[cornerIndex]`), which we have not measured, so
+#: the unit quad here is the obvious one and wants checking against a client
+#: render before it is trusted.
+PLANE_CORNERS = ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (0.5, 0.5, 0.0), (-0.5, 0.5, 0.0))
+
+
+def find_typed(document, wanted):
+    """Every node of a `_type`, in document order."""
+
+    found = []
+
+    def walk(node):
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, dict):
+            if node.get("_type") == wanted:
+                found.append(node)
+            for value in node.values():
+                walk(value)
+
+    walk(document)
+    return found
+
+
+def attach_to_bone(obj, armature, bone_index):
+    """Parents an object to a bone, keeping where it already is.
+
+    An attachment is RIGID -- it rides its bone rather than being deformed by
+    several -- so it is bone-parented rather than skinned, which is the opposite
+    of how a decal follows the hull.
+
+    The index is stored either way. Bone order is the model's, and if that ever
+    disagrees with the armature's the property is what makes it visible instead
+    of leaving an attachment silently on the wrong bone.
+    """
+
+    obj["carbon_bone_index"] = int(bone_index)
+    if armature is None or bone_index is None or bone_index < 0:
+        return False
+    bones = armature.data.bones
+    if bone_index >= len(bones):
+        return False
+    bone = bones[bone_index]
+    obj["carbon_bone_name"] = bone.name
+    world = obj.matrix_world.copy()
+    obj.parent = armature
+    obj.parent_type = "BONE"
+    obj.parent_bone = bone.name
+    # Bone parenting is relative to the bone's TAIL, and the object has not been
+    # evaluated since it was placed, so the inverse is computed rather than
+    # left to Blender to work out later.
+    obj.matrix_parent_inverse = (armature.matrix_world @ bone.matrix_local
+                                 @ mathutils.Matrix.Translation((0.0, bone.length, 0.0))).inverted()
+    obj.matrix_world = world
+    return True
+
+
+def build_plane_sets(document, hull, collection):
+    """One quad per `EvePlaneSetItem`, placed and coloured as the set says.
+
+    A plane set is the ship's glowing panels and light strips: additive quads
+    at a transform, each with its own colour and blink data. They are rigid, so
+    each rides its bone rather than being skinned.
+    """
+
+    armature = hull.parent if hull is not None and hull.parent is not None         and hull.parent.type == "ARMATURE" else None
+    built = []
+    for set_index, plane_set in enumerate(find_typed(document, "EvePlaneSet")):
+        effect = (plane_set.get("effect") or {}).get("effectFilePath", "")
+        planes = plane_set.get("planes") or []
+        if not planes:
+            continue
+        group = attachment_collection(collection, "planes")
+        for index, item in enumerate(planes):
+            mesh = bpy.data.meshes.new(f"planeset{set_index}_{index}")
+            mesh.from_pydata(list(PLANE_CORNERS), [], [(0, 1, 2, 3)])
+            mesh.update()
+            obj = bpy.data.objects.new(f"plane_{set_index}_{index}", mesh)
+            group.objects.link(obj)
+
+            # Built explicitly rather than by setting location/rotation/scale
+            # and reading matrix_world back: a freshly created object has not
+            # been evaluated, so matrix_world is still identity and every plane
+            # ends up wherever its bone is, at the armature's inverse scale.
+            x, y, z, w = tuple(item.get("rotation") or (0.0, 0.0, 0.0, 1.0))
+            local = mathutils.Matrix.LocRotScale(
+                mathutils.Vector(tuple(item.get("position") or (0.0, 0.0, 0.0))),
+                mathutils.Quaternion((w, x, y, z)),
+                mathutils.Vector(tuple(item.get("scaling") or (1.0, 1.0, 1.0))))
+            # The item's transform is in the MODEL's space, like a decal's.
+            world = (hull.matrix_world @ local) if hull is not None else local
+            obj.matrix_world = world
+
+            colour = tuple(item.get("color") or (1.0, 1.0, 1.0, 1.0))
+            obj["carbon_plane_color"] = colour
+            obj["carbon_plane_blink"] = tuple(item.get("blinkData") or (1.0, 0.0, 1.0, 0.0))
+            obj["carbon_plane_effect"] = str(effect)
+            obj.data.materials.append(plane_material(colour, set_index, index))
+            attach_to_bone(obj, armature, item.get("boneIndex"))
+            built.append(obj)
+    if built:
+        print(f"  built {len(built)} plane(s) from {len(find_typed(document, 'EvePlaneSet'))} set(s)")
+    return built
+
+
+def attachment_collection(parent, name):
+    """`<ship> > <name>`, beside the decals."""
+
+    existing = next((c for c in parent.children if c.name.split(".")[0] == name), None)
+    if existing is not None:
+        return existing
+    child = bpy.data.collections.new(name)
+    parent.children.link(child)
+    return child
+
+
+def plane_material(colour, set_index, index):
+    """An additive glow of the plane's own colour.
+
+    `planeglow` layers two scrolling maps through a mask and is NOT measured, so
+    this is the item's authored colour emitted flat -- the placement and the
+    colour are honest, the texturing is not there yet.
+    """
+
+    material = bpy.data.materials.new(f"plane {set_index}.{index}")
+    material.use_nodes = True
+    tree = material.node_tree
+    tree.nodes.clear()
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    emission = tree.nodes.new("ShaderNodeEmission")
+    emission.location = (-200, 0)
+    emission.inputs["Color"].default_value = tuple(colour[:3]) + (1.0,)
+    emission.inputs["Strength"].default_value = 1.0
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (-200, 160)
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    mix.location = (0, 0)
+    mix.inputs["Fac"].default_value = float(colour[3]) if len(colour) > 3 else 1.0
+    tree.links.new(transparent.outputs[0], mix.inputs[1])
+    tree.links.new(emission.outputs[0], mix.inputs[2])
+    tree.links.new(mix.outputs[0], output.inputs["Surface"])
+    if hasattr(material, "surface_render_method"):
+        material.surface_render_method = "BLENDED"
+    return material
+
+
 def build_ship(document_path, resources_directory, *, clear=True,
                globals_overrides=None, decal_sets=None):
     """Builds a whole ship: geometry, areas, decals, and the SOF that drives it.
@@ -1110,11 +1261,12 @@ def build_ship(document_path, resources_directory, *, clear=True,
 
     decal_objects = build_decals(document, primary, resources, family, decal_sets,
                                  collection)
+    plane_objects = build_plane_sets(document, primary, collection)
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material
     # sockets are driven from the hull.
-    ship = [primary] + list(decal_objects)
+    ship = [primary] + list(decal_objects) + list(plane_objects)
     apply_ship_globals(ship, globals_overrides)
     drive_ship_sockets(ship, primary)
     populate_sof(primary, document, family)
