@@ -10,7 +10,7 @@ ADDONS = ROOT / "addons"
 #: installed and enabled before this add-on could load anything; it is a
 #: component of this one, so there is a single thing to download.
 PACKAGES = (
-    ("carbon_eve_resources", "0.4.0"),
+    ("carbon_eve_resources", "0.4.1"),
 )
 PACKAGE_DOCUMENTS = (
     "LICENSE",
