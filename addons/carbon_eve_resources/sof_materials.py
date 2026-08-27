@@ -1,18 +1,12 @@
 """The SOF material catalog: what a slot is called, and what that name holds.
 
-Two jobs, both of which need tools-core and neither of which resolves anything:
+The faction serves its table flattened, keyed `areaType:slotIndex`, falling
+back to the primary area as the runtime does. A material is a bag of vec4
+parameters.
 
-- name a slot. The faction serves its table already flattened, keyed
-  `areaType:slotIndex`, so a slot's material NAME is a lookup rather than a
-  derivation -- with the same fall back to the primary area the runtime makes.
-- fill a slot. A named material is a bag of vec4 parameters, so choosing one
-  from the dropdown is a fetch and an assignment.
+Does not re-implement the resolution chain.
 
-Nothing here re-implements the resolution chain. The DNA still wins over the
-faction, and tools-core still decides what a built ship looks like; this only
-lets a person see which material a slot is showing and swap it for another.
-
-No ``bpy`` import, so the lookups are testable with the standard library.
+No ``bpy`` import; testable with the standard library.
 """
 
 from __future__ import annotations
@@ -42,8 +36,7 @@ _FACTIONS: dict[tuple, dict] = {}
 def faction_material_names(faction_record: Mapping[str, Any] | None) -> dict:
     """The faction's `areaType:slot` table, as served.
 
-    tools-core flattens it for us -- the same shape `EveSOFDataMgr` builds --
-    so this is a read, not a projection.
+    tools-core flattens it, the same shape `EveSOFDataMgr` builds.
     """
 
     area_materials = (faction_record or {}).get("areaMaterials") or {}
@@ -54,12 +47,8 @@ def faction_material_names(faction_record: Mapping[str, Any] | None) -> dict:
 def material_name_for(names: Mapping[str, str], area_type: int, index: int) -> str:
     """The material a faction gives one slot of one area type.
 
-    Falls back to the PRIMARY area exactly as the runtime does: an area whose
-    own type names nothing for a slot inherits primary's rather than going
-    unpainted. mde3_t3's sails name only slot 4, so their other three slots are
-    primary's -- which is why only slot 4 measured differently.
-
-    Returns "" when neither names it, rather than inventing one.
+    Falls back to PRIMARY as the runtime does. mde3_t3's sails name only slot
+    4, so their other three are primary's. Returns "" when neither names it.
     """
 
     key = f"{int(area_type)}:{int(index) - 1}"
@@ -75,8 +64,7 @@ def material_name_for(names: Mapping[str, str], area_type: int, index: int) -> s
 def material_values(material_record: Mapping[str, Any] | None) -> dict:
     """One material's parameters, as the fields a slot shows.
 
-    `Gloss` is a vec4 with the value in x -- every SOF parameter is a vec4,
-    including the scalars -- so it is read as a number and the rest as colours.
+    Every SOF parameter is a vec4, so `Gloss` is read from x.
     """
 
     parameters = (material_record or {}).get("parameters") or {}
@@ -103,13 +91,8 @@ def catalog(client=None, *, kind: str = "materials", build: str = "latest",
             target: str = "eve") -> tuple:
     """Every name of one kind, sorted, cached per build.
 
-    Hulls, factions, races, materials and patterns are all preset values -- a
-    DNA naming one that does not exist is not a DNA -- so each field searches
-    its own catalog rather than accepting free text.
-
-    Returns an empty tuple when the service cannot be reached, and the caller
-    falls back to a plain text field: a person without tools-core can still
-    read and type what is already there.
+    Empty when the service cannot be reached; callers fall back to a plain
+    text field.
     """
 
     wanted = str(kind or "materials")

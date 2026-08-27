@@ -1,22 +1,13 @@
 """Puts each built material back in touch with the area that decided it.
 
-A ship's colours are not one set of values. A faction stores four material
-names PER AREA TYPE, so two areas of a hull hold different materials in the
-same slot number whenever their types differ -- and pushing one set of `Mtl1..4`
-into every material on a ship is simply wrong, however right it looks on a hull
-whose areas happen to agree.
+A faction stores four material names PER AREA TYPE, so areas of different types
+hold different materials in the same slot number.
 
-The built document cannot answer which area is which: `Tr2MeshArea` carries
-name, index, count and its effect, and the area TYPE that decided the materials
-is consumed during the build and dropped. Same shape as the colours themselves
--- resolution answers the question and discards it.
+`Tr2MeshArea` does not carry the area type -- it is consumed during the build --
+so the type is recovered from the hull record and matched by INDEX. Nothing
+here resolves a colour.
 
-So the type is recovered from the HULL RECORD, which is where it was authored,
-and matched onto the built materials by index. Nothing here resolves a colour.
-It records which area a material belongs to, so an edit can reach the right
-ones.
-
-No ``bpy`` import in the matching, so it is testable with the standard library.
+No ``bpy`` import in the matching; testable with the standard library.
 """
 
 from __future__ import annotations

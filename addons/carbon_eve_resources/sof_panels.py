@@ -1,25 +1,12 @@
 """The SOF a ship is built from, as panels that drive the scene.
 
-The flow this serves, in the operator's own order:
+    a name, type id or skin -> a DNA -> a ship -> edit -> every child follows
 
-    a type id, or a name and a skin
-        -> a DNA
-        -> a ship
-        -> change a component
-        -> the change flows to every child object
+The SOF is the source and the scene the result: what gets exported is the SOF
+hull and faction, never the built `EveShip2`.
 
-So the SOF is the SOURCE and the scene is the RESULT, not the other way round.
-That matters beyond convenience: what gets exported is the SOF hull and faction,
-never the built `EveShip2`, so the authored values have to live somewhere that
-survives a rebuild -- on the ship object, in SOF's own shape.
-
-Editing any field here pushes it into every material of the hull AND of its
-children, because a decal is its own object and would otherwise keep the value
-it was built with.
-
-The type-id and skin lookups are a deliberate SEAM: resolving either to a hull
-and a faction is `tools-core`'s job, and this holds the input and the answer.
-Everything below works without it.
+Resolving a name or id to a hull and faction is tools-core's job; this holds
+the input and the answer.
 """
 
 from __future__ import annotations
@@ -53,8 +40,7 @@ PATTERN_SOCKETS = {
 def ship_objects(obj):
     """A hull and everything parented to it, which is what a change must reach.
 
-    A decal is its own object with its own material, so a value pushed only to
-    the hull leaves every decal showing what it was built with.
+    A decal is its own object with its own material.
     """
 
     if obj is None:
@@ -73,16 +59,9 @@ def push_to_materials(obj, values, *, area_type=None, blocked_slot=None):
     depends on which quad it is, so `quadsailsv5` and `quadv5` do not agree on
     position. A name a material does not have is skipped rather than guessed at.
 
-    `area_type` restricts the write to areas of one type, which is what a
-    faction material actually is: the faction stores four material names PER
-    AREA TYPE, so writing one set into every material paints a hull's colours
-    onto its sails. Left as None the write reaches everything, which is right
-    only for values that genuinely are ship-wide.
-
-    `blocked_slot` is the 1-based slot a DNA override is being written for. An
-    area whose `blockedMaterials` vetoes that slot keeps the faction's material
-    and must be skipped -- mde3_t3's sails block slots 3 and 4, so a skin
-    repaints its hull and booster but only half its sails.
+    `area_type` restricts the write to areas of one type; None reaches
+    everything. `blocked_slot` is the 1-based slot a DNA override is for, and
+    an area whose `blockedMaterials` vetoes it is skipped.
     """
 
     written = 0
@@ -95,9 +74,7 @@ def push_to_materials(obj, values, *, area_type=None, blocked_slot=None):
             seen.add(material.name)
             if area_type is not None:
                 found = material.get("carbon_area_type", None)
-                # An area nobody could identify is left alone rather than
-                # swept up by every edit: painting it with a type it may not
-                # have is worse than leaving it as it was built.
+                # An unidentified area is left alone rather than swept up.
                 if found is None or int(found) != int(area_type):
                     continue
             if blocked_slot is not None and sof_resolution.is_blocked(
@@ -121,10 +98,8 @@ def push_to_materials(obj, values, *, area_type=None, blocked_slot=None):
 def slot_materials(obj, entry):
     """The area materials one slot governs.
 
-    A hull material belongs to one AREA TYPE and must not reach the others; a
-    pattern layer is ship-wide, because the pattern branch of the resolution
-    chain never consults the area type; and a DNA override skips any area whose
-    `blockedMaterials` vetoes its slot.
+    A hull material belongs to one area type; a pattern layer is ship-wide;
+    a DNA override skips any area whose `blockedMaterials` vetoes its slot.
     """
 
     wanted = None if entry.is_pattern or entry.area_type < 0 else entry.area_type
@@ -167,9 +142,8 @@ def bound_group_for(obj, entry):
 def _material_update(self, context):
     """Writes this slot's values into the MATERIAL the slot is reading.
 
-    Nothing is pushed into shaders any more. Every area that names this
-    material is linked to one node group, so setting the group's values is the
-    whole update -- the areas are reading it, not holding copies of it.
+    Every area naming this material links to one node group, so setting the
+    group's values is the whole update.
     """
 
     from . import sof_material_nodes
@@ -195,9 +169,8 @@ _APPLYING = {"depth": 0}
 class applying:
     """Marks values as arriving FROM the SOF rather than from a consumer.
 
-    Without it, filling a slot from a faction record trips every colour's update
-    and marks the slot custom -- so a freshly loaded ship would claim every
-    material had been edited by hand.
+    Without it, filling a slot from the SOF trips the colour updates and marks
+    every slot custom.
     """
 
     def __enter__(self):
@@ -396,31 +369,20 @@ class CARBON_SOF_Material(PropertyGroup):
 
     index: IntProperty(default=1, min=1, max=4)
     is_pattern: BoolProperty(default=False)
-    #: The material this slot uses, BY NAME.
-    #:
-    #: A string, deliberately, and not an enum: an EnumProperty with a dynamic
-    #: items callback stores the chosen INDEX, so every slot whose index was
-    #: never set displayed item 0 -- the catalog's first material -- and an
-    #: index into a 1149-entry list is meaningless the moment the catalog
-    #: changes. The name is the thing worth keeping.
+    #: A string, not an enum: a dynamic EnumProperty stores the chosen INDEX,
+    #: which is meaningless once the catalog changes.
     material: StringProperty(
         name="Material", default="", update=_material_named,
         description="The SOF material this slot uses. Pick one to fill the "
                     "slot with its values; editing a colour below leaves that "
                     "material and marks the slot custom")
-    #: WHERE the value came from, which the value itself no longer knows. By
-    #: the time colours reach a shader they are four numbers in a constant
-    #: buffer that cannot tell an override from a default, so a consumer
-    #: looking at a red hull has no way to see whether the DNA asked for red or
-    #: the faction simply is red -- and only one of those is exportable.
+    #: Where the value came from. A resolved colour cannot tell an override
+    #: from a default, and only the override is exportable.
     source: StringProperty(
         name="From", default=sof_resolution.SOURCE_FACTION,
         description="Whether this slot was named by the DNA or supplied by the faction")
-    #: Which AREA TYPE this slot governs, or -1 for a value that is genuinely
-    #: ship-wide. A faction holds four material names per area type, so the
-    #: same slot number is a different material on a hull area than on a sails
-    #: area -- one panel per ship cannot say that, and pushing one set of
-    #: values everywhere paints the hull's colours onto the sails.
+    #: Which area type this slot governs, or -1 for ship-wide. A faction holds
+    #: four material names PER AREA TYPE.
     area_type: IntProperty(default=-1)
     #: The area's `blockedMaterials` mask, so a DNA override knows which areas
     #: refuse it. Authored on the hull area, and the only place a skin can be
@@ -473,11 +435,8 @@ def _component_update(self, context):
     if _APPLYING["depth"] != 0:
         return
     _lowercase(self, *NAME_FIELDS)
-    # Written inside `applying()` so the string does not read itself back. It
-    # would otherwise, and a command switched on but not yet filled in has no
-    # arguments -- so composing it produced a DNA without the command, and
-    # parsing that DNA switched the command straight back off. Turning `Mesh`
-    # on and then naming a material could not work at all.
+    # Inside `applying()` so the string does not read itself back: an empty
+    # command composes away, and parsing that would switch its toggle off.
     with applying():
         self.dna = self.compose_dna()
 
@@ -711,11 +670,8 @@ class CARBON_SOF_Settings(PropertyGroup):
             self.use_layout = bool(layouts)
             self.layout_names = ";".join(layouts)
 
-            # Verbatim apart from the case, not recomposed: the fields were
-            # just filled from it, so anything a recompose dropped would be
-            # lost silently. Lower case because that is what a DNA is -- the
-            # runtime lowercases before it parses, and a stored `MDE3_T3` is
-            # the same ship wearing a different spelling.
+            # Verbatim apart from case, not recomposed: a recompose would drop
+            # any command this editor does not model.
             self.dna = dna.strip().lower()
         return True
 

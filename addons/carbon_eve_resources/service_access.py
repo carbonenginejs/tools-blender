@@ -1,13 +1,7 @@
 """One tools-core client for the panels to share.
 
-The panels need the service for two small things -- the material catalog and a
-material's values -- and both are reached from UI callbacks that can fire on
-every redraw. Starting a sidecar per callback would be absurd, so one client is
-made and kept.
-
-Failure is normal here and is not an error: a person may have no tools-core
-checkout configured, and everything except the dropdown works without one. So
-this returns None rather than raising, and the callers show an empty catalog.
+Made once and kept, because UI callbacks fire often. Returns None when
+tools-core is not configured; callers fall back to plain text fields.
 """
 
 from __future__ import annotations

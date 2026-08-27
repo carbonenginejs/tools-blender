@@ -1,26 +1,11 @@
 """A node group per SOF material, which the area shaders read.
 
-The alternative -- and what this replaces -- was to hold each slot's values in
-a panel and push them into every area material whenever anything changed. That
-works only as long as the push knows exactly which areas a slot governs, and it
-leaves the same material duplicated once per area that uses it, with nothing
-tying the copies together.
+A material is one node group, named once and shared. An area's shader links to
+the groups its slots name: setting a slot repoints a reference, and editing a
+material reaches every area reading it.
 
-Here a MATERIAL is one node group, named once and shared. An area's shader
-links to the groups its four slots name, so:
-
-- setting a slot is repointing a reference, not writing values into shaders;
-- editing a material changes every area that uses it, because they are reading
-  the same datablock rather than holding copies of its numbers;
-- a material used by the hull and the sails exists once.
-
-Which is the SOF's own model: a slot names a material, and the material holds
-the values. The scene now says the same thing the SOF does.
-
-Custom is the deliberate exception. Editing a shared material SHOULD reach
-everything using it -- that is what sharing means -- so a slot that wants its
-own values takes a private copy under its own name rather than quietly
-diverging from the material it claims to be.
+A slot that edits a colour takes a private copy and says `custom`, so a shared
+material is not repainted for every other slot that names it.
 """
 
 from __future__ import annotations
@@ -51,23 +36,17 @@ def group_name(material: str) -> str:
 def material_group(material: str, values=None, *, rebuild: bool = False):
     """The node group for one named SOF material, made once and shared.
 
-    Returns the existing group untouched when there is one, because that group
-    IS the material: rebuilding it would throw away an edit someone made, and
-    the sharing is the whole point of it existing.
+    An existing group is returned untouched: it IS the material.
     """
 
     name = group_name(material)
     tree = bpy.data.node_groups.get(name)
     if tree is not None and not rebuild:
-        # Returned as it stands, deliberately: an existing group IS the
-        # material, and re-filling it from a fresh fetch would silently undo an
-        # edit someone made to it. `rebuild` is how a caller asks for that.
+        # Re-filling would undo an edit; `rebuild` asks for that explicitly.
         return tree
     if tree is None:
         tree = bpy.data.node_groups.new(name, "ShaderNodeTree")
-        # Nothing references a group at the moment it is made, and Blender
-        # drops zero-user datablocks on save -- a material nobody has bound
-        # yet would vanish between sessions.
+        # Blender drops zero-user datablocks on save.
         tree.use_fake_user = True
 
     tree.nodes.clear()
@@ -138,9 +117,8 @@ def quad_group_node(material):
 def bind_slot(material, index: int, tree, *, is_pattern: bool = False) -> int:
     """Links one material group into one slot of an area's shader.
 
-    Returns how many sockets were linked. A socket the area's shader does not
-    have is skipped rather than forced: which sockets a member binds depends on
-    which quad it is, and `quadsailsv5` does not agree with `quadv5`.
+    Returns how many sockets were linked; a socket the shader lacks is
+    skipped.
     """
 
     quad = quad_group_node(material)
@@ -164,8 +142,7 @@ def bind_slot(material, index: int, tree, *, is_pattern: bool = False) -> int:
         socket = quad.inputs.get(pattern.format(index))
         if socket is None:
             continue
-        # Drop an existing link first: leaving it would leave two sources on
-        # one input, and Blender keeps the older of them.
+        # Drop any existing link: Blender keeps the older of two sources.
         for link in list(node_tree.links):
             if link.to_socket == socket:
                 node_tree.links.remove(link)
@@ -187,10 +164,8 @@ def bound_group(material, index: int, *, is_pattern: bool = False):
 def make_private(tree, owner: str):
     """A private copy of a material, for a slot that has gone its own way.
 
-    Editing a SHARED material reaches everything using it, which is what
-    sharing means and is usually right. A slot that wants different values
-    therefore has to stop claiming to be that material -- so it takes a copy
-    named for itself, and the original is left as it was for everyone else.
+    Editing a shared material reaches everything using it, so a slot wanting
+    its own values takes a copy.
     """
 
     if tree is None:

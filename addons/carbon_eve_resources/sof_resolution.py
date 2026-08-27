@@ -1,24 +1,14 @@
-"""What a material slot resolved from, and how to write a DNA back out.
-
-A hull carries no colours. It says which areas exist and which material SLOT
-each one uses, and the values come from the DNA or from the faction -- which is
-why editing a ship needs a builder that resolves and pushes down, rather than a
-loader that reads a hull.
-
-This module does NOT resolve the colours themselves. tools-core does that, and
-duplicating it here would be a second implementation that drifts in silence
-while looking right. What it does is the part Blender needs and Node cannot
-give back: recompose a DNA after an edit, and say for each slot WHERE its value
-came from, so a consumer can tell an override from a default -- a distinction
-the resolved values themselves have lost by the time they arrive.
-
-The grammar is the runtime's, from `runtime/src/sof/EveSOFDNA.js`:
+"""DNA grammar, and what decided each material slot.
 
     hull[;hull2...]:faction:race[:command?arg[;arg...]]...
 
-with the commands sorted by name, exactly as `EveSOFDNA` composes `this.dna`.
+Lower case, commands sorted by name, as `EveSOFDNA` composes `this.dna`
+(`runtime/src/sof/EveSOFDNA.js`).
 
-No ``bpy`` import, so this is testable with the standard library alone.
+Does NOT resolve colours -- tools-core does. This says where a slot's value
+came from, which the resolved values no longer know.
+
+No ``bpy`` import; testable with the standard library alone.
 """
 
 from __future__ import annotations
@@ -49,14 +39,9 @@ SOURCE_DNA = "dna"
 SOURCE_FACTION = "faction"
 
 
-#: The area types, by their value. From `EveSOFDataArea.AreaType`.
-#:
-#: This is the key material resolution actually turns on: a faction stores four
-#: material names PER AREA TYPE, so two areas differ in the same slot exactly
-#: when their types differ. A ship-wide material panel cannot express that.
-#:
-#: 5 is Wreck, which the faction's own area table has no slot for -- it comes
-#: from the generic data instead -- and 11 doubles as TYPE_NO_OVERWRITE.
+#: The area types, by value, from `EveSOFDataArea.AreaType`. A faction stores
+#: four material names PER AREA TYPE. 5 (Wreck) comes from the generic data,
+#: and 11 doubles as TYPE_NO_OVERWRITE.
 AREA_TYPES = (
     "primary", "glass", "sails", "reactor", "darkhull", "wreck",
     "rock", "monument", "ornament", "simpleprimary", "turret",
@@ -84,11 +69,8 @@ def area_type_name(area_type) -> str:
 def is_blocked(blocked_materials, index: int) -> bool:
     """Whether an area vetoes the DNA's override for slot `index` (1-based).
 
-    `blockedMaterials` is a bitmask on the HULL AREA, so it is authored per
-    area and per slot: mde3_t3's sails carry 12, which is bits 2 and 3, and
-    those sails therefore keep the faction's Mtl3 and Mtl4 no matter what a
-    skin asks for. Ignoring it paints a skin's colours onto areas the hull
-    author deliberately protected.
+    `blockedMaterials` is a bitmask on the hull area. mde3_t3's sails carry 12
+    -- bits 2 and 3 -- so they keep the faction's Mtl3 and Mtl4.
     """
 
     try:
@@ -196,9 +178,8 @@ def compose(hulls, faction: str, race: str,
             commands: Mapping[str, Sequence[str]] | None = None) -> str:
     """Writes a DNA back out, commands sorted by name.
 
-    Sorted because `EveSOFDNA` sorts when it composes: a DNA that differs only
-    in command order is the same ship, and one that does not round-trip to the
-    same text cannot be compared, cached or used as a directory name.
+    Sorted, as `EveSOFDNA` sorts: a DNA differing only in command order is the
+    same ship.
     """
 
     if isinstance(hulls, str):
@@ -218,14 +199,7 @@ def compose(hulls, faction: str, race: str,
 def with_materials(dna: str | Dna, materials: Sequence[str]) -> str:
     """The same DNA with its material slots replaced.
 
-    Written as `material`, never `mesh`, even when the DNA arrived spelling it
-    `mesh`: they mean the same thing and one spelling in the output is one
-    fewer thing for a reader to know.
-
-    A slot set back to `none` is written out as `none` rather than dropped,
-    because dropping it would look identical to a slot nobody touched while
-    meaning the same thing -- and if every slot is `none` the command itself
-    goes, which is what a ship with no overrides at all actually is.
+    Written as `material`, never `mesh`. Every slot `none` drops the command.
     """
 
     parsed = dna if isinstance(dna, Dna) else parse(dna)
@@ -254,9 +228,7 @@ def with_pattern(dna: str | Dna, pattern: str, layers: Sequence[str] = ()) -> st
 def slot_sources(dna: str | Dna) -> tuple[SlotSource, ...]:
     """What decided each material slot, in panel order.
 
-    The four hull slots first, then the two pattern layers. A hull slot the DNA
-    names is an override; anything else came from the faction, which the DNA
-    does not spell out and cannot be read back from the resolved colour.
+    Four hull slots, then two pattern layers.
     """
 
     parsed = dna if isinstance(dna, Dna) else parse(dna)
@@ -283,15 +255,8 @@ def area_slot_sources(dna: str | Dna, area_type=TYPE_PRIMARY,
                       blocked_materials=0) -> tuple[SlotSource, ...]:
     """What decided each slot FOR ONE AREA, which is the honest question.
 
-    `slot_sources` answers it for the ship, which is only right for an area
-    that blocks nothing. The two differ exactly where a hull author set a
-    `blockedMaterials` bit: that area keeps the faction's material in that slot
-    while its neighbours take the skin's, on the same ship, in the same slot
-    number.
-
-    The area type is carried for the caller's benefit -- which faction entry a
-    faction-sourced slot reads is `areaType:slot`, falling back to primary --
-    but this does not resolve the value. tools-core does that.
+    Differs from `slot_sources` wherever `blockedMaterials` is set: that area
+    keeps the faction's material while its neighbours take the skin's.
     """
 
     parsed = dna if isinstance(dna, Dna) else parse(dna)
@@ -305,10 +270,8 @@ def area_slot_sources(dna: str | Dna, area_type=TYPE_PRIMARY,
             material=material if override else "",
         ))
 
-    # Pattern layers never consult the area type: the pattern branch of the
-    # resolution chain does not look at it, so PMtl values are the same on
-    # every area whose shader asks for them. Only the pattern TEXTURE is
-    # per-area, and that is a separate mechanism we do not rely on.
+    # Pattern layers never consult the area type; only the pattern TEXTURE is
+    # per-area, which is a separate mechanism.
     pattern = parsed.pattern
     for index in range(1, PATTERN_SLOTS + 1):
         material = pattern[index] if len(pattern) > index else ""
@@ -320,9 +283,7 @@ def area_slot_sources(dna: str | Dna, area_type=TYPE_PRIMARY,
 def _padded(values: tuple[str, ...], width: int) -> tuple[str, ...]:
     """`values` at exactly `width`, `none` for anything missing.
 
-    A short material command is real -- a DNA may name one slot and stop -- and
-    a reader that indexes past the end either throws or, worse, shifts every
-    remaining slot up by one.
+    A short material command is real: a DNA may name one slot and stop.
     """
 
     filled = list(values[:width])

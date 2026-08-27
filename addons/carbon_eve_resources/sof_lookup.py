@@ -1,23 +1,14 @@
 """Ship name, type id and skin id -> the DNA that draws them.
 
-A person knows a ship by its NAME. The SOF knows it by a hull, a faction and a
-race, and nothing in the DNA says "Tengu" anywhere. Three lookups bridge that,
-all of them tools-core routes rather than anything derived here:
-
     name  -> type id / skin id      `/<target>/<build>/skin/names`
     type  -> hull, faction, race    `/types/{id}` -> `/sde/graphics/{graphicId}`
-    skin  -> materials, faction     `/skin/skins` -> skinMaterials -> materialSets
+    skin  -> materials or pattern   `/skin/skins` -> skinMaterials -> materialSets
 
-The type route answers with a `graphicID`, and the graphic record is what
-actually carries `sofHullName`, `sofFactionName` and `sofRaceName`. That
-indirection is EVE's, not ours: a type says what it IS, a graphic says what it
-LOOKS like, and two types can share one graphic.
+The SOF names live on the GRAPHIC, not the type. A skin's material set carries
+`material1..4`, `sofPatternName`, `patternMaterial1..2`, `resPathInsert` and a
+faction -- the DNA commands a SKIN amounts to.
 
-A skin resolves to a material SET, which carries `material1..4`, a
-`resPathInsert` and a faction -- exactly the DNA commands a SKIN is. So a skin
-is not a separate concept to model: it is a DNA with commands filled in.
-
-No ``bpy`` import, so all of it is testable with the standard library.
+No ``bpy`` import; testable with the standard library.
 """
 
 from __future__ import annotations
@@ -48,9 +39,7 @@ def _fetch(client, route: str, key: tuple):
 def names(client=None, *, build: str = "latest", target: str = "eve") -> dict:
     """The name index: a lowercased name -> what it can refer to.
 
-    One name can mean several things -- a type and a skin can share it -- so
-    every entry is a list, and a caller decides which kind it wanted rather
-    than being handed the first.
+    One name can mean several things, so every entry is a list.
     """
 
     found = _fetch(client, f"/{target}/{build}/skin/names", (target, build, "names"))
@@ -61,8 +50,7 @@ def find(name: str, client=None, *, kind: str = "", build: str = "latest",
          target: str = "eve") -> list:
     """Everything one name refers to, optionally of one kind only.
 
-    Matched on the lowercased name because that is how the index is keyed:
-    a person typing `Tengu` and a person typing `tengu` mean the same ship.
+    Matched lowercased, which is how the index is keyed.
     """
 
     wanted = str(name or "").strip().lower()
@@ -93,9 +81,7 @@ def graphic_record(graphic_id, client=None, *, build: str = "latest",
                    target: str = "eve") -> dict:
     """One graphic, which is where the SOF names actually live.
 
-    The SDE routes wrap their row in a `payload`, so the wrapper is unwrapped
-    here rather than at every call site -- reading the wrapper as the row is a
-    standing trap with these routes.
+    SDE routes wrap the row in a `payload`; unwrapped here.
     """
 
     try:
@@ -116,8 +102,7 @@ def type_components(type_id, client=None, *, build: str = "latest",
                     target: str = "eve") -> dict:
     """The hull, faction and race a type draws with, or an empty dict.
 
-    Empty rather than partial: a DNA needs all three, and two of them plus a
-    guess is a DNA that names something that does not exist.
+    Empty rather than partial: a DNA needs all three.
     """
 
     record = type_record(type_id, client, build=build, target=target)
@@ -145,9 +130,7 @@ def skin_material_set(skin_id, client=None, *, build: str = "latest",
                       target: str = "eve") -> dict:
     """The material set a skin paints with, through two hops.
 
-    skin -> skinMaterialID -> materialSetID -> the set, which carries
-    `material1..4`, a `resPathInsert` and a faction. Those ARE the DNA commands
-    a SKIN amounts to.
+    skin -> skinMaterialID -> materialSetID -> the set.
     """
 
     try:
@@ -178,9 +161,8 @@ def skin_applies(skin_id, type_id, client=None, *, build: str = "latest",
                  target: str = "eve") -> bool:
     """Whether a skin can be worn by a type.
 
-    A skin lists the types it belongs to. Without this check, changing the type
-    kept whatever skin was set and produced a Rifter wearing an Abaddon's
-    materials -- a DNA that resolves, and draws something that cannot exist.
+    A skin lists the types it belongs to. Without this, changing the type kept
+    the old skin's materials.
     """
 
     try:
@@ -206,9 +188,8 @@ def dna_for(type_id=0, skin_id=0, client=None, *, build: str = "latest",
             target: str = "eve") -> str:
     """The DNA a type, or a type wearing a skin, is drawn with.
 
-    The type supplies the hull, and the skin -- when there is one -- supplies
-    the faction, the materials and the respathinsert. A skin's faction wins,
-    because that is the point of wearing one.
+    The type supplies the hull; the skin supplies the faction, materials or
+    pattern, and the respathinsert.
     """
 
     components = type_components(type_id, client, build=build, target=target)
@@ -219,19 +200,13 @@ def dna_for(type_id=0, skin_id=0, client=None, *, build: str = "latest",
     material_set = skin_material_set(skin_id, client, build=build, target=target)
     faction = components["faction"]
     if material_set:
-        # Lowercased BEFORE the `none` test. These arrive capitalised -- the
-        # Shattered Paradigm skins carry "None" -- so a case-sensitive
-        # comparison read four absences as four overrides and wrote a material
-        # command that said nothing.
+        # Lowercased before the `none` test: these arrive capitalised.
         materials = [str(material_set.get(f"material{index}") or sof_resolution.NONE).lower()
                      for index in (1, 2, 3, 4)]
         if any(value != sof_resolution.NONE for value in materials):
             commands["material"] = materials
 
-        # A skin can repaint with a PATTERN instead of materials, and many do:
-        # `Barghest Shattered Paradigm` names no materials at all, only
-        # `sofPatternName` and its two layers. Reading only the materials gave
-        # those skins a DNA with nothing in it, so they loaded unpainted.
+        # A skin can repaint with a PATTERN instead of materials.
         pattern = str(material_set.get("sofPatternName") or "").strip()
         if pattern:
             commands["pattern"] = [

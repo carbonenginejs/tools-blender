@@ -103,18 +103,14 @@ class CARBON_PT_sidebar_about(Panel):
         # The terms themselves, one click away rather than quoted at length.
         row.operator(addon.EVE_RESOURCE_OT_open_creator_terms.bl_idname,
                      text="", icon="URL")
-        # No revoke. It is a rare, destructive action and it sat one pixel from
-        # a link -- the wrong click there costs a person their acceptance.
-        # Preferences still has it.
+        # Revoke lives in Preferences: destructive, and it sat beside a link.
         if not accepted:
             row.operator(addon.EVE_RESOURCE_OT_accept_creator_terms.bl_idname,
                          text="Accept")
 
-        # The cache, which nothing else in the tab can reach any more. It is
-        # content-addressed, so an updated file arrives under a new name beside
-        # the one it replaces and the folder only grows -- 500MB for a handful
-        # of ships. Prune deletes what no kept build refers to; Clear throws
-        # away every payload and downloads them again.
+        # The cache is content-addressed, so an updated file lands beside the
+        # one it replaces. Prune drops what no kept build references; Clear
+        # drops every payload.
         state = getattr(context.window_manager, "carbon_eve_resources", None)
         if state is None:
             return
@@ -131,14 +127,10 @@ class CARBON_PT_sidebar_about(Panel):
 class CARBON_PT_sidebar_dna(Panel):
     """Composing a DNA, and loading a ship from it.
 
-    One tool, not two. The DNA string and the parts below it are two views of
-    the same thing: choose parts and the string is written, type a string and
-    the parts become what it says. Splitting them across two panels implied
-    they were separate steps.
+    The DNA string and the parts below it are two views of one thing, and each
+    fills the other.
 
-    This is NOT a SOF editor. A SOF editor would edit the actual SOF records --
-    hulls, factions, materials, patterns -- which this does not touch: it only
-    names them.
+    Not a SOF editor: this names SOF records, it does not edit them.
     """
 
     bl_label = "SOF DNA Builder"
@@ -150,21 +142,16 @@ class CARBON_PT_sidebar_dna(Panel):
     def draw(self, context):
         layout = self.layout
         layout.use_property_split = True
-        # No animation decorators. The dot beside every field is for keyframing
-        # it, and none of this is animated -- it was a column of noise down the
-        # whole panel.
+        # No animation decorators; none of this is keyframed.
         layout.use_property_decorate = False
         state = getattr(context.window_manager, "carbon_eve_resources", None)
         ship = _ship_of(context)
-        # The ship's own settings when there is one, so the panel edits the
-        # loaded ship rather than a separate scratch DNA sitting beside it.
-        # Otherwise the scene's scratch SOF, so a DNA can be composed BEFORE
-        # anything is loaded -- which is what the tool is for.
+        # The loaded ship's settings, else the scene's scratch SOF so a DNA
+        # can be composed before anything is loaded.
         settings = ship.carbon_sof if ship is not None else context.scene.carbon_sof
 
-        # What a person knows the ship by, first: a name, then the ids it
-        # resolves to, then the DNA those produce. Each fills the ones
-        # below it, and any of them can be filled in directly.
+        # Name, then the ids it resolves to, then the DNA. Each fills the
+        # ones below, and any can be filled in directly.
         sof_panels.draw_name_search(layout, settings, "ship_name",
                                     kind="ships", text="Ship",
                                     icon="OUTLINER_OB_MESH")
@@ -188,13 +175,8 @@ class CARBON_PT_sidebar_dna(Panel):
         _command(layout, settings, "use_layout", "carbon_cmd_layout",
                  ["layout_names"])
 
-        # Two actions, and they are genuinely different:
-        #   Load    -- go and build this DNA into a ship (tools-core, geometry,
-        #              textures). The slow one.
-        #   Refresh -- re-resolve the materials of the ship already here. No
-        #              geometry, no download.
-        # A third button that rebuilt the bundle was the same as Load with a
-        # flag set, and nobody could tell the two apart.
+        # Load builds the DNA into a ship; Refresh re-resolves the materials
+        # of the ship already here. The arrow forces a fresh bundle.
         buttons = layout.row(align=True)
         load = buttons.operator("carbon.eve_resource_build_sof_dna",
                                 text="Load Ship", icon="IMPORT")
@@ -222,18 +204,15 @@ class CARBON_PT_sidebar_dna(Panel):
 def _command(layout, settings, toggle, idname, fields):
     """One optional DNA command: a switch, and its arguments beneath it.
 
-    The switch is the command's PRESENCE. A command that is off is absent from
-    the DNA, which is not the same as one whose arguments are all `none` --
-    they resolve alike, but only one of them says someone considered it.
+    The switch is the command's PRESENCE: off means absent from the DNA, which
+    is not the same as arguments that are all `none`.
     """
 
     header, body = _panel(layout, idname)
     if header is None:
         body = layout.column(align=True)
     target = header if header is not None else body
-    # Left-aligned: a property split puts the label in the right-hand column,
-    # which left every command's checkbox floating in the middle of the panel
-    # with its name beside it and nothing under either.
+    # Left-aligned: a property split floats the checkbox mid-panel.
     target.use_property_split = False
     target.prop(settings, toggle)
     if body is None:
