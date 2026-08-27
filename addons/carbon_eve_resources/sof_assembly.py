@@ -69,14 +69,20 @@ def apply_mesh_areas(
         report.warnings.append(f"{mesh.name}: imported geometry has no material slots")
         return report
 
-    buildable = [area for area in mesh.areas if should_build_material(area)]
-    for position, area in enumerate(mesh.areas, start=1):
-        if progress is not None and should_build_material(area):
-            done = sum(1 for other in buildable if mesh.areas.index(other) < mesh.areas.index(area))
-            progress(f"{mesh.name}: area {done + 1}/{len(buildable)} {area.name}")
+    # Counted as we go, rather than by looking each area up in the list.
+    # SofArea is a frozen dataclass, so equality is by VALUE: two areas that
+    # happen to hold the same values are indistinguishable, and .index() finds
+    # the first of them every time. A hull with two identical areas would have
+    # counted "1/2" twice and never reached 2/2.
+    buildable = sum(1 for area in mesh.areas if should_build_material(area))
+    built = 0
+    for area in mesh.areas:
         if not should_build_material(area):
             report.skipped_areas += 1
             continue
+        built += 1
+        if progress is not None:
+            progress(f"{mesh.name}: area {built}/{buildable} {area.name}")
         targets = [index for index in area.slot_indices if index < len(slots)]
         if not targets:
             report.warnings.append(

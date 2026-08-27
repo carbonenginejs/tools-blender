@@ -343,12 +343,17 @@ def apply_custom_masks(obj, masks, effects):
               f"targets={targets} materialIndex={mask.get('materialIndex')}")
 
 
-def assemble(document_path, resources_directory, *, clear=True):
-    """Imports the geometry and shades every mesh area of a document."""
+def assemble(document_path, resources_directory, *, clear=True,
+             document=None, resources=None, family=None):
+    """Imports the geometry and shades every mesh area of a document.
 
-    document = load_document(document_path)
-    resources = load_manifest(resources_directory)
-    family = quad_interface.load_family()
+    The document, resource map and shader family can be passed in when the
+    caller already has them, so a whole build reads each ONCE.
+    """
+
+    document = load_document(document_path) if document is None else document
+    resources = load_manifest(resources_directory) if resources is None else resources
+    family = quad_interface.load_family() if family is None else family
 
     if clear:
         for obj in list(bpy.data.objects):
@@ -997,13 +1002,18 @@ def build_ship(document_path, resources_directory, *, clear=True, globals_overri
     Returns the hull object, or None when the document assembled no geometry.
     """
 
-    primary = assemble(document_path, resources_directory, clear=clear)
-    if primary is None:
-        return None
-
+    # Read ONCE. Expanding the document twice produced two separate object
+    # trees for the same ship: the areas were shaded from one and the decals
+    # built from the other, so a value corrected in one graph was invisible to
+    # the other -- a whole class of bug for no benefit.
     document = load_document(document_path)
     resources = load_manifest(resources_directory)
     family = quad_interface.load_family()
+
+    primary = assemble(document_path, resources_directory, clear=clear,
+                       document=document, resources=resources, family=family)
+    if primary is None:
+        return None
 
     decal_objects = build_decals(document, primary, resources, family)
 
