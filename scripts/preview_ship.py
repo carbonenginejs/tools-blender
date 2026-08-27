@@ -938,6 +938,72 @@ def wire_hull_breach(decal, principled, sampled, projection, mnodes, mlinks,
         mlinks.new(principled.inputs["Alpha"].links[0].from_socket, mix.inputs["Fac"])
 
 
+def populate_sof(obj, document, family):
+    """Fills the ship's SOF panels from the document it was built from.
+
+    The panels ARE the SOF once the ship is in Blender -- they are what gets
+    edited and what will get exported -- so a freshly built ship must arrive
+    with them filled in rather than blank. Anything left blank here reads as
+    "this ship has no faction", which is a lie about the data.
+
+    The DNA is the authority for the components, because a built document keeps
+    it verbatim; the materials come from what the areas actually resolved to.
+    """
+
+    from carbon_eve_resources import sof_panels
+    try:
+        sof_panels.register()
+    except Exception:
+        pass                      # already registered, which is fine
+
+    settings = obj.carbon_sof
+    dna = str(document.get("dna") or "")
+    if dna:
+        # hull:faction:race, with an optional trailing :pattern?...
+        head, _, tail = dna.partition(":pattern?")
+        parts = head.split(":")
+        settings.hull = parts[0] if len(parts) > 0 else ""
+        settings.faction = parts[1] if len(parts) > 1 else ""
+        settings.race = parts[2] if len(parts) > 2 else ""
+        settings.pattern = tail
+
+    # The material slots, read back from what the areas resolved to. The hull
+    # material is the honest source: every area shares the faction's colours.
+    wanted = [(index, False) for index in (1, 2, 3, 4)] + [(index, True) for index in (1, 2)]
+    for index, is_pattern in wanted:
+        if settings.slot(index, is_pattern) is None:
+            entry = settings.materials.add()
+            entry.index = index
+            entry.is_pattern = is_pattern
+
+    material = next((slot.material for slot in obj.material_slots
+                     if slot.material and slot.material.use_nodes), None)
+    group = None
+    if material is not None:
+        group = next((n for n in material.node_tree.nodes
+                      if n.bl_idname == "ShaderNodeGroup" and n.node_tree
+                      and "Pattern" not in n.node_tree.name), None)
+    if group is not None:
+        for entry in settings.materials:
+            sockets = sof_panels.PATTERN_SOCKETS if entry.is_pattern else sof_panels.MATERIAL_SOCKETS
+            # Read EVERY value before writing any of them. Assigning a field
+            # fires the update that pushes the whole slot back into the
+            # material, so reading and writing in the same pass overwrites the
+            # sockets still to be read -- which silently gave every slot the
+            # default gloss of 0.5 instead of the authored 0.774.
+            found = {}
+            for field, pattern in sockets.items():
+                socket = group.inputs.get(pattern.format(entry.index))
+                if socket is None:
+                    continue
+                found[field] = (float(socket.default_value) if field == "gloss"
+                                else tuple(socket.default_value)[:3])
+            for field, value in found.items():
+                setattr(entry, field, value)
+
+    print(f"  SOF: {settings.dna or '(no dna in the document)'}")
+
+
 def main():
     args = parse_args(sys.argv)
     primary = assemble(args)
@@ -953,6 +1019,7 @@ def main():
     apply_ship_globals(ship_objects,
                        {"previewGlowScale": preview_quad.DEMO_EMISSION_STRENGTH})
     drive_ship_sockets(ship_objects, primary)
+    populate_sof(primary, load_document(args.sof), load_family())
     preview_quad.ENVIRONMENT[:] = [args.environment] if args.environment else []
     if args.sun_strength is not None:
         preview_quad.SUN_SCALE[0] = args.sun_strength
