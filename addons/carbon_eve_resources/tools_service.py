@@ -18,6 +18,11 @@ PROTOCOL = "carbon.tools"
 PROTOCOL_VERSION = 1
 LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
 
+#: The port the sidecar binds. It is fixed rather than negotiated -- an OAuth
+#: callback is registered against it -- so only one service can run per machine
+#: and a client's real job is to find that one, not to own it.
+DEFAULT_PORT = 5510
+
 
 class ToolsServiceError(RuntimeError):
     """Raised when the local service cannot start or violates its protocol."""
@@ -76,6 +81,16 @@ class ToolsServiceClient:
         if self.running and self._bootstrap is not None:
             return self._bootstrap
 
+        # Attach to a service that is already up before trying to start one.
+        # The sidecar binds a fixed port, so a second instance does not get a
+        # port of its own -- it prints "already in use" and exits, and every
+        # request then failed with "exited before bootstrap" for as long as
+        # anyone had a service running elsewhere. Which is most of the time.
+        attached = self._attach()
+        if attached is not None:
+            self._bootstrap = attached
+            return attached
+
         self.stop()
         command = [
             self.node_executable,
@@ -105,6 +120,50 @@ class ToolsServiceClient:
             if isinstance(exc, ToolsServiceError):
                 raise
             raise ToolsServiceError(f"Invalid tools-core service bootstrap: {exc}") from exc
+
+    def _attach(self) -> Optional[ToolsServiceBootstrap]:
+        """A service already listening on the fixed port, or None.
+
+        Health is checked rather than assumed: something else could hold the
+        port, and talking SOF routes at it would produce confusing failures
+        far from here. A service that answers with the wrong protocol is
+        treated as no service at all.
+
+        The process is NOT ours, so `stop` must never kill it -- `_process`
+        stays None, which is exactly what makes `running` false for an attached
+        client and keeps `stop` a no-op.
+        """
+
+        # A Request, not a bare URL: the opener is injectable and every other
+        # call hands it one, so a string here only works against the real
+        # urlopen and breaks anything standing in for it.
+        probe = Request(f"http://127.0.0.1:{DEFAULT_PORT}/v1/health", method="GET")
+        try:
+            with self._opener(probe, timeout=2.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            return None
+        if (payload.get("protocol") != PROTOCOL
+                or payload.get("protocolVersion") != PROTOCOL_VERSION):
+            return None
+        capabilities = payload.get("capabilities")
+        if not isinstance(capabilities, dict):
+            return None
+        # Health does not report a cache directory or a pid, and neither is
+        # ours to claim. The pid is recorded as 0 to say plainly that this
+        # client did not start the process it is talking to.
+        return ToolsServiceBootstrap(
+            protocol=PROTOCOL,
+            protocol_version=PROTOCOL_VERSION,
+            host="127.0.0.1",
+            port=DEFAULT_PORT,
+            pid=0,
+            cache_directory=Path(self.cache_root),
+            capabilities={str(name): bool(value)
+                          for name, value in capabilities.items()},
+        )
 
     def stop(self, timeout: float = 5.0) -> None:
         process = self._process
@@ -179,6 +238,27 @@ class ToolsServiceClient:
         return list(sets or [])
 
     def _request(self, method: str, route: str, body: Optional[Mapping] = None) -> dict:
+        """A route whose answer is an object.
+
+        Most are. The few that are not go through `request_json`, and keeping
+        the object check here means a route that starts returning something
+        else is caught rather than quietly handed on.
+        """
+
+        value = self.request_json(method, route, body)
+        if not isinstance(value, dict):
+            raise ToolsServiceError("tools-core service JSON root must be an object")
+        return value
+
+    def request_json(self, method: str, route: str, body: Optional[Mapping] = None):
+        """A route whose answer is any JSON value.
+
+        The SOF catalog routes answer with an ARRAY -- `/sof/materials` is a
+        list of 1149 names -- and requiring an object root made every one of
+        them fail with a message about the root that gave no hint which route
+        was at fault.
+        """
+
         bootstrap = self.start()
         host = f"[{bootstrap.host}]" if ":" in bootstrap.host else bootstrap.host
         data = None if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
@@ -210,8 +290,6 @@ class ToolsServiceClient:
             value = json.loads(payload.decode("utf-8"))
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise ToolsServiceError("tools-core service returned invalid JSON") from exc
-        if not isinstance(value, dict):
-            raise ToolsServiceError("tools-core service JSON root must be an object")
         return value
 
     def __enter__(self) -> "ToolsServiceClient":

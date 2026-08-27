@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from urllib.error import URLError
 
 
 ADDONS = Path(__file__).resolve().parents[1] / "addons"
@@ -64,7 +65,16 @@ class ToolsServiceTests(unittest.TestCase):
                 commands.append((command, kwargs))
                 return FakeProcess(bootstrap)
 
+            listening = {"yet": False}
+
             def opener(request, timeout=None):
+                # The client probes for an ALREADY running service before
+                # spawning one. Nothing is listening here until the sidecar
+                # this test is about has been started, so the first probe
+                # fails -- which is what makes the spawn happen at all.
+                if request.full_url.endswith("/v1/health") and not listening["yet"]:
+                    listening["yet"] = True
+                    raise URLError("connection refused")
                 requests.append((request, timeout))
                 if request.full_url.endswith("/v1/health"):
                     return FakeResponse(
@@ -153,3 +163,82 @@ def make_bootstrap(cache):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AttachTests(unittest.TestCase):
+    """A client must find the service that is already up, not fight it for the port."""
+
+    def _client(self, opener, process_factory):
+        with tempfile.TemporaryDirectory() as temporary:
+            return ToolsServiceClient(
+                "node",
+                Path(temporary) / "cjs-tools-service.js",
+                Path(temporary) / "cache",
+                process_factory=process_factory,
+                opener=opener,
+            )
+
+    def test_attaches_instead_of_spawning(self):
+        # The sidecar binds a FIXED port -- an OAuth callback is registered
+        # against it -- so a second instance cannot get a port of its own. It
+        # prints "already in use" and exits, and before this every request
+        # failed with "exited before bootstrap" whenever a service was running.
+        spawned = []
+
+        def process_factory(command, **kwargs):
+            spawned.append(command)
+            raise AssertionError("must not spawn when a service is already up")
+
+        def opener(request, timeout=None):
+            return FakeResponse({
+                "ok": True,
+                "protocol": "carbon.tools",
+                "protocolVersion": 1,
+                "capabilities": {"sofCatalog": True},
+            })
+
+        client = self._client(opener, process_factory)
+        bootstrap = client.start()
+        self.assertEqual(spawned, [])
+        self.assertEqual(bootstrap.port, 5510)
+        self.assertTrue(bootstrap.capabilities["sofCatalog"])
+
+    def test_an_attached_service_is_not_ours_to_stop(self):
+        # `running` stays false for an attached client precisely so that stop
+        # cannot terminate somebody else's process.
+        def opener(request, timeout=None):
+            return FakeResponse({
+                "ok": True, "protocol": "carbon.tools",
+                "protocolVersion": 1, "capabilities": {},
+            })
+
+        client = self._client(opener, lambda *a, **k: None)
+        client.start()
+        self.assertFalse(client.running)
+        client.stop()
+
+    def test_a_stranger_on_the_port_is_not_a_service(self):
+        # Something else could hold 5510. Talking SOF routes at it would fail
+        # far from here and confusingly.
+        spawned = []
+
+        def process_factory(command, **kwargs):
+            spawned.append(command)
+            return FakeProcess({
+                "schema": "carbon.tools-service.bootstrap",
+                "protocol": "carbon.tools",
+                "protocolVersion": 1,
+                "host": "127.0.0.1",
+                "port": 5510,
+                "pid": 4242,
+                "cacheDirectory": "",
+                "capabilities": {},
+            })
+
+        def opener(request, timeout=None):
+            return FakeResponse({"ok": True, "protocol": "something.else"})
+
+        client = self._client(opener, process_factory)
+        with self.assertRaises(Exception):
+            client.start()
+        self.assertEqual(len(spawned), 1, "a stranger must not stop us starting our own")

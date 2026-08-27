@@ -25,9 +25,9 @@ Everything below works without it.
 from __future__ import annotations
 
 import bpy
-from bpy.props import (BoolProperty, CollectionProperty, FloatProperty,
-                       FloatVectorProperty, IntProperty, PointerProperty,
-                       StringProperty)
+from bpy.props import (BoolProperty, CollectionProperty, EnumProperty,
+                       FloatProperty, FloatVectorProperty, IntProperty,
+                       PointerProperty, StringProperty)
 from bpy.types import Operator, Panel, PropertyGroup
 
 from . import sof_resolution
@@ -181,6 +181,65 @@ def _colour_edited(self, context):
 #: What a slot is called once its colours no longer match any named material.
 CUSTOM_MATERIAL = "custom"
 
+#: The dropdown's items, kept alive at module scope.
+#:
+#: Blender does not copy the strings an items callback returns: hand it a list
+#: built inside the callback and the strings are freed while the menu is still
+#: pointing at them, which corrupts the labels and can take the process down.
+#: Building the list once and holding it here is the documented way round it.
+_ENUM_ITEMS = []
+
+
+def material_items(self, context):
+    """The material catalog, for the slot dropdown.
+
+    The catalog is 1149 names and is fetched once per build, not per redraw.
+    A slot whose current material is not in the catalog -- `custom`, or a name
+    from a build we cannot reach -- keeps its own entry at the top so choosing
+    something else is a decision rather than an accident.
+    """
+
+    from . import service_access, sof_materials
+
+    names = sof_materials.catalog(service_access.client(context))
+    current = str(self.material or "")
+    _ENUM_ITEMS.clear()
+    if current and current not in names:
+        _ENUM_ITEMS.append((current, current, "This slot's current material"))
+    if not names:
+        _ENUM_ITEMS.append(("", "<catalog unavailable>",
+                            "tools-core could not be reached"))
+    for name in names:
+        _ENUM_ITEMS.append((name, name, ""))
+    return list(_ENUM_ITEMS)
+
+
+def _material_chosen(self, context):
+    """A material was picked, so the slot takes that material's values.
+
+    Fetched rather than derived: a material is a bag of vec4 parameters and
+    only tools-core has them. The write is marked as arriving from the SOF, so
+    it does not read as a person editing a colour and mark the slot custom --
+    picking a named material is the opposite of going custom.
+    """
+
+    from . import service_access, sof_materials
+
+    chosen = str(self.material_choice or "")
+    if not chosen or chosen == str(self.material or ""):
+        return
+    record = sof_materials.material(chosen, service_access.client(context))
+    values = sof_materials.material_values(record)
+    with applying():
+        self.material = chosen
+        for field, value in values.items():
+            setattr(self, field, value)
+    if not values:
+        # Said plainly rather than silently leaving the old colours under a new
+        # name, which would be a slot lying about what it holds.
+        print(f"[CarbonEngineJS SOF] {chosen}: no parameters were fetched; "
+              "the colours below are still the previous material's")
+
 
 class CARBON_SOF_Material(PropertyGroup):
     """One material slot: the NAME of a SOF material, and the values it carries.
@@ -200,6 +259,13 @@ class CARBON_SOF_Material(PropertyGroup):
         name="Material", default="",
         description="The SOF material this slot uses. Editing a colour below "
                     "leaves that material and marks the slot custom")
+    #: The dropdown. Separate from `material` because the name a slot HAS and
+    #: the name a person is choosing are different things: a slot can hold
+    #: `custom`, or a material from a build whose catalog we cannot reach, and
+    #: neither is an item the menu could offer.
+    material_choice: EnumProperty(
+        name="Material", items=material_items, update=_material_chosen,
+        description="Pick a SOF material; its values fill the slot")
     #: WHERE the value came from, which the value itself no longer knows. By
     #: the time colours reach a shader they are four numbers in a constant
     #: buffer that cannot tell an override from a default, so a consumer
@@ -315,6 +381,12 @@ class CARBON_SOF_Settings(PropertyGroup):
         except sof_resolution.DnaError:
             return
 
+        # The faction's own table, keyed `areaType:slot`. tools-core serves it
+        # already flattened, so naming a faction-supplied slot is a lookup.
+        from . import service_access, sof_materials
+        names = sof_materials.faction_material_names(
+            sof_materials.faction(self.faction, service_access.client()))
+
         # Per area, not per ship. Two areas can disagree about the same slot
         # number -- an area that blocks a slot keeps the faction's material
         # while its neighbours take the skin's -- so asking once for the whole
@@ -334,6 +406,21 @@ class CARBON_SOF_Settings(PropertyGroup):
                 entry.source = found.source
                 if found.material:
                     entry.material = found.material
+                elif names:
+                    # A faction-sourced slot has a name too -- the faction's --
+                    # and leaving it blank made every such slot look nameless
+                    # when it is simply named somewhere else.
+                    entry.material = sof_materials.material_name_for(
+                        names,
+                        entry.area_type if entry.area_type >= 0
+                        else sof_resolution.TYPE_PRIMARY,
+                        entry.index)
+                if entry.material:
+                    # Keep the dropdown showing what the slot actually holds.
+                    try:
+                        entry.material_choice = entry.material
+                    except TypeError:
+                        pass          # not in the catalog; the menu adds it
 
     def slot(self, index, pattern=False, area_type=-1):
         """One slot, keyed by area type as well as number.
@@ -588,7 +675,10 @@ def draw_slot(layout, settings, entry, *, compact=False):
     header.label(text=label, icon="DECORATE_KEYFRAME" if from_dna else "DECORATE")
     name = header.row(align=True)
     name.alert = entry.material == CUSTOM_MATERIAL
-    name.prop(entry, "material", text="")
+    # The dropdown is the picker; the text beneath is what the slot HOLDS,
+    # which is not always something the catalog can offer -- `custom`, or a
+    # name from a build we cannot reach.
+    name.prop(entry, "material_choice", text="")
     if entry.material == CUSTOM_MATERIAL:
         header.operator("carbon.sof_export_material", text="", icon="EXPORT"
                         ).slot = f"{entry.index}:{int(entry.is_pattern)}:{entry.area_type}"
