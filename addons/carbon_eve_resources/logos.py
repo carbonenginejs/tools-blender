@@ -37,9 +37,9 @@ LOGO_VARIANTS = {
     "character": ("characters", "portrait"),
 }
 
-#: Which banner slot takes which owner. The rest of the twenty-four usages have
-#: no owner to ask about.
-SLOT_OWNERS = {
+#: Which banner USAGE takes which owner. Usage is the type of banner, and only
+#: three of the twenty-four name an owner the image server can answer for.
+USAGE_OWNERS = {
     "alliance_logo": "alliance",
     "corp_logo": "corporation",
     "ceo_portrait": "character",
@@ -92,15 +92,15 @@ def fetch_logo(kind, identity, cache_directory, size=256, timeout=30.0):
     return local
 
 
-def banner_logo(slot, owners, cache_directory, size=256):
-    """The image for one banner slot, or None when there is nobody to ask about.
+def banner_logo(usage, owners, cache_directory, size=256):
+    """The image for one banner TYPE, or None when there is nobody to ask about.
 
-    `owners` maps `alliance`, `corporation` and `character` to ids. A slot whose
-    owner is absent returns None and keeps its placeholder -- a missing owner is
-    not an error, it is a ship nobody has claimed.
+    `owners` maps `alliance`, `corporation` and `character` to ids. A usage whose
+    owner is absent returns None -- a missing owner is not an error, it is a ship
+    nobody has claimed.
     """
 
-    kind = SLOT_OWNERS.get(slot)
+    kind = USAGE_OWNERS.get(usage)
     identity = (owners or {}).get(kind) if kind else None
     if not identity:
         return None

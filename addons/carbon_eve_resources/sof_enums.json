@@ -1,0 +1,85 @@
+{
+  "schema": "carbon.sof-enums",
+  "version": 1,
+  "source": "runtime/src/sof",
+  "enums": {
+    "bannerUsage": {
+      "class": "EveSOFDataHullBanner",
+      "members": {
+        "ALLIANCE_LOGO": 0,
+        "CORP_LOGO": 1,
+        "CEO_PORTRAIT": 2,
+        "VERTICAL_BANNER": 3,
+        "HORIZONTAL_BANNER": 4,
+        "TARGET_SYSTEM_ALLIANCE_LOGO": 5,
+        "TARGET_SYSTEM_VERTICAL_BANNER": 6,
+        "TARGET_SYSTEM_HORIZONTAL_BANNER": 7,
+        "TARGET_SYSTEM_INFO_0": 8,
+        "TARGET_SYSTEM_INFO_1": 9,
+        "TARGET_SYSTEM_INFO_2": 10,
+        "TARGET_SYSTEM_INFO_3": 11,
+        "TARGET_SYSTEM_INFO_4": 12,
+        "TARGET_SYSTEM_STATUS": 13,
+        "CURRENT_SYSTEM_ALLIANCE_LOGO": 14,
+        "CURRENT_SYSTEM_VERTICAL_BANNER": 15,
+        "CURRENT_SYSTEM_HORIZONTAL_BANNER": 16,
+        "PUBLICITY_POSTER": 17,
+        "PUBLICITY_PORTRAIT": 18,
+        "RECRUITMENT_INFORMATION_0": 19,
+        "RECRUITMENT_INFORMATION_1": 20,
+        "RECRUITMENT_INFORMATION_2": 21,
+        "RECRUITMENT_INFORMATION_3": 22,
+        "RECRUITMENT_INFORMATION_4": 23
+      },
+      "names": [
+        "alliance_logo",
+        "corp_logo",
+        "ceo_portrait",
+        "vertical_banner",
+        "horizontal_banner",
+        "target_system_alliance_logo",
+        "target_system_vertical_banner",
+        "target_system_horizontal_banner",
+        "target_system_info_0",
+        "target_system_info_1",
+        "target_system_info_2",
+        "target_system_info_3",
+        "target_system_info_4",
+        "target_system_status",
+        "current_system_alliance_logo",
+        "current_system_vertical_banner",
+        "current_system_horizontal_banner",
+        "publicity_poster",
+        "publicity_portrait",
+        "recruitment_information_0",
+        "recruitment_information_1",
+        "recruitment_information_2",
+        "recruitment_information_3",
+        "recruitment_information_4"
+      ]
+    },
+    "decalUsage": {
+      "class": "EveSOFDataHullDecalSetItem",
+      "members": {
+        "USAGE_STANDARD": 0,
+        "USAGE_KILLCOUNTER": 1,
+        "USAGE_HOLE": 2,
+        "USAGE_CYLINDRICAL": 3,
+        "USAGE_GLOWCYLINDRICAL": 4,
+        "USAGE_GLOWSTANDARD": 5,
+        "USAGE_LOGO": 6,
+        "USAGE_MAX": 7
+      },
+      "names": [
+        "usage_standard",
+        "usage_killcounter",
+        "usage_hole",
+        "usage_cylindrical",
+        "usage_glowcylindrical",
+        "usage_glowstandard",
+        "usage_logo",
+        "usage_max"
+      ]
+    }
+  }
+}

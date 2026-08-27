@@ -23,7 +23,7 @@ import os
 import bpy
 import mathutils
 
-from . import logos, placeholders
+from . import logos, placeholders, sof_enums
 from .quad import decals as decal_module
 from .quad import interface as quad_interface
 from .quad import nodes
@@ -1405,26 +1405,16 @@ def plane_material(colour, set_index, index):
     return material
 
 
-#: What a banner's `reference` names -- `EveSOFDataHullBanner.Usage`, verbatim.
+#: The TYPE of banner: which one this is, and so which picture belongs on it.
 #:
-#: Twenty-four of them, not three. A hull carries more than the alliance, corp
-#: and CEO slots people think of: vertical and horizontal banners, the target
-#: and current system's, publicity posters and five recruitment panels. mde3_t3
-#: alone uses a VERTICAL_BANNER, which a three-entry table would have named "3".
-BANNER_REFERENCES = (
-    "alliance_logo", "corp_logo", "ceo_portrait",
-    "vertical_banner", "horizontal_banner",
-    "target_system_alliance_logo", "target_system_vertical_banner",
-    "target_system_horizontal_banner",
-    "target_system_info_0", "target_system_info_1", "target_system_info_2",
-    "target_system_info_3", "target_system_info_4", "target_system_status",
-    "current_system_alliance_logo", "current_system_vertical_banner",
-    "current_system_horizontal_banner",
-    "publicity_poster", "publicity_portrait",
-    "recruitment_information_0", "recruitment_information_1",
-    "recruitment_information_2", "recruitment_information_3",
-    "recruitment_information_4",
-)
+#: GENERATED, not typed out. The enum lives in the runtime's own
+#: `EveSOFDataHullBanner.Usage` and again in ccpwgl, so a copy here would be a
+#: third that drifts in silence -- and it already did: a hand-written
+#: three-entry table named this hull's VERTICAL_BANNER "3".
+#:
+#: Regenerate with `python scripts/generate_sof_enums.py`.
+BANNER_USAGES = tuple(sof_enums.names("bannerUsage"))
+
 
 
 def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
@@ -1463,7 +1453,7 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
         # so three of them went looking for owners that were never asked for and
         # came out blank.
         usage = banner_set.get("key")
-        slot = BANNER_REFERENCES[usage] if isinstance(usage, int)             and 0 <= usage < len(BANNER_REFERENCES) else str(usage or "")
+        slot = BANNER_USAGES[usage] if isinstance(usage, int)             and 0 <= usage < len(BANNER_USAGES) else str(usage or "")
         # No image, no banner. A banner exists to carry a picture: one with
         # nothing resolved is an invisible quad that can still be selected,
         # exported and puzzled over.
@@ -1488,7 +1478,7 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
             obj.matrix_world = item_matrix(item, hull)
             obj["carbon_banner_usage"] = int(usage or 0)
             obj["carbon_banner_reference"] = int(item.get("reference") or 0)
-            obj["carbon_banner_slot"] = slot
+            obj["carbon_banner_type"] = slot
             # angleX and angleY tilt the banner about its own axes; kept as
             # authored so nothing is lost, and not yet applied.
             obj["carbon_banner_angles"] = (float(item.get("angleX") or 0.0),

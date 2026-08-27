@@ -44,10 +44,10 @@ GLYPHS = {
 GLYPH_WIDTH = 5
 GLYPH_HEIGHT = 7
 
-#: Which banner usages get a labelled placeholder, and what it says.
+#: Which banner USAGES get a labelled placeholder, and what it says.
 #:
-#: Everything else stays black. See `BANNER_REFERENCES` in `ship` for the whole
-#: enum -- there are twenty-four.
+#: Usage is the type of banner. Everything else has none, and a set with no
+#: image is not built at all. See `BANNER_USAGES` in `ship` for the whole enum.
 BANNER_LABELS = {
     "alliance_logo": "ALLIANCE",
     "corp_logo": "CORP",
@@ -99,18 +99,18 @@ def _draw_dashed_border(pixels, size, colour, inset=8, dash=10, gap=8, thickness
             _plot(pixels, size, size - 1 - inset - layer, offset, colour)
 
 
-def banner_placeholder(slot, size=256):
-    """A labelled placeholder for one banner slot, or None when it has no label.
+def banner_placeholder(usage, size=256):
+    """A labelled placeholder for one banner TYPE, or None when it has no label.
 
     Returns an existing image when one has already been made, so a scene of
     twenty ships holds one image per slot rather than twenty.
     """
 
-    label = BANNER_LABELS.get(slot)
+    label = BANNER_LABELS.get(usage)
     if label is None:
         return None
 
-    name = f"carbon_placeholder_{slot}"
+    name = f"carbon_placeholder_{usage}"
     existing = bpy.data.images.get(name)
     if existing is not None:
         return existing
