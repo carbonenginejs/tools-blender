@@ -59,8 +59,9 @@ def material_group(material: str, values=None, *, rebuild: bool = False):
     name = group_name(material)
     tree = bpy.data.node_groups.get(name)
     if tree is not None and not rebuild:
-        if values:
-            _fill(tree, values)
+        # Returned as it stands, deliberately: an existing group IS the
+        # material, and re-filling it from a fresh fetch would silently undo an
+        # edit someone made to it. `rebuild` is how a caller asks for that.
         return tree
     if tree is None:
         tree = bpy.data.node_groups.new(name, "ShaderNodeTree")

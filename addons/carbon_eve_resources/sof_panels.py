@@ -287,10 +287,11 @@ def _material_named(self, context):
 
     if _APPLYING["depth"] != 0:
         return
-    from . import service_access, sof_materials
+    from . import service_access, sof_material_nodes, sof_materials
 
+    obj = getattr(self, "id_data", None)
     chosen = str(self.material or "")
-    if not chosen or chosen == CUSTOM_MATERIAL:
+    if not isinstance(obj, bpy.types.Object) or not chosen or chosen == CUSTOM_MATERIAL:
         return
     values = sof_materials.material_values(
         sof_materials.material(chosen, service_access.client(context)))
@@ -300,10 +301,19 @@ def _material_named(self, context):
         print(f"[CarbonEngineJS SOF] {chosen}: no parameters were fetched; "
               "the colours below still belong to the previous material")
         return
+
+    # REBIND to the chosen material. Writing the new values into the group the
+    # slot was already reading would repaint every other slot sharing it --
+    # naming the sails' slot 1 differently changed the hull, because both read
+    # `black_deadstar_coated` -- and would leave that group holding one
+    # material's values under another material's name.
+    tree = sof_material_nodes.material_group(chosen, values)
+    for material in slot_materials(obj, self):
+        sof_material_nodes.bind_slot(material, self.index, tree,
+                                     is_pattern=self.is_pattern)
     with applying():
         for field, value in values.items():
             setattr(self, field, value)
-    _material_update(self, context)
 
 
 class CARBON_SOF_Material(PropertyGroup):
