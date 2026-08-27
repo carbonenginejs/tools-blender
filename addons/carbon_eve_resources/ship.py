@@ -1098,6 +1098,26 @@ def populate_sof(obj, document, family):
 PLANE_CORNERS = ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (0.5, 0.5, 0.0), (-0.5, 0.5, 0.0))
 
 
+def quad_mesh(name):
+    """A unit quad WITH a UV map.
+
+    The UVs are the point: without them an image samples one corner texel for
+    the whole face, and since a logo is drawn on black that texel is black --
+    so a banner whose alpha comes from luminance vanishes completely. It looks
+    exactly like a banner that was never built.
+    """
+
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(list(PLANE_CORNERS), [], [(0, 1, 2, 3)])
+    mesh.update()
+    uvs = mesh.uv_layers.new(name="UV0")
+    # In the order PLANE_CORNERS gives: bottom left, bottom right, top right,
+    # top left.
+    for index, coordinate in enumerate(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))):
+        uvs.data[index].uv = coordinate
+    return mesh
+
+
 def find_typed(document, wanted):
     """Every node of a `_type`, in document order."""
 
@@ -1171,9 +1191,7 @@ def build_plane_sets(document, hull, collection, hull_sets=None):
             str(source.get("visibilityGroupName") or "primary"),
             source.get("visibilityGroup"))
         for index, item in enumerate(planes):
-            mesh = bpy.data.meshes.new(f"planeset{set_index}_{index}")
-            mesh.from_pydata(list(PLANE_CORNERS), [], [(0, 1, 2, 3)])
-            mesh.update()
+            mesh = quad_mesh(f"planeset{set_index}_{index}")
             obj = bpy.data.objects.new(f"plane_{set_index}_{index}", mesh)
             group.objects.link(obj)
 
@@ -1314,9 +1332,7 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
         for index, item in enumerate(banners):
             reference = item.get("reference")
             slot = BANNER_REFERENCES[reference] if isinstance(reference, int)                 and 0 <= reference < len(BANNER_REFERENCES) else str(reference or "")
-            mesh = bpy.data.meshes.new(f"bannerset{set_index}_{index}")
-            mesh.from_pydata(list(PLANE_CORNERS), [], [(0, 1, 2, 3)])
-            mesh.update()
+            mesh = quad_mesh(f"bannerset{set_index}_{index}")
             obj = bpy.data.objects.new(f"banner_{slot or set_index}_{index}", mesh)
             group.objects.link(obj)
             obj.matrix_world = item_matrix(item, hull)
