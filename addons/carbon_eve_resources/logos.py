@@ -4,7 +4,7 @@ A banner's image is an EXTERNAL parameter: which logo belongs on it depends on
 who owns the ship. Given an alliance or corporation, the picture comes from
 `images.evetech.net`.
 
-The rules here are skindr's, which learned them the hard way:
+The image server's rules:
 
 - the image server takes only certain SIZES and answers 400 to anything else,
   so the size is clamped rather than passed through;
