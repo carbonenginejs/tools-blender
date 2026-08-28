@@ -21,10 +21,11 @@ import os
 import bpy
 
 from . import nodes
+from ..core import resfile
 
 
 
-def load_texture(path, *, check_existing=True):
+def load_texture(path, *, name="", check_existing=True):
     """A texture image, decoding BC7 when Blender cannot read it.
 
     Blender loads DXT1, DXT5, BC4 and BC5 natively and answers BC7 with a 0x0
@@ -60,8 +61,23 @@ def load_texture(path, *, check_existing=True):
                 print(f"[CarbonEngineJS SOF] {text}: {exc}")
                 decoded = None
             if decoded is not None:
-                return decoded
-    return bpy.data.images.load(text, check_existing=check_existing)
+                return rename(decoded, name)
+    image = bpy.data.images.load(text, check_existing=check_existing)
+    return rename(image, name)
+
+
+def rename(image, name: str):
+    """Gives an image the name the artist knows it by.
+
+    Blender names an image after the file it loaded, and our files are named
+    by their storage address -- so every texture in the shader editor read as
+    thirty-two hex digits. The datablock is renamed; the FILE is not, because
+    the file's name is its identity in the cache.
+    """
+
+    if image is not None and name and not image.name.startswith(name):
+        image.name = name
+    return image
 
 
 def local_file(resources, path):
@@ -209,7 +225,8 @@ def wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources):
             if key in displace.inputs:
                 displace.inputs[key].default_value = float(value[index])
 
-    noise_image = bpy.data.images.load(noise_local, check_existing=True)
+    noise_image = rename(bpy.data.images.load(noise_local, check_existing=True),
+                         resfile.display_name(noise or ""))
     noise_image.colorspace_settings.name = "Non-Color"
     for index in (1, 2):
         node = mnodes.new("ShaderNodeTexImage")
@@ -255,7 +272,7 @@ def build_area_material(area, family, resources, index):
         local = local_file(resources, path)
         if socket is None or local is None:
             continue
-        image = load_texture(local)
+        image = load_texture(local, name=resfile.display_name(path))
         if image is None:
             continue          # a 3D volume texture, or unreadable
         image.colorspace_settings.name = (

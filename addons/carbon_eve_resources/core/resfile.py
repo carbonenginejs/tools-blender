@@ -65,3 +65,15 @@ def readable_path(root, logical_path: str):
 
     relative = str(logical_path or "").split(":/", 1)[-1].strip("/")
     return Path(root) / relative if relative else None
+
+
+def display_name(logical_path: str) -> str:
+    """What to call this resource in Blender: `ab1_t1_a`.
+
+    The stored file is named by its address, and an image datablock takes its
+    name from the file, so the shader editor was a list of thirty-two hex
+    digits. The logical path already carries the name the artist knows.
+    """
+
+    tail = str(logical_path or "").replace(chr(92), "/").rsplit("/", 1)[-1]
+    return tail.rsplit(".", 1)[0] or tail

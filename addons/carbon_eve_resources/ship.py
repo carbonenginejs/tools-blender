@@ -24,6 +24,7 @@ import bpy
 import mathutils
 
 from . import logos, placeholders, sof_enums
+from .core import resfile
 from .quad import decals as decal_module
 from .quad import interface as quad_interface
 from .quad import materials as quad_materials
@@ -931,7 +932,8 @@ def build_decal_material(decal, resources, obj=None):
         local = resources.get(path)
         if not local or not os.path.exists(local):
             continue
-        image = quad_materials.load_texture(local)
+        image = quad_materials.load_texture(
+            local, name=resfile.display_name(path))
         if image is None:
             continue          # a 3D volume texture, or unreadable
         image.colorspace_settings.name = (
@@ -1129,7 +1131,9 @@ def wire_hull_breach(decal, principled, sampled, projection, mnodes, mlinks,
             mlinks.new(projection.outputs["Position"], ray.inputs["Position"])
             mlinks.new(projection.outputs["View"], ray.inputs["View"])
 
-            image = bpy.data.images.load(equirect, check_existing=True)
+            image = quad_materials.rename(
+                bpy.data.images.load(equirect, check_existing=True),
+                resfile.display_name(cube or "") + "_equirect")
             image.colorspace_settings.name = "Non-Color"
             interior = mnodes.new("ShaderNodeTexEnvironment")
             interior.image = image
@@ -1879,7 +1883,9 @@ def _banner_image(name, effect, resources):
     local = (resources or {}).get(str(path or ""))
     if not local or not os.path.exists(str(local)):
         return None
-    image = bpy.data.images.load(str(local), check_existing=True)
+    image = quad_materials.rename(
+        bpy.data.images.load(str(local), check_existing=True),
+        resfile.display_name(str(path or "")))
     image.colorspace_settings.name = "Non-Color"
     return image
 
