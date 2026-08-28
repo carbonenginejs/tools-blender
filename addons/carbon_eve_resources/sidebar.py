@@ -123,14 +123,9 @@ class CARBON_PT_sidebar_about(Panel):
         cache.operator(addon.EVE_RESOURCE_OT_clear_cache.bl_idname,
                        text="", icon="TRASH")
 
-        # The local source folder, switchable here rather than only in
-        # Preferences: it is a working choice, toggled while working.
-        local = self.layout.row(align=True)
-        local.prop(prefs, "use_local_source", text="")
-        paths = local.column(align=True)
-        paths.enabled = prefs.use_local_source
-        paths.prop(prefs, "local_source", text="")
-        paths.prop(prefs, "local_resfiles", text="")
+        # The local folders are in Preferences, not here. They are set up
+        # once and then left alone, and two path fields in a sidebar is a lot
+        # of room for something nobody touches twice.
 
         # Handing the ship over: model, blend and textures in one folder.
         from . import export as export_module
