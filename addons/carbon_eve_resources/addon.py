@@ -424,12 +424,33 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
                                         progress=_set_progress,
                                         cancelled=_job_cancelled,
                                         local_root=local_root,
-                                        resfiles_root=resfiles_root)
+                                        resfiles_root=resfiles_root,
+                                        prepare=_prepare_texture)
 
         _launch_job(context, "sof_fetch",
                     lambda: _run_with_cache_stats(fetch, cache_root),
                     f"Fetching {dna}")
         return {"FINISHED"}
+
+
+def _prepare_texture(logical_path, local_file):
+    """Whatever a file needs doing to it before Blender sees it.
+
+    Runs in the FETCH POOL, on a worker thread, alongside the downloads. Today
+    that is one thing: decoding BC7, which Blender cannot read at all and which
+    takes about nine seconds for a 2048 square. A hull has dozens, so on the
+    main thread it was minutes of a window that did not repaint -- a lock-up as
+    far as anybody watching is concerned.
+
+    Nothing here may touch `bpy`. That is the whole point: Blender's data is
+    main-thread only, and this work is not.
+    """
+
+    if not str(logical_path).lower().endswith(".dds"):
+        return None
+    from .dds import reader
+
+    return reader.decode_to_png(local_file)
 
 
 class EVE_RESOURCE_OT_refresh_cache_stats(Operator):

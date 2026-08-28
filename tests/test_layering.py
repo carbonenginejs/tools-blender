@@ -70,3 +70,36 @@ class CoreIsPureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PreparationStaysOutOfCoreTests(unittest.TestCase):
+    """The fetch pool does Blender-side work without core knowing about it.
+
+    Decoding BC7 has to happen off the main thread, and the natural place is
+    the pool that already fetches the files -- which lives in `core`. Rather
+    than let `core` import the decoder, the caller passes the work in.
+    """
+
+    def core_source(self, name):
+        here = Path(__file__).resolve().parents[1]
+        return (here / "addons" / "carbon_eve_resources" / "core"
+                / name).read_text(encoding="utf-8")
+
+    def test_the_fetcher_takes_the_work_as_a_callback(self):
+        text = self.core_source("sof_fetch.py")
+        self.assertIn("prepare", text)
+        self.assertIn("prepare(path, found)", text)
+
+    def test_core_still_imports_nothing_from_above_it(self):
+        # The decoder lives in `dds`, an adapter. A plain import of it here
+        # would invert the layering and drag bpy into a bpy-free module.
+        text = self.core_source("sof_fetch.py")
+        for forbidden in ("from ..dds", "from ..quad", "import bpy",
+                          "from .. import"):
+            self.assertNotIn(forbidden, text)
+
+    def test_a_failed_preparation_does_not_lose_the_file(self):
+        # A texture that will not decode is still a texture: the ship should
+        # build without it rather than the fetch failing.
+        text = self.core_source("sof_fetch.py")
+        self.assertIn("problems.append", text)

@@ -410,7 +410,8 @@ def download(source_url: str, destination: Path, *, opener=urlopen,
 def fetch_ship(dna: str, client, cache_root, *, build: str = "",
                target: str = "eve", progress: Optional[Callable] = None,
                opener=urlopen, cancelled: Optional[Callable] = None,
-               local_root=None, resfiles_root=None) -> tuple:
+               local_root=None, resfiles_root=None,
+               prepare: Optional[Callable] = None) -> tuple:
     """`(document, {res path: local file})` for one DNA.
 
     A resource that cannot be fetched is left OUT of the map rather than
@@ -441,11 +442,24 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
     sources = {}
 
     def one(path):
-        return str(fetch_resource(path, client, cache_root, build=exact,
-                                  target=target, opener=opener, index=index,
-                                  local_root=local_root,
-                                  resfiles_root=resfiles_root,
-                                  sources=sources))
+        found = fetch_resource(path, client, cache_root, build=exact,
+                               target=target, opener=opener, index=index,
+                               local_root=local_root,
+                               resfiles_root=resfiles_root,
+                               sources=sources)
+        if prepare is not None:
+            # Whatever this file needs doing to it BEFORE Blender sees it, done
+            # here in the pool. A BC7 texture takes nine seconds to decode and
+            # a hull has dozens; on the main thread that is minutes of a frozen
+            # window, and here it is eight at a time while the rest downloads.
+            #
+            # Supplied by the caller rather than known here, because the work
+            # is Blender-side and this layer has no business importing it.
+            try:
+                prepare(path, found)
+            except Exception as exc:
+                problems.append(f"{path}: {exc}")
+        return str(found)
 
     # In parallel. A ship is fifty files, each a resolve and a download, and
     # serially that is over two minutes of a person watching nothing happen.

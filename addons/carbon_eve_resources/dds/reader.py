@@ -12,6 +12,7 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import png
 from .bc7_tables import (ANCHOR_2, ANCHOR_3_SECOND, ANCHOR_3_THIRD, MODES,
                          PARTITIONS_2, PARTITIONS_3, WEIGHTS)
 
@@ -305,6 +306,34 @@ def derived_path(source: Path) -> Path:
 
     # Somewhere else entirely: keep it by name rather than refusing to decode.
     return cache / "translated" / (source.name + ".png")
+
+
+def decode_to_png(source, destination=None):
+    """Decodes one BC7 texture straight to a PNG. NO Blender in it.
+
+    This is the nine seconds. Keeping it free of `bpy` is what lets it run in
+    the fetch pool alongside the downloads, eight at a time, instead of on the
+    main thread one after another with the window frozen.
+
+    Returns the PNG, or None when the file is not BC7 -- Blender reads every
+    other format EVE uses, so those need nothing done to them.
+    """
+
+    source = Path(source)
+    destination = Path(destination) if destination else derived_path(source)
+    if destination.is_file() and destination.stat().st_size > 0:
+        return destination
+
+    # The header first. Most of a ship's textures are DXT5, which Blender
+    # reads itself, and reading three hundred megabytes to answer "no" is a
+    # cost paid on every load for nothing.
+    with open(source, "rb") as handle:
+        head = handle.read(148)
+    if not is_bc7(head):
+        return None
+
+    width, height, rgba = to_rgba(source.read_bytes())
+    return png.write(destination, width, height, rgba)
 
 
 def load_image(path, name: str = ""):
