@@ -194,6 +194,34 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
     #: What the scene was on before we overrode it, so choosing Blender again
     #: gives back what the person had rather than Blender's factory default.
     previous_view_transform: StringProperty(default="", options={"HIDDEN"})
+    #: A picture of somebody's own for a banner slot, instead of the one
+    #: fetched for the ship's owner.
+    #:
+    #: A tick beside each path rather than "empty means off": a person setting
+    #: one up types the path, looks at it, and turns it on -- and can turn it
+    #: off again without losing what they typed.
+    use_corp_banner: BoolProperty(
+        name="Corp",
+        description="Use your own image for the corporation banner",
+        default=False,
+    )
+    corp_banner: StringProperty(
+        name="Corp banner",
+        description="Image to draw on the corporation banners",
+        subtype="FILE_PATH",
+        default="",
+    )
+    use_alliance_banner: BoolProperty(
+        name="Alliance",
+        description="Use your own image for the alliance banner",
+        default=False,
+    )
+    alliance_banner: StringProperty(
+        name="Alliance banner",
+        description="Image to draw on the alliance banners",
+        subtype="FILE_PATH",
+        default="",
+    )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -219,6 +247,16 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
             row.operator(EVE_RESOURCE_OT_accept_creator_terms.bl_idname, text="Accept")
         layout.prop(self, "cache_directory")
         layout.prop(self, "view_transform_mode", expand=True)
+
+        banners = layout.box()
+        banners.label(text="Banners")
+        for switch, field in (("use_corp_banner", "corp_banner"),
+                              ("use_alliance_banner", "alliance_banner")):
+            row = banners.row(align=True)
+            row.prop(self, switch)
+            path = row.row(align=True)
+            path.enabled = getattr(self, switch)
+            path.prop(self, field, text="")
 
         row = layout.row(align=True)
         row.prop(self, "use_local_source")
@@ -459,6 +497,29 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
                     lambda: _run_with_cache_stats(fetch, cache_root),
                     f"Fetching {dna}")
         return {"FINISHED"}
+
+
+#: Which preference pair feeds which banner usage. The usages are the SOF's
+#: own names; only these two are worth a control, because a CEO portrait is
+#: the character's and nobody substitutes their own.
+BANNER_OVERRIDES = {
+    "corp_logo": ("use_corp_banner", "corp_banner"),
+    "alliance_logo": ("use_alliance_banner", "alliance_banner"),
+}
+
+def banner_overrides(prefs):
+    """One path per banner slot somebody has pointed elsewhere, by usage.
+
+    Only ticked slots with a path, so a half-filled setting behaves as off
+    rather than as a missing file.
+    """
+
+    found = {}
+    for usage, (switch, field) in BANNER_OVERRIDES.items():
+        path = str(getattr(prefs, field, "") or "").strip()
+        if getattr(prefs, switch, False) and path:
+            found[usage] = bpy.path.abspath(path)
+    return found
 
 
 def _prepare_texture(logical_path, local_file):
@@ -800,6 +861,7 @@ def _build_fetched_ship(document, resources, problems) -> str:
             decal_sets=(hull_record.get("decalSets") or []),
             hull_record=hull_record,
             cache_directory=str(_cache_path(_prefs(bpy.context)) / "logos"),
+            banner_images=banner_overrides(_prefs(bpy.context)),
         )
 
     if primary is None:

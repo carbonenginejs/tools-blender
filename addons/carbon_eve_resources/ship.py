@@ -1733,7 +1733,7 @@ BANNER_USAGES = tuple(sof_enums.names("bannerUsage"))
 
 
 def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
-                      cache_directory="", resources=None):
+                      cache_directory="", resources=None, overrides=None):
     """Banners and the lights that shine on them.
 
     A banner is the quad a logo is drawn on, and a banner set carries its own
@@ -1800,7 +1800,8 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
                                            float(item.get("angleY") or 0.0))
             obj.data.materials.append(
                 banner_material(slot, set_index, index, owners, cache_directory,
-                                banner_set.get("effect"), resources, hull))
+                                banner_set.get("effect"), resources, hull,
+                                overrides))
             attach_to_bone(obj, armature, item.get("bone"))
             stamp_identity(obj, slot, "banner",
                            str(source.get("visibilityGroupName") or "primary"))
@@ -1831,8 +1832,30 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
     return built + lights
 
 
+def own_banner_image(slot, overrides):
+    """A picture the person chose for this banner slot, or None.
+
+    Loaded by PATH, so the same file used by two ships is one image in the
+    file. A path that will not open is reported and treated as absent: a
+    banner falling back to the fetched logo is recoverable, a banner silently
+    left blank is not.
+    """
+
+    path = str((overrides or {}).get(slot) or "").strip()
+    if not path:
+        return None
+    try:
+        image = bpy.data.images.load(path, check_existing=True)
+    except (RuntimeError, OSError) as exc:
+        print(f"  ! {slot} banner image {path}: {exc}")
+        return None
+    image.colorspace_settings.name = "sRGB"
+    return image
+
+
 def banner_material(slot, set_index, index, owners=None, cache_directory="",
-                    effect=None, resources=None, ship_object=None):
+                    effect=None, resources=None, ship_object=None,
+                    overrides=None):
     """A banner: a logo behind two SCROLLING layers and a mask, ADDED to the scene.
 
     Measured from `banner.fx` rather than guessed:
@@ -1915,8 +1938,11 @@ def banner_material(slot, set_index, index, owners=None, cache_directory="",
     layer2 = sample("Layer2Map", scrolled(layer2_transform, scroll[2:4], 200), 200)
     mask = sample("MaskMap", None, -140, )
 
-    logo = None
-    if owners and cache_directory:
+    # Somebody's own picture first, then the one fetched for this ship's
+    # owner, then the labelled placeholder. An override that cannot be opened
+    # says so and falls through rather than leaving the banner blank.
+    logo = own_banner_image(slot, overrides)
+    if logo is None and owners and cache_directory:
         try:
             logo = logos.banner_logo(slot, owners, cache_directory)
         except logos.LogoError as error:
@@ -2072,7 +2098,7 @@ def item_matrix(item, hull):
 
 def build_ship(document_path, resources_directory, *, clear=True,
                globals_overrides=None, decal_sets=None, hull_record=None,
-               owners=None, cache_directory=""):
+               owners=None, cache_directory="", banner_images=None):
     """Builds a whole ship: geometry, areas, decals, and the SOF that drives it.
 
     ONE call, because the panel and the command line must produce the same
@@ -2118,7 +2144,8 @@ def build_ship(document_path, resources_directory, *, clear=True,
                                      resources)
     banner_objects = build_banner_sets(document, primary, collection,
                                        (hull_record or {}).get("bannerSets"),
-                                       owners, cache_directory, resources)
+                                       owners, cache_directory, resources,
+                                       banner_images)
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material

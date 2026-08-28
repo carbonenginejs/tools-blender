@@ -130,6 +130,22 @@ class CARBON_PT_sidebar_about(Panel):
         space.label(text="Colour space")
         space.prop(prefs, "view_transform_mode", expand=True)
 
+        # Banners: a tick and a path each. Somebody's own artwork, instead of
+        # the logo fetched for whoever owns the ship -- which is what a person
+        # wants when the ship belongs to nobody yet, or when they are showing
+        # a design rather than a character's actual corp.
+        banners = self.layout.box()
+        banners.label(text="Banners")
+        for switch, field in (("use_corp_banner", "corp_banner"),
+                              ("use_alliance_banner", "alliance_banner")):
+            row = banners.row(align=True)
+            row.prop(prefs, switch)
+            path = row.row(align=True)
+            # The path stays visible when the tick is off: turning it off must
+            # not lose what somebody typed.
+            path.enabled = getattr(prefs, switch)
+            path.prop(prefs, field, text="")
+
         # The local folders are in Preferences, not here. They are set up
         # once and then left alone, and two path fields in a sidebar is a lot
         # of room for something nobody touches twice.
