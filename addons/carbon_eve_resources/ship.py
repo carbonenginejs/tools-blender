@@ -1400,6 +1400,61 @@ def attach_to_bone(obj, armature, bone_index):
     return True
 
 
+def attachment_light(entry, name, hull, armature, owner=None):
+    """One attachment's light. The same shape wherever it appears.
+
+    Sprites, planes, haze and spotlights all wrap the same `lightData`: a
+    position and rotation, a colour, a radius and an inner radius, a
+    brightness, and noise terms. So this is written once and used by each of
+    them rather than copied per attachment type.
+
+    `entry` is the WRAPPER -- what carries `blinkRate`, `blinkPhase`,
+    `fadeType`, `saturation`, `lightProfilePath` and the `index` of the
+    attachment it belongs to. Every one of those is kept on the object: none
+    of them has a Blender equivalent, and losing them would make the ship
+    unexportable.
+
+    Returns the object, unlinked: the caller decides which collection it
+    belongs in.
+    """
+
+    data = entry.get("lightData") or {}
+    lamp = bpy.data.lights.new(name, "POINT")
+    # radius is the reach, innerRadius the falloff start; Blender has one
+    # size, so the inner radius is what the lamp's own radius becomes.
+    lamp.shadow_soft_size = float(data.get("innerRadius") or 0.0) * 0.01
+    colour = tuple(data.get("color") or (0.0, 0.0, 0.0, 0.0))
+    lamp.color = tuple(colour[:3]) or (1.0, 1.0, 1.0)
+    lamp.energy = float(data.get("brightness") or 1.0)
+
+    obj = bpy.data.objects.new(name, lamp)
+    world = item_matrix(data, hull)
+    obj.matrix_world = world
+    obj["carbon_light_radius"] = float(data.get("radius") or 0.0)
+    obj["carbon_light_inner_radius"] = float(data.get("innerRadius") or 0.0)
+    obj["carbon_light_flags"] = int(data.get("flags") or 0)
+    for key in ("noiseAmplitude", "noiseFrequency", "noiseOctaves"):
+        if key in data:
+            obj[f"carbon_light_{key}"] = float(data.get(key) or 0.0)
+    for key in ("blinkRate", "blinkPhase", "saturation"):
+        if key in entry:
+            obj[f"carbon_light_{key}"] = float(entry.get(key) or 0.0)
+    if entry.get("fadeType") is not None:
+        obj["carbon_light_fade_type"] = int(entry.get("fadeType") or 0)
+    if entry.get("lightProfilePath"):
+        obj["carbon_light_profile"] = str(entry.get("lightProfilePath"))
+    if entry.get("index") is not None:
+        obj["carbon_light_index"] = int(entry.get("index") or 0)
+
+    if owner is not None:
+        obj.parent = owner
+        obj.matrix_parent_inverse = owner.matrix_world.inverted()
+        obj.matrix_world = world
+    else:
+        attach_to_bone(obj, armature, data.get("boneIndex"))
+    return obj
+
+
 def build_plane_sets(document, hull, collection, hull_sets=None,
                      resources=None):
     """One quad per `EvePlaneSetItem`, placed and coloured as the set says.
@@ -1410,7 +1465,7 @@ def build_plane_sets(document, hull, collection, hull_sets=None,
     """
 
     armature = hull.parent if hull is not None and hull.parent is not None         and hull.parent.type == "ARMATURE" else None
-    built = []
+    built, lights = [], []
     for set_index, plane_set in enumerate(find_typed(document, "EvePlaneSet")):
         effect = plane_set.get("effect") or {}
         planes = plane_set.get("planes") or []
@@ -1421,6 +1476,7 @@ def build_plane_sets(document, hull, collection, hull_sets=None,
             collection, "planeSets",
             str(source.get("visibilityGroupName") or "primary"),
             source.get("visibilityGroup"))
+        planes_built = []
         for index, item in enumerate(planes):
             mesh = quad_mesh(f"planeset{set_index}_{index}")
             obj = remember_name(bpy.data.objects.new(
@@ -1448,9 +1504,30 @@ def build_plane_sets(document, hull, collection, hull_sets=None,
             stamp_identity(obj, f"plane_{index}", "plane",
                            str(source.get("visibilityGroupName") or "primary"))
             built.append(obj)
-    if built:
-        print(f"  built {len(built)} plane(s) from {len(find_typed(document, 'EvePlaneSet'))} set(s)")
-    return built
+            planes_built.append(obj)
+
+        # A set has NO light, one, or several -- an Abaddon has four for
+        # twelve planes -- so nothing here pairs them off by position the way
+        # banners do. The wrapper names the plane it belongs to in `index`,
+        # and a light naming a plane that is not there stays loose in the set
+        # rather than being attached to whatever happened to be next.
+        for order, light in enumerate(plane_set.get("lights") or []):
+            wanted = light.get("index")
+            owner = (planes_built[int(wanted)]
+                     if isinstance(wanted, (int, float))
+                     and 0 <= int(wanted) < len(planes_built) else None)
+            obj = attachment_light(
+                light,
+                unique_name(f"{(owner.get('carbon_sof_name') or 'plane')}_light"
+                            if owner else f"plane_{set_index}_light_{order}",
+                            collection.name),
+                hull, armature, owner)
+            group.objects.link(obj)
+            lights.append(obj)
+    if built or lights:
+        print(f"  built {len(built)} plane(s) and {len(lights)} plane light(s) "
+              f"from {len(find_typed(document, 'EvePlaneSet'))} set(s)")
+    return built + lights
 
 
 def attachment_collection(parent, kind, group="", visibility_hash=None):
@@ -1731,35 +1808,19 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
             banners_built.append(obj)
 
         for index, light in enumerate(banner_set.get("lights") or []):
-            data = light.get("lightData") or {}
-            lamp = bpy.data.lights.new(f"bannerlight{set_index}_{index}", "POINT")
-            # radius is the reach, innerRadius the falloff start; Blender has one
-            # size, so the inner radius is what the lamp's own radius becomes.
-            lamp.shadow_soft_size = float(data.get("innerRadius") or 0.0) * 0.01
-            colour = tuple(data.get("color") or (0.0, 0.0, 0.0, 0.0))
-            lamp.color = tuple(colour[:3]) or (1.0, 1.0, 1.0)
-            lamp.energy = float(data.get("brightness") or 1.0)
             # The light belongs to ONE banner: the hull record pairs them, and
             # the built radii are the banner's own scaling times the set's
             # multipliers -- 12.566 by 0.3 gives the 3.77 inner radius exactly.
             # So it hangs off its banner rather than sitting loose in the set,
             # and moving the banner takes its light along.
             owner = banners_built[index] if index < len(banners_built) else None
-            obj = bpy.data.objects.new(
+            obj = attachment_light(
+                light,
                 unique_name(f"{(owner.get('carbon_sof_name') or 'banner')}_light"
-                            if owner else f"banner_light_{index}", collection.name), lamp)
+                            if owner else f"banner_light_{index}",
+                            collection.name),
+                hull, armature, owner)
             group.objects.link(obj)
-            world = item_matrix(data, hull)
-            obj.matrix_world = world
-            obj["carbon_light_radius"] = float(data.get("radius") or 0.0)
-            obj["carbon_light_inner_radius"] = float(data.get("innerRadius") or 0.0)
-            obj["carbon_light_flags"] = int(data.get("flags") or 0)
-            if owner is not None:
-                obj.parent = owner
-                obj.matrix_parent_inverse = owner.matrix_world.inverted()
-                obj.matrix_world = world
-            else:
-                attach_to_bone(obj, armature, data.get("boneIndex"))
             lights.append(obj)
 
     if built or lights:
