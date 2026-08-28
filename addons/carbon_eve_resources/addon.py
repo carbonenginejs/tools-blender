@@ -436,6 +436,10 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
 def _prepare_texture(logical_path, local_file):
     """Whatever a file needs doing to it before Blender sees it.
 
+    Two things now: decoding a BC7 texture, and parsing geometry. Both are
+    pure Python, both are slow, and neither has any business happening while
+    Blender is trying to draw.
+
     Runs in the FETCH POOL, on a worker thread, alongside the downloads. Today
     that is one thing: decoding BC7, which Blender cannot read at all and which
     takes about nine seconds for a 2048 square. A hull has dozens, so on the
@@ -446,7 +450,21 @@ def _prepare_texture(logical_path, local_file):
     main-thread only, and this work is not.
     """
 
-    if not str(logical_path).lower().endswith(".dds"):
+    lowered = str(logical_path).lower()
+    if lowered.endswith(".gr2"):
+        # Geometry: 92 to 94 per cent of a hull import is PARSING, 17 seconds
+        # of pure Python for a big one. Done here, in a child, its result is
+        # waiting when the import runs.
+        from .gr2_importer import parse_cache
+
+        if not parse_cache.prepare(local_file):
+            # Said out loud. The fallback parses on the main thread and looks
+            # EXACTLY like this never existed -- which is how a child that
+            # died on an import went unnoticed while the console scrolled.
+            print(f"  {Path(local_file).name}: not parsed ahead of time; "
+                  f"the import will do it on the main thread")
+        return None
+    if not lowered.endswith(".dds"):
         return None
     from .dds import reader, worker
 

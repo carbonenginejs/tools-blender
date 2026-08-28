@@ -1857,16 +1857,24 @@ class IMPORT_SCENE_OT_carbon_gr2(Operator, ImportHelper):
             self.report({"ERROR"}, "GR2 file not found.")
             return {"CANCELLED"}
 
-        try:
-            gr2 = read_gr2(
-                gr2_path,
-                decompress_curves=True,
-                unpack_tangents=bool(self.try_unpack_tangents),
-                rebuild_missing_normals=bool(self.rebuild_missing_normals),
-            )
-        except (Gr2Error, OSError) as error:
-            self.report({"ERROR"}, f"Could not read GR2: {error}")
-            return {"CANCELLED"}
+        # Parsed already, by a child process during the fetch? Reading that
+        # back takes 0.31s where parsing takes 16.7, and the parse is 92 to 94
+        # per cent of a geometry import -- all of it pure Python holding the
+        # main thread, which is what a frozen window IS.
+        from . import parse_cache
+
+        gr2 = parse_cache.read(gr2_path)
+        if gr2 is None:
+            try:
+                gr2 = read_gr2(
+                    gr2_path,
+                    decompress_curves=True,
+                    unpack_tangents=bool(self.try_unpack_tangents),
+                    rebuild_missing_normals=bool(self.rebuild_missing_normals),
+                )
+            except (Gr2Error, OSError) as error:
+                self.report({"ERROR"}, f"Could not read GR2: {error}")
+                return {"CANCELLED"}
 
         base_name = os.path.basename(os.path.splitext(gr2_path)[0])
         result = import_gr2_json(
