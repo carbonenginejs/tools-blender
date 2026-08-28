@@ -933,7 +933,7 @@ def build_decal_material(decal, resources, obj=None):
         if not local or not os.path.exists(local):
             continue
         image = quad_materials.load_texture(
-            local, name=resfile.display_name(path))
+            local, name=resfile.display_name(path), logical_path=path)
         if image is None:
             continue          # a 3D volume texture, or unreadable
         image.colorspace_settings.name = (
@@ -1885,7 +1885,7 @@ def _banner_image(name, effect, resources):
         return None
     image = quad_materials.rename(
         bpy.data.images.load(str(local), check_existing=True),
-        resfile.display_name(str(path or "")))
+        resfile.display_name(str(path or "")), str(path or ""))
     image.colorspace_settings.name = "Non-Color"
     return image
 

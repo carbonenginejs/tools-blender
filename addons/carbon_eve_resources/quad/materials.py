@@ -25,7 +25,7 @@ from ..core import resfile
 
 
 
-def load_texture(path, *, name="", check_existing=True):
+def load_texture(path, *, name="", logical_path="", check_existing=True):
     """A texture image, decoding BC7 when Blender cannot read it.
 
     Blender loads DXT1, DXT5, BC4 and BC5 natively and answers BC7 with a 0x0
@@ -61,22 +61,30 @@ def load_texture(path, *, name="", check_existing=True):
                 print(f"[CarbonEngineJS SOF] {text}: {exc}")
                 decoded = None
             if decoded is not None:
-                return rename(decoded, name)
+                return rename(decoded, name, logical_path)
     image = bpy.data.images.load(text, check_existing=check_existing)
-    return rename(image, name)
+    return rename(image, name, logical_path)
 
 
-def rename(image, name: str):
+def rename(image, name: str, logical_path: str = ""):
     """Gives an image the name the artist knows it by.
 
     Blender names an image after the file it loaded, and our files are named
     by their storage address -- so every texture in the shader editor read as
     thirty-two hex digits. The datablock is renamed; the FILE is not, because
     the file's name is its identity in the cache.
+
+    The logical path is kept on the image as well. The NAME is what a person
+    reads, but exporting needs the folders it belongs in, and the name alone
+    cannot say whether "ab1_t1_a" came from the amarr tree or somewhere else.
     """
 
-    if image is not None and name and not image.name.startswith(name):
+    if image is None:
+        return image
+    if name and not image.name.startswith(name):
         image.name = name
+    if logical_path:
+        image["carbon_res_path"] = str(logical_path)
     return image
 
 
@@ -226,7 +234,7 @@ def wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources):
                 displace.inputs[key].default_value = float(value[index])
 
     noise_image = rename(bpy.data.images.load(noise_local, check_existing=True),
-                         resfile.display_name(noise or ""))
+                         resfile.display_name(noise or ""), noise or "")
     noise_image.colorspace_settings.name = "Non-Color"
     for index in (1, 2):
         node = mnodes.new("ShaderNodeTexImage")
@@ -272,7 +280,8 @@ def build_area_material(area, family, resources, index):
         local = local_file(resources, path)
         if socket is None or local is None:
             continue
-        image = load_texture(local, name=resfile.display_name(path))
+        image = load_texture(local, name=resfile.display_name(path),
+                             logical_path=path)
         if image is None:
             continue          # a 3D volume texture, or unreadable
         image.colorspace_settings.name = (

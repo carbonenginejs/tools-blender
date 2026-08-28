@@ -77,3 +77,25 @@ def display_name(logical_path: str) -> str:
 
     tail = str(logical_path or "").replace(chr(92), "/").rsplit("/", 1)[-1]
     return tail.rsplit(".", 1)[0] or tail
+
+
+def export_destination(folder, logical_path: str, source):
+    """Where one resource goes when a person asks for it by name.
+
+    The logical layout -- `dx9/model/ship/amarr/ab1/ab1_t1_a.dds` -- because
+    that is the layout the optional local-files folder READS. So an export
+    folder is directly usable as an authored one: export, edit a file, and the
+    next load picks up the edit instead of the cached original.
+
+    The extension comes from the file being written, not from the logical path.
+    A BC7 texture is exported as the PNG we translated it to, since that is the
+    one anybody can open, and it must not be handed out under a `.dds` name.
+    """
+
+    destination = readable_path(folder, logical_path)
+    if destination is None:
+        return None
+    suffix = Path(str(source)).suffix.lower()
+    if suffix and suffix != destination.suffix.lower():
+        destination = destination.with_suffix(suffix)
+    return destination
