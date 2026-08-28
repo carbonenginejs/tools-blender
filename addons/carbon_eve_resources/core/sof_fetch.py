@@ -277,7 +277,7 @@ def local_file(local_root, logical_path: str):
 
 def fetch_resource(logical_path: str, client, cache_root, *, build: str,
                    target: str = "eve", opener=urlopen, index=None,
-                   local_root=None) -> Path:
+                   local_root=None, sources=None) -> Path:
     """One resource's bytes: cached if present, else fetched from CCP.
 
     The INDEX answers where a file lives, so nothing is asked per file. Falling
@@ -290,17 +290,25 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
     #   2. the cache under the same human-readable layout, .tga then .dds
     #   3. the cache's content-addressed store, where downloads land
     #   4. the index, and CCP
+    def note(kind, path):
+        # Where each file CAME from, so a load can say so. Every load reads the
+        # same fifty names aloud, and a person watching that cannot tell a
+        # cached ship from one being downloaded unless it says which.
+        if sources is not None:
+            sources[logical_path] = kind
+        return path
+
     provided = local_file(local_root, logical_path)
     if provided is not None:
-        return provided
+        return note("local", provided)
 
     provided = local_file(cache_root, logical_path)
     if provided is not None:
-        return provided
+        return note("cache", provided)
 
     cached = resfile.find_cached(cache_root, logical_path)
     if cached is not None:
-        return cached
+        return note("cache", cached)
 
     location = resindex.locate(index, logical_path) if index else None
     if location:
@@ -324,7 +332,7 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
     partial = destination.with_name(destination.name + ".part")
     partial.write_bytes(payload)
     partial.replace(destination)
-    return destination
+    return note("download", destination)
 
 
 def read_url(url: str, *, opener=urlopen, timeout: float = 120.0) -> bytes:
@@ -392,10 +400,12 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
     resources = {}
     problems = []
 
+    sources = {}
+
     def one(path):
         return str(fetch_resource(path, client, cache_root, build=exact,
                                   target=target, opener=opener, index=index,
-                                  local_root=local_root))
+                                  local_root=local_root, sources=sources))
 
     # In parallel. A ship is fifty files, each a resolve and a download, and
     # serially that is over two minutes of a person watching nothing happen.
@@ -407,10 +417,13 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
             path = running[finished]
             done += 1
             if progress is not None:
-                # Named for what it is doing. "12/50 gb2_t1_a.dds" reads as
-                # downloading, and the download is the fast part -- what takes
-                # the time is asking the service where each file lives.
-                progress(f"{done}/{len(paths)} {path.rsplit('/', 1)[-1]}")
+                # Say which, not just which file. "12/50 gb2_t1_a.dds" reads as
+                # downloading whatever it did, so a ship already on disk looked
+                # identical to one arriving over the wire.
+                verb = {"local": "reading", "cache": "cached",
+                        "download": "downloading"}.get(sources.get(path), "")
+                progress(f"{done}/{len(paths)} {verb} "
+                         f"{path.rsplit('/', 1)[-1]}".replace("  ", " "))
             if cancelled is not None and cancelled():
                 for pending in running:
                     pending.cancel()
@@ -420,6 +433,12 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
                 resources[path] = finished.result()
             except Exception as exc:
                 problems.append(f"{path}: {exc}")
+    tally = {}
+    for kind in sources.values():
+        tally[kind] = tally.get(kind, 0) + 1
+    if tally:
+        print("  resources: " + ", ".join(
+            f"{count} {kind}" for kind, count in sorted(tally.items())))
     return document, resources, problems
 
 

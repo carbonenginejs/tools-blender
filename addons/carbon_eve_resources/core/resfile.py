@@ -25,10 +25,27 @@ PRIME = 0x100000001B3
 MASK = 0xFFFFFFFFFFFFFFFF
 
 
+def normalize(logical_path: str) -> str:
+    """A logical path in the form its address is computed from.
+
+    Lowercased, with backslashes turned round, as
+    `CjsFileIndexEntry.normalizeLogicalPath` does. EVE's paths are
+    case-insensitive and the stored address is the hash of the LOWERCASED
+    path, so hashing what a document happens to spell means
+    `res:/Texture/Global/noise.dds` addresses a file that does not exist while
+    the real one sits in a different shard entirely -- and, since it is never
+    found, is downloaded again on every single load.
+    """
+
+    return str(logical_path or "").replace("\\", "/").lower()
+
+
 def fnv1_64(logical_path: str) -> str:
     """FNV-1 (64-bit) over a resource's logical path, 16 lowercase hex digits.
 
     FNV-**1**, not 1a: the multiply happens BEFORE the xor.
+
+    The path is normalized first, so callers do not each have to remember to.
 
     Only defined for ASCII. Two implementations exist in the wild -- one over
     UTF-8 bytes, one over UTF-16 code units -- and they agree on ASCII and
@@ -36,7 +53,7 @@ def fnv1_64(logical_path: str) -> str:
     non-ASCII path raises rather than returning something plausible.
     """
 
-    value = str(logical_path)
+    value = normalize(logical_path)
     digest = OFFSET_BASIS
     for character in value:
         code = ord(character)

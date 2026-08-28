@@ -1915,6 +1915,37 @@ def build_ship(document_path, resources_directory, *, clear=True,
     return primary
 
 
+def ship_anchor(objects):
+    """The object the whole ship should hang off.
+
+    Grabbing a ship in the viewport means clicking its hull, and a leaf cannot
+    take its siblings with it. So the hull IS the parent of everything else,
+    and the empty above it is a handle rather than the only way to move the
+    ship.
+
+    Unless something is skinned. Then the armature is the top, because Blender
+    deforms a mesh by an armature it is a CHILD of, and inverting that to make
+    the gesture nicer would break the rig -- which is a worse trade than one
+    extra click.
+    """
+
+    for obj in objects:
+        if obj.type != "MESH":
+            continue
+        for modifier in obj.modifiers:
+            if modifier.type == "ARMATURE" and modifier.object is not None:
+                return modifier.object
+
+    # No skinning: the biggest mesh is the hull. Biggest rather than first,
+    # because import order is the GR2 loader's business and a banner would
+    # otherwise be able to win.
+    meshes = [obj for obj in objects
+              if obj.type == "MESH" and obj.data is not None]
+    if not meshes:
+        return None
+    return max(meshes, key=lambda obj: len(obj.data.vertices))
+
+
 def parent_to_root(objects, collection, document):
     """Gives the ship one object to move, and hangs everything under it.
 
@@ -1944,24 +1975,40 @@ def parent_to_root(objects, collection, document):
         wanted.extend(found.objects)
         pending.extend(found.children)
 
-    adopted = 0
-    seen = set()
+    seen, unique = set(), []
     for obj in wanted:
         if obj is root or obj.name in seen:
             continue
         seen.add(obj.name)
-        if obj.parent is not None:
+        unique.append(obj)
+
+    # Everything hangs off the hull, and the hull off the root, so moving
+    # EITHER moves the ship. Parenting to the root alone left the banners and
+    # the skeleton behind whenever a person grabbed the hull itself, which is
+    # the thing they can actually click.
+    anchor = ship_anchor(unique)
+    adopted = 0
+    for obj in unique:
+        if obj.parent is not None or obj is anchor:
             continue
-        obj.parent = root
-        obj.matrix_parent_inverse.identity()
+        obj.parent = anchor if anchor is not None else root
+        # The general form rather than identity: an anchor with a transform of
+        # its own would otherwise apply it to every child a second time.
+        obj.matrix_parent_inverse = (anchor.matrix_world.inverted()
+                                     if anchor is not None
+                                     else mathutils.Matrix.Identity(4))
         adopted += 1
+    if anchor is not None:
+        anchor.parent = root
+        anchor.matrix_parent_inverse.identity()
 
     # The SOF settings live here too, so selecting the root and editing the SOF
     # works the same as selecting any part of the ship.
     settings = getattr(root, "carbon_sof", None)
     if settings is not None and dna:
         settings.read_dna(dna)
-    print(f"  root: {adopted} object(s) parented to {root.name}")
+    print(f"  root: {adopted} object(s) under "
+          f"{anchor.name if anchor else root.name}, and that under {root.name}")
     return root
 
 
