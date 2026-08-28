@@ -201,8 +201,12 @@ SHIP_VALUES = (
     ("carbon_ship_booster_gain", "boosterGain"),
     ("carbon_ship_activation_strength", "activationStrength"),
     ("carbon_ship_kill_count", "killCount"),
-    ("carbon_preview_glow_scale", "Glow scale (preview)"),
-    ("carbon_preview_banner_scale", "Banner scale (preview)"),
+    # The two preview scales are NOT here on purpose. They are neutral at 1,
+    # which is right, and neither is a Carbon value -- so they were two
+    # controls nobody needs to touch sitting above the ones people do. The
+    # PROPERTIES stay: the glow and banner drivers read them, and removing
+    # them would break both. They can still be set from the API or the
+    # object's custom properties by anybody who wants to.
 )
 
 
