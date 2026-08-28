@@ -526,10 +526,6 @@ def apply_ship_globals(objects, overrides=None):
                                        description="shipData.y: scales every glow on the ship"),
         "carbon_ship_booster_gain": dict(min=0.0, max=1.0, step=5, precision=3,
                                          description="shipData.x: opens the heat gate; heat is fully on by 0.02"),
-        "carbon_preview_glow_scale": dict(min=0.0, max=1000.0, step=100, precision=2,
-                                         description="Preview only, not a Carbon value: EVE blooms its glows and Blender does not"),
-        "carbon_preview_banner_scale": dict(min=0.0, max=100.0, step=25, precision=2,
-                                            description="Preview only: lifts every banner, since a dark logo adds almost nothing to an additive surface"),
         "carbon_ship_kill_count": dict(min=0.0, max=999.0, step=100, precision=0,
                                        description="displayData.x: whole kills, drawn as tally marks"),
     }
@@ -1049,21 +1045,11 @@ def wire_kill_counter(decal, principled, transparency, projection, mnodes, mlink
     if glow_colour:
         principled.inputs["Emission Color"].default_value = tuple(glow_colour[:3]) + (1.0,)
         principled.inputs["Base Color"].default_value = (0.0, 0.0, 0.0, 1.0)
-        strength = principled.inputs["Emission Strength"]
-        strength.default_value = nodes.SHIP_PROPERTIES["previewGlowScale"][1]
-        if obj is None:
-            return
-        index = list(principled.inputs).index(strength)
-        path = f'nodes["{principled.name}"].inputs[{index}].default_value'
-        principled.id_data.driver_remove(path)
-        driver = principled.id_data.driver_add(path).driver
-        driver.type = "SCRIPTED"
-        variable = driver.variables.new()
-        variable.name = "v"
-        variable.targets[0].id_type = "OBJECT"
-        variable.targets[0].id = obj
-        variable.targets[0].data_path = f'["{nodes.SHIP_PROPERTIES["previewGlowScale"][0]}"]'
-        driver.expression = "v"
+        # One, and no driver. This used to be scaled by a preview-only
+        # multiplier that was correct at 1 and that nobody needed to change --
+        # so it was a knob, a per-ship property and a driver, all to multiply
+        # by one.
+        principled.inputs["Emission Strength"].default_value = 1.0
 
 
 #: An interior cube, unwrapped so Blender can sample it by direction. The
@@ -1848,18 +1834,12 @@ def banner_material(slot, set_index, index, owners=None, cache_directory="",
         variable.name = "v"
         variable.targets[0].id_type = "OBJECT"
         variable.targets[0].id = ship_object
-        # Named through SHIP_PROPERTIES, not spelled out. These were the only
-        # two driver targets written as literals, so renaming a ship property
+        # Named through SHIP_PROPERTIES, not spelled out. This was one of the
+        # only driver targets written as a literal, so renaming a ship property
         # would have broken the banners alone, silently, at driver-evaluation
         # time rather than with an exception.
         variable.targets[0].data_path = '["%s"]' % nodes.SHIP_PROPERTIES["activationStrength"][0]
-        booster = driver.variables.new()
-        booster.name = "b"
-        booster.type = "SINGLE_PROP"
-        booster.targets[0].id_type = "OBJECT"
-        booster.targets[0].id = ship_object
-        booster.targets[0].data_path = '["%s"]' % nodes.SHIP_PROPERTIES["previewBannerScale"][0]
-        driver.expression = "v * b"
+        driver.expression = "v"
 
     transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
     transparent.location = (440, 160)

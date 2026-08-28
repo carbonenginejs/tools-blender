@@ -272,15 +272,14 @@ class CARBON_PT_sidebar_attributes(Panel):
     bl_region_type = "UI"
     bl_category = CATEGORY
 
-    #: The per-ship values, and what to call them. Carbon's own names, except
-    #: the two marked preview -- those have no Carbon counterpart.
+    #: The per-ship values, and what to call them. Carbon's own names, and
+    #: only Carbon's values: two preview-only multipliers used to sit here,
+    #: both correct at 1 and neither worth a control.
     VALUES = (
         ("carbon_ship_age_weeks", "Age in weeks"),
         ("carbon_ship_booster_gain", "boosterGain"),
         ("carbon_ship_activation_strength", "activationStrength"),
         ("carbon_ship_kill_count", "killCount"),
-        ("carbon_preview_glow_scale", "Glow scale (preview)"),
-        ("carbon_preview_banner_scale", "Banner scale (preview)"),
     )
 
     def draw(self, context):

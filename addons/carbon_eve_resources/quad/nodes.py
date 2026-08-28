@@ -83,17 +83,6 @@ SHIP_PROPERTIES = {
     "activationStrength": ("carbon_ship_activation_strength", 1.0),
     "boosterGain": ("carbon_ship_booster_gain", 1.0),
     "killCount": ("carbon_ship_kill_count", 0.0),
-    # NOT a Carbon value. The shader scales its glow by activationStrength and
-    # nothing else; EVE then blooms the result. Blender has no equivalent, so
-    # this is a preview-only multiplier, named so nobody mistakes it for one of
-    # Carbon's. See /docs/architecture/non-carbon-extensions.md.
-    "previewGlowScale": ("carbon_preview_glow_scale", 1.0),
-    # Also NOT a Carbon value, and NEUTRAL by default: one is the right
-    # brightness, confirmed against the client. It exists because a banner is
-    # additive and its logo is whatever colour its owner chose -- a dark logo
-    # adds almost nothing, which is faithful and can be unreadable -- so this
-    # lifts every banner on the ship at once when a consumer needs to see one.
-    "previewBannerScale": ("carbon_preview_banner_scale", 1.0),
 }
 
 #: How each per-ship property becomes its socket value. `v` is the property.
@@ -1151,7 +1140,6 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         if heat_amount is not None:
             scaled = math("MULTIPLY", scaled, heat_amount, location=(-800, -930),
                           label="gated by boosters")
-        scaled = math("MULTIPLY", scaled, value("previewGlowScale"), location=(-760, -960))
         emission = vector("SCALE", value(glow_color), None, location=(-680, -900))
         links.new(scaled, emission.node.inputs["Scale"])
 
