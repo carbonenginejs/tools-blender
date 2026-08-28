@@ -61,22 +61,6 @@ def load_texture(path, *, check_existing=True):
                 decoded = None
             if decoded is not None:
                 return decoded
-        elif not text.lower().endswith(".dds"):
-            # Blender picks its decoder off the extension, so a DDS stored
-            # under a hash needs a name it can recognise. The copy goes to a
-            # DISPOSABLE directory: nothing may be written beside a cached
-            # payload, which is immutable evidence.
-            from ..dds.reader import derived_path
-
-            named = derived_path(Path(text)).with_suffix(".dds")
-            if not named.is_file():
-                try:
-                    named.parent.mkdir(parents=True, exist_ok=True)
-                    named.write_bytes(Path(text).read_bytes())
-                except OSError:
-                    named = None
-            if named is not None:
-                return bpy.data.images.load(str(named), check_existing=check_existing)
     return bpy.data.images.load(text, check_existing=check_existing)
 
 

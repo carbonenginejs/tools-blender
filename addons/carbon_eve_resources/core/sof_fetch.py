@@ -229,18 +229,6 @@ def resource_paths(document) -> tuple:
     return tuple(found)
 
 
-def cache_file(cache_root, logical_path: str, md5: str) -> Path:
-    """Where one resource is stored: `ResFiles/<shard>/<pathHash>_<md5>`.
-
-    Content-addressed, exactly as EVE stores it and as tools-core caches it:
-    the shard is the first two characters of the FNV-1 hash of the logical
-    path, and the file has no extension. Keying by anything else orphans every
-    file already on disk.
-    """
-
-    return resfile.cache_path(cache_root, logical_path, md5)
-
-
 #: What a texture may be provided as, in the order they are preferred.
 #: Hand-authored first (TGA, then PNG), the shipped DDS last -- so dropping a
 #: file in beside the original overrides it without renaming anything.
@@ -306,28 +294,51 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
     if provided is not None:
         return note("cache", provided)
 
-    cached = resfile.find_cached(cache_root, logical_path)
-    if cached is not None:
-        return note("cache", cached)
+    # The index gives the address; nothing is computed from the path. Asking
+    # the service to resolve is the fallback for a path it has no row for.
+    def stored(location):
+        found = resfile.stored_path(cache_root, location, logical_path)
+        if found is None:
+            return None
+        if found.is_file() and found.stat().st_size > 0:
+            return found
+        # Files cached before the extension was kept. Renamed rather than
+        # re-downloaded: the bytes are right, only the name is old.
+        old = found.with_suffix("")
+        if old != found and old.is_file() and old.stat().st_size > 0:
+            try:
+                old.rename(found)
+                return found
+            except OSError:
+                return old
+        return None
 
     location = resindex.locate(index, logical_path) if index else None
+    url = resindex.source_url(location) if location else ""
     if location:
-        url = resindex.source_url(location)
-    else:
+        cached = stored(location)
+        if cached is not None:
+            return note("cache", cached)
+
+    if not url:
         found = client.resolve_resource(logical_path, build, target=target)
         resolution = (found or {}).get("resolution") or found or {}
         url = str(resolution.get("sourceUrl") or "")
         location = "/".join(url.split("/")[-2:]) if url else ""
+        cached = stored(location) if location else None
+        if cached is not None:
+            return note("cache", cached)
     if not url:
         raise FetchError(f"{logical_path}: no source for it")
 
     payload = read_url(url, opener=opener)
-    stored = resfile.parse(location)
-    if stored is None:
-        destination = cache_file(cache_root, logical_path, resfile.md5_of(payload))
-    else:
-        destination = (Path(cache_root) / "ResFiles" / stored["shard"]
-                       / f"{stored['path_hash']}_{stored['checksum']}")
+    destination = resfile.stored_path(cache_root, location, logical_path)
+    if destination is None:
+        # No usable address: the human-readable layout, which is the same
+        # place the optional local-files folder is read from.
+        destination = resfile.readable_path(cache_root, logical_path)
+        if destination is None:
+            raise FetchError(f"{logical_path}: nowhere to store it")
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_name(destination.name + ".part")
     partial.write_bytes(payload)

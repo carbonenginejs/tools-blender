@@ -263,28 +263,16 @@ def to_rgba(data: bytes):
             decode_bc7(data, header.width, header.height, header.data_offset))
 
 
-#: Where decoded output goes. NOT beside the payload: the shared cache and a
-#: game install are immutable evidence, and nothing may be written beside them
-#: (`docs/agent-skills/skills/use-carbon-tools`). This is a disposable copy,
-#: rebuildable from the source at any time.
-DERIVED_DIRECTORY = {"path": None}
-
-
 def derived_path(source: Path) -> Path:
-    """Where one decoded texture is kept, outside the cache it came from."""
+    """Where one decoded texture is kept: beside its source, as a PNG.
 
-    root = DERIVED_DIRECTORY.get("path")
-    if not root:
-        # No home configured: keep it beside the blend rather than in the
-        # cache, and let Blender pack it.
-        return Path(bpy_temp()) / (source.name + ".rgba.png")
-    return Path(root) / source.name[:2] / (source.name + ".rgba.png")
+    Same folder, same name, different extension. The source is addressed by
+    its CONTENT, so the decoded copy inherits that for free -- every hull using
+    that texture finds the same decode, and cache pruning removes it with the
+    build it belongs to instead of leaving it behind in a folder of its own.
+    """
 
-
-def bpy_temp() -> str:
-    import bpy
-
-    return bpy.app.tempdir or "."
+    return source.with_suffix(".png")
 
 
 def load_image(path, name: str = ""):

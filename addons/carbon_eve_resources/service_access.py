@@ -9,8 +9,6 @@ in.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import bpy
 
 
@@ -42,13 +40,6 @@ def client(context=None):
     root = bpy.path.abspath(cache) if cache else None
     sof_lookup.CACHE_ROOT["path"] = root
 
-    # Anything this add-on DERIVES -- decoded textures, name indexes -- lives
-    # in its own disposable folder. The shared cache holds immutable payloads
-    # and nothing may be written beside them.
-    from .dds import reader as dds_reader
-
-    dds_reader.DERIVED_DIRECTORY["path"] = (
-        str(Path(root).parent / "carbon-blender-derived") if root else None)
     url = service_url(context)
     if _CLIENT["client"] is not None and _CLIENT["key"] == url:
         return _CLIENT["client"]

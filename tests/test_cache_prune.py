@@ -14,8 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "addons"))
 from carbon_eve_resources.core import cache_prune, resfile  # noqa: E402
 
 
+#: A stand-in index row. The address is opaque to everything here: the point
+#: is that whatever the index says is what is stored, verbatim.
 def address(path: str, md5: str) -> str:
-    return resfile.address(path, md5)
+    stem = f"{abs(hash(path)) % (16 ** 16):016x}"
+    return f"{stem[:2]}/{stem}_{md5}"
 
 
 class PruneTests(unittest.TestCase):

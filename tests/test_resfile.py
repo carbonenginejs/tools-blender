@@ -1,7 +1,10 @@
-"""Resource addressing.
+"""Where a resource's bytes are kept.
 
-The address IS the file's identity, so getting it wrong does not fail -- it
-quietly addresses a file that is not there, and every load pays for it again.
+We used to work the address out ourselves, from the logical path, and got it
+wrong: the hash is over the LOWERCASED path, so the three paths with a capital
+in them addressed a file that was not there and downloaded again on EVERY load.
+The index already carries the address, so now it is used as given and never
+recomputed -- which is why there is nothing here that could disagree with it.
 """
 
 from pathlib import Path
@@ -14,58 +17,83 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "addons"))
 from carbon_eve_resources.core import resfile  # noqa: E402
 
 
-#: Real paths from a real index, with the address EVE stores each under. These
-#: three were downloaded on EVERY load because their hash was taken from the
-#: mixed-case spelling in the document rather than the lowercased path.
-REAL = (
-    ("res:/Texture/Global/noise32cube_volume.dds", "b40590f110b66d26"),
-    ("res:/Texture/global/noise.dds", "239a24daab34ba73"),
-    ("res:/Texture/Particle/whitesharp.dds", "5e1c12d5e0ca6231"),
-)
+#: A real row: the logical path a document spells, and the location its index
+#: gives. Note the capitals -- this is one of the three that re-downloaded.
+PATH = "res:/Texture/Global/noise32cube_volume.dds"
+LOCATION = "b4/b40590f110b66d26_f26d631c8e5491e4c1f3273b29019fce"
 
 
-class NormalizationTests(unittest.TestCase):
-    def test_a_mixed_case_path_hashes_to_what_the_index_says(self):
-        for path, expected in REAL:
-            self.assertEqual(resfile.fnv1_64(path), expected, path)
+class StoredPathTests(unittest.TestCase):
+    def test_the_location_is_used_exactly_as_given(self):
+        found = resfile.stored_path("/cache", LOCATION, PATH)
+        self.assertEqual(found.parent.name, "b4")
+        self.assertTrue(found.name.startswith("b40590f110b66d26_"))
 
-    def test_casing_does_not_change_the_address(self):
-        # EVE's paths are case-insensitive; two spellings are one file.
-        upper = "res:/Texture/Global/noise.dds"
-        self.assertEqual(resfile.fnv1_64(upper), resfile.fnv1_64(upper.lower()))
+    def test_the_extension_is_kept(self):
+        # Nothing needs it to FIND the file; it is there so the file opens in
+        # whatever a person double-clicks.
+        self.assertEqual(resfile.stored_path("/cache", LOCATION, PATH).suffix,
+                         ".dds")
 
-    def test_backslashes_are_the_same_path_as_slashes(self):
-        self.assertEqual(resfile.fnv1_64(r"res:\Texture\a.dds"),
-                         resfile.fnv1_64("res:/texture/a.dds"))
+    def test_a_path_with_no_extension_stores_without_one(self):
+        self.assertEqual(resfile.stored_path("/cache", LOCATION, "res:/a/b").suffix,
+                         "")
 
-    def test_a_lowercase_path_is_unchanged(self):
-        # The regression guard runs both ways: normalizing must not move the
-        # paths that were already right, which is most of them.
-        self.assertEqual(resfile.fnv1_64("res:/dx9/model/ship/a.gr2"),
-                         resfile.fnv1_64("res:/dx9/model/ship/a.gr2"))
+    def test_casing_in_the_path_cannot_change_where_the_file_goes(self):
+        # The old bug, made impossible: the address comes from the row, so how
+        # a document spells the path is no longer part of the answer.
+        lower = resfile.stored_path("/cache", LOCATION, PATH.lower())
+        self.assertEqual(resfile.stored_path("/cache", LOCATION, PATH), lower)
+
+    def test_a_plain_path_is_not_an_address(self):
+        # An index carries overlay rows that are not content-addressed.
+        self.assertIsNone(resfile.stored_path("/cache", "not/an/address", PATH))
+        self.assertIsNone(resfile.parse("not/an/address"))
 
 
-class FindCachedTests(unittest.TestCase):
-    def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="carbon-addr-"))
+class ReadablePathTests(unittest.TestCase):
+    def test_it_drops_the_scheme(self):
+        found = resfile.readable_path("/cache", "res:/dx9/model/ship/a.gr2")
+        self.assertEqual(found, Path("/cache/dx9/model/ship/a.gr2"))
 
-    def test_a_file_stored_by_its_index_row_is_found_by_its_document_path(self):
-        # The whole bug in one test: the file is written under the address the
-        # INDEX gives, and looked up by the path the DOCUMENT spells.
-        path, path_hash = REAL[0]
-        stored = self.root / "ResFiles" / path_hash[:2] / f"{path_hash}_{'a' * 32}"
-        stored.parent.mkdir(parents=True)
-        stored.write_bytes(b"payload")
+    def test_an_empty_path_has_nowhere_to_go(self):
+        self.assertIsNone(resfile.readable_path("/cache", ""))
 
-        self.assertEqual(resfile.find_cached(self.root, path), stored)
 
-    def test_an_empty_file_is_not_treated_as_cached(self):
-        path, path_hash = REAL[0]
-        stored = self.root / "ResFiles" / path_hash[:2] / f"{path_hash}_{'a' * 32}"
-        stored.parent.mkdir(parents=True)
-        stored.write_bytes(b"")
+class DerivedBesideSourceTests(unittest.TestCase):
+    """A decoded texture goes beside its source, same name, new extension."""
 
-        self.assertIsNone(resfile.find_cached(self.root, path))
+    def test_a_decode_inherits_the_source_address(self):
+        from carbon_eve_resources.dds.reader import derived_path
+
+        source = resfile.stored_path("/cache", LOCATION, PATH)
+        decoded = derived_path(source)
+        self.assertEqual(decoded.parent, source.parent)
+        self.assertEqual(decoded.stem, source.stem)
+        self.assertEqual(decoded.suffix, ".png")
+
+    def test_pruning_keeps_a_decode_with_its_source(self):
+        # Content-addressed, so the decode is shared by every hull using that
+        # texture, and it is dropped with the build it belongs to.
+        from carbon_eve_resources.core import cache_prune
+
+        root = Path(tempfile.mkdtemp(prefix="carbon-derived-"))
+        (root / "indexes").mkdir(parents=True)
+        (root / "indexes" / "resfileindex-300.txt").write_text(
+            f"{PATH},{LOCATION},x,1,1\n", encoding="utf-8")
+        source = resfile.stored_path(root, LOCATION, PATH)
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"dds")
+        decoded = source.with_suffix(".png")
+        decoded.write_bytes(b"png")
+        stale = source.parent / ("0" * 16 + "_" + "0" * 32 + ".dds")
+        stale.write_bytes(b"old")
+
+        cache_prune.prune(root, apply=True)
+
+        self.assertTrue(source.exists())
+        self.assertTrue(decoded.exists())
+        self.assertFalse(stale.exists())
 
 
 if __name__ == "__main__":

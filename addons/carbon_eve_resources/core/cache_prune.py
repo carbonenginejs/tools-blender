@@ -100,7 +100,12 @@ def plan(cache_root, keep_latest: int = 1) -> dict:
             for found in shard.iterdir():
                 if not found.is_file():
                     continue
-                if f"{shard.name}/{found.name}" in wanted:
+                # The stored name carries an extension, and a decoded copy
+                # sits beside its source under the SAME name with a different
+                # one. Matching on the address alone keeps both, and drops
+                # both when the build they belong to goes.
+                address = f"{shard.name}/{found.name.split('.')[0]}"
+                if address in wanted:
                     kept_files += 1
                     continue
                 remove.append(found)
