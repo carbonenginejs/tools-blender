@@ -352,330 +352,6 @@ class EVE_RESOURCE_State(PropertyGroup):
     preview_error_path: StringProperty(default="")
 
 
-class EVE_RESOURCE_UL_results(UIList):
-    def draw_item(
-        self,
-        context,
-        layout,
-        data,
-        item,
-        icon,
-        active_data,
-        active_property,
-        index=0,
-        flt_flag=0,
-    ):
-        if item.is_directory:
-            row_icon = "FILE_FOLDER"
-        else:
-            suffix = Path(item.logical_path).suffix.lower()
-            if suffix in IMAGE_EXTENSIONS:
-                row_icon = "IMAGE_DATA"
-            elif suffix in MODEL_EXTENSIONS:
-                row_icon = "MESH_DATA"
-            else:
-                row_icon = "FILE"
-        row = layout.row(align=True)
-        split = row.split(factor=0.72, align=True)
-        name_column = split.row(align=True)
-        name_column.alignment = "LEFT"
-        metadata_column = split.row(align=True)
-        metadata_column.alignment = "RIGHT"
-        if item.is_directory:
-            open_row = name_column.operator(
-                EVE_RESOURCE_OT_activate_folder_row.bl_idname,
-                text=item.display_name,
-                icon=row_icon,
-                emboss=False,
-            )
-            open_row.logical_path = item.logical_path
-            open_row.result_index = index
-        elif Path(item.logical_path).suffix.lower() == ".gr2":
-            import_row = name_column.operator(
-                EVE_RESOURCE_OT_activate_gr2_row.bl_idname,
-                text=item.display_name,
-                icon=row_icon,
-                emboss=False,
-            )
-            import_row.logical_path = item.logical_path
-            import_row.result_index = index
-        else:
-            name_column.label(text=item.display_name, icon=row_icon)
-        if not item.is_directory:
-            if item.size:
-                metadata_column.label(text=_format_size(item.size))
-            metadata_column.label(text="", icon="CHECKMARK" if item.cached else "BLANK1")
-
-
-class EVE_RESOURCE_OT_load_index(Operator):
-    bl_idname = "carbon.eve_resource_load_index"
-    bl_label = "Load EVE Resource Index"
-    bl_description = (
-        "Open the cached exact build or check Tranquility; remote build checks "
-        "are limited to once every 12 hours per cache"
-    )
-
-    refresh: BoolProperty(default=False, options={"HIDDEN"})
-
-    @classmethod
-    def poll(cls, context):
-        state = getattr(context.window_manager, "carbon_eve_resources", None)
-        return state is not None and not state.busy and _context_terms_accepted(context)
-
-    def execute(self, context):
-        _start_catalog_job(context, refresh=bool(self.refresh))
-        return {"FINISHED"}
-
-
-class EVE_RESOURCE_OT_search(Operator):
-    bl_idname = "carbon.eve_resource_search"
-    bl_label = "Search EVE Resources"
-
-    @classmethod
-    def poll(cls, context):
-        return (
-            _catalog is not None
-            and not context.window_manager.carbon_eve_resources.busy
-            and _context_terms_accepted(context)
-        )
-
-    def execute(self, context):
-        _populate_results(context)
-        return {"FINISHED"}
-
-
-class EVE_RESOURCE_OT_browse_up(Operator):
-    bl_idname = "carbon.eve_resource_browse_up"
-    bl_label = "Parent Folder"
-
-    @classmethod
-    def poll(cls, context):
-        state = context.window_manager.carbon_eve_resources
-        return (
-            _catalog is not None
-            and not state.busy
-            and state.current_directory != "res:/"
-            and _context_terms_accepted(context)
-        )
-
-    def execute(self, context):
-        state = context.window_manager.carbon_eve_resources
-        relative = state.current_directory[5:].rstrip("/")
-        parent = relative.rpartition("/")[0]
-        state.current_directory = f"res:/{parent}/" if parent else "res:/"
-        state.query = ""
-        _populate_results(context)
-        return {"FINISHED"}
-
-
-class EVE_RESOURCE_OT_activate_folder_row(Operator):
-    """Select a folder on the first click and open it on the second."""
-
-    bl_idname = "carbon.eve_resource_activate_folder_row"
-    bl_label = "Select / Open Folder"
-    bl_description = "Double-click to open this folder"
-    bl_options = {"INTERNAL"}
-
-    logical_path: StringProperty(options={"HIDDEN"})
-    result_index: IntProperty(options={"HIDDEN"})
-
-    @classmethod
-    def poll(cls, context):
-        state = getattr(context.window_manager, "carbon_eve_resources", None)
-        return (
-            _catalog is not None
-            and state is not None
-            and not state.busy
-            and _context_terms_accepted(context)
-        )
-
-    def invoke(self, context, event):
-        state = context.window_manager.carbon_eve_resources
-        if 0 <= self.result_index < len(state.results):
-            state.active_index = self.result_index
-        if _is_row_double_click(context, f"folder:{self.logical_path}"):
-            return self.execute(context)
-        return {"FINISHED"}
-
-    def execute(self, context):
-        state = context.window_manager.carbon_eve_resources
-        folder = next(
-            (
-                item
-                for item in state.results
-                if item.is_directory and item.logical_path == self.logical_path
-            ),
-            None,
-        )
-        if folder is None:
-            self.report({"ERROR"}, "Folder is no longer in the current result list")
-            return {"CANCELLED"}
-        state.current_directory = folder.logical_path
-        state.query = ""
-        _populate_results(context)
-        return {"FINISHED"}
-
-
-class EVE_RESOURCE_OT_activate_gr2_row(Operator):
-    """Select a GR2 on the first click and import it on the second."""
-
-    bl_idname = "carbon.eve_resource_activate_gr2_row"
-    bl_label = "Select / Import GR2"
-    bl_description = "Double-click to download and import this GR2"
-    bl_options = {"INTERNAL"}
-
-    logical_path: StringProperty(options={"HIDDEN"})
-    result_index: IntProperty(options={"HIDDEN"})
-
-    @classmethod
-    def poll(cls, context):
-        state = getattr(context.window_manager, "carbon_eve_resources", None)
-        return (
-            _catalog is not None
-            and state is not None
-            and not state.busy
-            and _context_terms_accepted(context)
-        )
-
-    def invoke(self, context, event):
-        state = context.window_manager.carbon_eve_resources
-        if 0 <= self.result_index < len(state.results):
-            state.active_index = self.result_index
-        if _is_row_double_click(context, f"gr2:{self.logical_path}"):
-            return self.execute(context)
-        return {"FINISHED"}
-
-    def execute(self, context):
-        selected = _selected_result(context)
-        if (
-            selected is None
-            or selected.logical_path != self.logical_path
-            or Path(selected.logical_path).suffix.lower() != ".gr2"
-        ):
-            self.report({"ERROR"}, "GR2 is no longer selected")
-            return {"CANCELLED"}
-        return bpy.ops.carbon.eve_resource_import_gr2("EXEC_DEFAULT")
-
-
-class EVE_RESOURCE_OT_open_selected(Operator):
-    bl_idname = "carbon.eve_resource_open_selected"
-    bl_label = "Open Folder"
-
-    @classmethod
-    def poll(cls, context):
-        selected = _selected_result(context)
-        return (
-            selected is not None
-            and selected.is_directory
-            and not context.window_manager.carbon_eve_resources.busy
-            and _context_terms_accepted(context)
-        )
-
-    def execute(self, context):
-        state = context.window_manager.carbon_eve_resources
-        selected = _selected_result(context)
-        state.current_directory = selected.logical_path
-        state.query = ""
-        _populate_results(context)
-        return {"FINISHED"}
-
-
-class EVE_RESOURCE_OT_download_selected(Operator):
-    bl_idname = "carbon.eve_resource_download_selected"
-    bl_label = "Download Selected"
-    bl_description = "Download, validate, and save the selected file using its original res:/ path"
-
-    @classmethod
-    def poll(cls, context):
-        selected = _selected_result(context)
-        return (
-            selected is not None
-            and not selected.is_directory
-            and not context.window_manager.carbon_eve_resources.busy
-            and _context_terms_accepted(context)
-        )
-
-    def execute(self, context):
-        entry = _selected_catalog_entry(context)
-        prefs = _prefs(context)
-        _launch_job(
-            context,
-            "download",
-            lambda: _run_with_cache_stats(
-                lambda: materialize_resource(
-                    entry,
-                    _cache_path(prefs),
-                    _download_path(prefs),
-                    creator_terms_accepted=_creator_terms_accepted(prefs),
-                ),
-                _cache_path(prefs),
-            ),
-            f"Downloading {entry.logical_path}",
-        )
-        return {"FINISHED"}
-
-
-class EVE_RESOURCE_OT_preview_selected(Operator):
-    bl_idname = "carbon.eve_resource_preview_selected"
-    bl_label = "Download and Preview"
-    bl_description = "Download and validate the selected texture, then show it in this panel"
-
-    @classmethod
-    def poll(cls, context):
-        selected = _selected_result(context)
-        return (
-            selected is not None
-            and not selected.is_directory
-            and Path(selected.logical_path).suffix.lower() in IMAGE_EXTENSIONS
-            and not context.window_manager.carbon_eve_resources.busy
-            and _context_terms_accepted(context)
-        )
-
-    def execute(self, context):
-        entry = _selected_catalog_entry(context)
-        _start_preview(context, entry)
-        return {"FINISHED"}
-
-
-class EVE_RESOURCE_OT_import_gr2(Operator):
-    bl_idname = "carbon.eve_resource_import_gr2"
-    bl_label = "Download and Import GR2"
-    bl_description = "Download the selected GR2 and pass it to the CarbonEngineJS GR2 importer"
-
-    @classmethod
-    def poll(cls, context):
-        selected = _selected_result(context)
-        return (
-            selected is not None
-            and not selected.is_directory
-            and Path(selected.logical_path).suffix.lower() == ".gr2"
-            and not context.window_manager.carbon_eve_resources.busy
-            and _context_terms_accepted(context)
-        )
-
-    def execute(self, context):
-        if not hasattr(bpy.ops.import_scene, "carbon_gr2"):
-            self.report({"ERROR"}, "Enable CarbonEngineJS GR2 Importer first")
-            return {"CANCELLED"}
-        entry = _selected_catalog_entry(context)
-        prefs = _prefs(context)
-        _launch_job(
-            context,
-            "import_gr2",
-            lambda: _run_with_cache_stats(
-                lambda: materialize_resource(
-                    entry,
-                    _cache_path(prefs),
-                    _download_path(prefs),
-                    creator_terms_accepted=_creator_terms_accepted(prefs),
-                ),
-                _cache_path(prefs),
-            ),
-            f"Downloading {entry.logical_path}",
-        )
-        return {"FINISHED"}
-
-
 class EVE_RESOURCE_OT_import_sof_document(Operator):
     """Builds a ship from a pre-compiled tools-core SOF bundle."""
 
@@ -813,17 +489,6 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
         _launch_job(context, "sof_fetch",
                     lambda: _run_with_cache_stats(fetch, cache_root),
                     f"Fetching {dna}")
-        return {"FINISHED"}
-
-
-class EVE_RESOURCE_OT_open_downloads(Operator):
-    bl_idname = "carbon.eve_resource_open_downloads"
-    bl_label = "Open Download Folder"
-
-    def execute(self, context):
-        directory = _download_path(_prefs(context))
-        directory.mkdir(parents=True, exist_ok=True)
-        bpy.ops.wm.path_open(filepath=str(directory))
         return {"FINISHED"}
 
 
@@ -1019,30 +684,6 @@ def _start_catalog_job(context, refresh: bool) -> None:
     )
 
 
-def _start_preview(context, entry) -> None:
-    state = context.window_manager.carbon_eve_resources
-    prefs = _prefs(context)
-    if not _creator_terms_accepted(prefs):
-        raise ResourceIndexError("Accept the EVE Creator License before downloading previews")
-    preview_root = _cache_path(prefs) / "Previews" / _catalog.build
-    state.preview_error_path = ""
-    _launch_job(
-        context,
-        "preview",
-        lambda: _run_with_cache_stats(
-            lambda: materialize_resource(
-                entry,
-                _cache_path(prefs),
-                preview_root,
-                creator_terms_accepted=_creator_terms_accepted(prefs),
-            ),
-            _cache_path(prefs),
-        ),
-        f"Downloading preview for {entry.logical_path}",
-        logical_path=entry.logical_path,
-    )
-
-
 def _run_with_cache_stats(worker: Callable[[], Any], cache_root: Path):
     return worker(), payload_cache_stats(cache_root)
 
@@ -1085,7 +726,7 @@ def _hull_record(dna: str) -> dict:
     problems instead of taking the build down with it.
     """
 
-    from . import sof_areas, sof_resolution  # noqa: F401
+    from .core import sof_areas, sof_resolution  # noqa: F401
     from .core.tools_service import ToolsServiceClient, ToolsServiceError
 
     try:
@@ -1301,10 +942,7 @@ def _poll_job():
         return None
     state.busy = False
     if job.error is not None:
-        if job.kind == "preview":
-            state.preview_error_path = job.logical_path
         state.status = f"Error: {job.error}"
-        _auto_preview_selected(context)
         return None
 
     try:
@@ -1344,27 +982,6 @@ def _poll_job():
             )
             if _catalog is not None and _context_terms_accepted(context):
                 _populate_results(context)
-        elif job.kind == "preview":
-            fetched, stats = job.result
-            _set_cache_stats(state, stats)
-            image = bpy.data.images.load(str(fetched.path), check_existing=True)
-            try:
-                image.reload()
-            except RuntimeError:
-                pass
-            if _preview_collection is not None:
-                _preview_collection.clear()
-                _preview_collection.load(
-                    "active",
-                    str(fetched.path),
-                    "IMAGE",
-                    force_reload=True,
-                )
-            state.preview_image = image
-            state.preview_logical_path = fetched.entry.logical_path
-            state.preview_error_path = ""
-            state.status = f"Previewing {fetched.entry.logical_path}"
-            _populate_results(context)
         elif job.kind == "sof_fetch":
             (document, resources, problems), stats = job.result
             _set_cache_stats(state, stats)
@@ -1388,8 +1005,6 @@ def _poll_job():
             _populate_results(context)
     except Exception as exc:
         state.status = f"Error: {exc}"
-    if job.kind != "clear_cache":
-        _auto_preview_selected(context)
     return None
 
 
@@ -1452,25 +1067,6 @@ def _populate_results(context) -> None:
 def _on_active_result_changed(state, context) -> None:
     if _suppress_selection_actions or _catalog is None:
         return
-    _auto_preview_selected(context)
-
-
-def _auto_preview_selected(context) -> None:
-    if _catalog is None or _job is not None or not _context_terms_accepted(context):
-        return
-    state = context.window_manager.carbon_eve_resources
-    selected = _selected_result(context)
-    if selected is None or selected.is_directory:
-        return
-    if Path(selected.logical_path).suffix.lower() not in IMAGE_EXTENSIONS:
-        return
-    if selected.logical_path in {state.preview_logical_path, state.preview_error_path}:
-        return
-    try:
-        _start_preview(context, _catalog.get(selected.logical_path))
-    except Exception as exc:
-        state.preview_error_path = selected.logical_path
-        state.status = f"Error: {exc}"
 
 
 def _selected_result(context):
@@ -1478,15 +1074,6 @@ def _selected_result(context):
     if not state.results or state.active_index < 0 or state.active_index >= len(state.results):
         return None
     return state.results[state.active_index]
-
-
-def _selected_catalog_entry(context):
-    if not _context_terms_accepted(context):
-        raise ResourceIndexError("Accept the EVE Creator License before using EVE resources")
-    selected = _selected_result(context)
-    if selected is None or selected.is_directory or _catalog is None:
-        raise ResourceIndexError("Select a file first")
-    return _catalog.get(selected.logical_path)
 
 
 def _format_size(value: int) -> str:
@@ -1555,19 +1142,8 @@ classes = (
     EVE_RESOURCE_OT_revoke_creator_terms,
     EVE_RESOURCE_Result,
     EVE_RESOURCE_State,
-    EVE_RESOURCE_UL_results,
-    EVE_RESOURCE_OT_load_index,
-    EVE_RESOURCE_OT_search,
-    EVE_RESOURCE_OT_browse_up,
-    EVE_RESOURCE_OT_activate_folder_row,
-    EVE_RESOURCE_OT_activate_gr2_row,
-    EVE_RESOURCE_OT_open_selected,
-    EVE_RESOURCE_OT_download_selected,
-    EVE_RESOURCE_OT_preview_selected,
-    EVE_RESOURCE_OT_import_gr2,
     EVE_RESOURCE_OT_import_sof_document,
     EVE_RESOURCE_OT_build_sof_dna,
-    EVE_RESOURCE_OT_open_downloads,
     EVE_RESOURCE_OT_refresh_cache_stats,
     EVE_RESOURCE_OT_clear_cache,
     EVE_RESOURCE_OT_prune_cache,
