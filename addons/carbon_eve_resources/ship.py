@@ -1400,7 +1400,8 @@ def attach_to_bone(obj, armature, bone_index):
     return True
 
 
-def build_plane_sets(document, hull, collection, hull_sets=None):
+def build_plane_sets(document, hull, collection, hull_sets=None,
+                     resources=None):
     """One quad per `EvePlaneSetItem`, placed and coloured as the set says.
 
     A plane set is the ship's glowing panels and light strips: additive quads
@@ -1411,7 +1412,7 @@ def build_plane_sets(document, hull, collection, hull_sets=None):
     armature = hull.parent if hull is not None and hull.parent is not None         and hull.parent.type == "ARMATURE" else None
     built = []
     for set_index, plane_set in enumerate(find_typed(document, "EvePlaneSet")):
-        effect = (plane_set.get("effect") or {}).get("effectFilePath", "")
+        effect = plane_set.get("effect") or {}
         planes = plane_set.get("planes") or []
         if not planes:
             continue
@@ -1432,8 +1433,17 @@ def build_plane_sets(document, hull, collection, hull_sets=None):
             colour = tuple(item.get("color") or (1.0, 1.0, 1.0, 1.0))
             obj["carbon_plane_color"] = colour
             obj["carbon_plane_blink"] = tuple(item.get("blinkData") or (1.0, 0.0, 1.0, 0.0))
-            obj["carbon_plane_effect"] = str(effect)
-            obj.data.materials.append(plane_material(colour, set_index, index))
+            obj["carbon_plane_effect"] = str(effect.get("effectFilePath") or "")
+            # Kept on the object as authored: the two layers each carry their
+            # own transform and scroll, which is what makes one strip crawl
+            # while the next shimmers off the same two maps.
+            for key in ("layer1Transform", "layer2Transform",
+                        "layer1Scroll", "layer2Scroll"):
+                obj[f"carbon_plane_{key}"] = tuple(
+                    float(v) for v in (item.get(key) or (0.0, 0.0, 0.0, 0.0)))
+            obj["carbon_plane_mask_atlas"] = int(item.get("maskAtlasID") or 0)
+            obj.data.materials.append(
+                plane_material(item, set_index, index, effect, resources, hull))
             attach_to_bone(obj, armature, item.get("boneIndex"))
             stamp_identity(obj, f"plane_{index}", "plane",
                            str(source.get("visibilityGroupName") or "primary"))
@@ -1493,31 +1503,141 @@ def attachment_collection(parent, kind, group="", visibility_hash=None):
     return child
 
 
-def plane_material(colour, set_index, index):
-    """An additive glow of the plane's own colour.
+def plane_material(item, set_index, index, effect=None, resources=None,
+                   ship_object=None):
+    """A glow panel: two scrolling layers through a mask, ADDED to the scene.
 
-    `planeglow` layers two scrolling maps through a mask and is NOT measured, so
-    this is the item's authored colour emitted flat -- the placement and the
-    colour are honest, the texturing is not there yet.
+    The same shape as a banner, which is measured from `banner.fx`, minus the
+    logo -- `planeglow.fx` carries Layer1Map, Layer2Map and MaskMap and nothing
+    else to draw:
+
+        uv1    = uv * layer1Transform.xy + layer1Transform.zw + layer1Scroll.xy * t
+        uv2    = uv * layer2Transform.xy + layer2Transform.zw + layer2Scroll.xy * t
+        colour = Mask * Layer2 * Layer1 * Color
+        alpha  = Layer1.a * Layer2.a * Mask.a
+
+    The difference from a banner is WHERE the numbers come from: a banner's
+    transforms are constants on the effect, shared by the set, while a plane
+    carries its own -- which is what lets one strip crawl and the next one
+    shimmer while both read the same two maps.
+
+    This was a flat emission of the plane's authored colour before, which is
+    why the panels looked like solid geometry: that colour is (0, 0, 0, 1) on
+    every plane of an Abaddon, so the quads rendered as black slabs. Black is
+    the honest answer for an unlit panel once the blend is additive -- it adds
+    nothing, and the light comes from the maps.
     """
 
-    material = bpy.data.materials.new(f"plane {set_index}.{index}")
+    material = bpy.data.materials.new(unique_name(f"plane_{set_index}_{index}", ""))
     material.use_nodes = True
     tree = material.node_tree
     tree.nodes.clear()
     output = tree.nodes.new("ShaderNodeOutputMaterial")
+    output.location = (760, 0)
+
+    def four(name, fallback):
+        value = list(item.get(name) or fallback)
+        return [float(v) for v in (value + fallback)[:4]]
+
+    layer1_transform = four("layer1Transform", [1.0, 1.0, 0.0, 0.0])
+    layer2_transform = four("layer2Transform", [1.0, 1.0, 0.0, 0.0])
+    layer1_scroll = four("layer1Scroll", [0.0, 0.0, 0.0, 0.0])
+    layer2_scroll = four("layer2Scroll", [0.0, 0.0, 0.0, 0.0])
+    tint = four("color", [1.0, 1.0, 1.0, 1.0])
+
+    time_socket = nodes.time_value(tree, (-1500, 300))
+
+    def scrolled(transform, rate, row):
+        """One layer's UV: scaled, offset, and carried along by time."""
+
+        coordinate = tree.nodes.new("ShaderNodeUVMap")
+        coordinate.location = (-1500, row)
+        mapping = tree.nodes.new("ShaderNodeMapping")
+        mapping.location = (-1300, row)
+        mapping.inputs["Scale"].default_value = (transform[0], transform[1], 1.0)
+        mapping.inputs["Location"].default_value = (transform[2], transform[3], 0.0)
+        tree.links.new(coordinate.outputs["UV"], mapping.inputs["Vector"])
+
+        offset = tree.nodes.new("ShaderNodeVectorMath")
+        offset.operation = "SCALE"
+        offset.location = (-1120, row - 140)
+        offset.inputs[0].default_value = (rate[0], rate[1], 0.0)
+        tree.links.new(time_socket, offset.inputs["Scale"])
+
+        moved = tree.nodes.new("ShaderNodeVectorMath")
+        moved.operation = "ADD"
+        moved.location = (-940, row)
+        tree.links.new(mapping.outputs["Vector"], moved.inputs[0])
+        tree.links.new(offset.outputs[0], moved.inputs[1])
+        return moved.outputs[0]
+
+    def sample(name, vector, row):
+        node = tree.nodes.new("ShaderNodeTexImage")
+        node.location = (-720, row)
+        node.label = name
+        node.extension = "REPEAT"
+        image = _effect_image(name, effect, resources)
+        if image is not None:
+            node.image = image
+        if vector is not None:
+            tree.links.new(vector, node.inputs["Vector"])
+        return node
+
+    layer1 = sample("Layer1Map", scrolled(layer1_transform, layer1_scroll, 520), 520)
+    layer2 = sample("Layer2Map", scrolled(layer2_transform, layer2_scroll, 200), 200)
+    mask = sample("MaskMap", None, -140)
+
+    def multiply(a, b, row, label):
+        node = tree.nodes.new("ShaderNodeVectorMath")
+        node.operation = "MULTIPLY"
+        node.location = (-260, row)
+        node.label = label
+        tree.links.new(a, node.inputs[0])
+        tree.links.new(b, node.inputs[1])
+        return node.outputs[0]
+
+    colour = multiply(layer1.outputs["Color"], layer2.outputs["Color"],
+                      340, "layer1 x layer2")
+    colour = multiply(mask.outputs["Color"], colour, -20, "x mask")
+
+    tinted = tree.nodes.new("ShaderNodeVectorMath")
+    tinted.operation = "MULTIPLY"
+    tinted.location = (-60, -20)
+    tinted.label = "x Color"
+    tinted.inputs[1].default_value = tuple(tint[:3])
+    tree.links.new(colour, tinted.inputs[0])
+
+    alpha = tree.nodes.new("ShaderNodeMath")
+    alpha.operation = "MULTIPLY"
+    alpha.location = (-60, -280)
+    tree.links.new(layer1.outputs["Alpha"], alpha.inputs[0])
+    tree.links.new(layer2.outputs["Alpha"], alpha.inputs[1])
+    with_mask = tree.nodes.new("ShaderNodeMath")
+    with_mask.operation = "MULTIPLY"
+    with_mask.location = (100, -280)
+    with_mask.label = "alpha"
+    tree.links.new(alpha.outputs[0], with_mask.inputs[0])
+    tree.links.new(mask.outputs["Alpha"], with_mask.inputs[1])
+
+    premultiplied = tree.nodes.new("ShaderNodeVectorMath")
+    premultiplied.operation = "SCALE"
+    premultiplied.location = (260, -20)
+    premultiplied.label = "colour x alpha"
+    tree.links.new(tinted.outputs[0], premultiplied.inputs[0])
+    tree.links.new(with_mask.outputs[0], premultiplied.inputs["Scale"])
+
     emission = tree.nodes.new("ShaderNodeEmission")
-    emission.location = (-200, 0)
-    emission.inputs["Color"].default_value = tuple(colour[:3]) + (1.0,)
-    emission.inputs["Strength"].default_value = 1.0
+    emission.location = (440, -20)
+    tree.links.new(premultiplied.outputs[0], emission.inputs["Color"])
+
+    # Added, not blended: a glow panel puts light on top of what is behind it.
     transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
-    transparent.location = (-200, 160)
-    mix = tree.nodes.new("ShaderNodeMixShader")
-    mix.location = (0, 0)
-    mix.inputs["Fac"].default_value = float(colour[3]) if len(colour) > 3 else 1.0
-    tree.links.new(transparent.outputs[0], mix.inputs[1])
-    tree.links.new(emission.outputs[0], mix.inputs[2])
-    tree.links.new(mix.outputs[0], output.inputs["Surface"])
+    transparent.location = (440, 200)
+    add = tree.nodes.new("ShaderNodeAddShader")
+    add.location = (600, 60)
+    tree.links.new(transparent.outputs[0], add.inputs[0])
+    tree.links.new(emission.outputs[0], add.inputs[1])
+    tree.links.new(add.outputs[0], output.inputs["Surface"])
     if hasattr(material, "surface_render_method"):
         material.surface_render_method = "BLENDED"
     return material
@@ -1723,7 +1843,7 @@ def banner_material(slot, set_index, index, owners=None, cache_directory="",
         node.location = (-720, row)
         node.label = name
         node.extension = "REPEAT"
-        image = _banner_image(name, effect, resources)
+        image = _effect_image(name, effect, resources)
         if image is not None:
             node.image = image
         if vector is not None:
@@ -1855,8 +1975,12 @@ def banner_material(slot, set_index, index, owners=None, cache_directory="",
     return material
 
 
-def _banner_image(name, effect, resources):
-    """One of the banner's own maps, out of the bundle."""
+def _effect_image(name, effect, resources):
+    """One of an effect's own maps, out of the bundle.
+
+    Shared by banners and plane sets: both name their maps the same way, and
+    both read them out of the same resource map.
+    """
 
     path = next((r.get("resourcePath") for r in ((effect or {}).get("resources") or [])
                  if r.get("name") == name), None)
@@ -1929,7 +2053,8 @@ def build_ship(document_path, resources_directory, *, clear=True,
     decal_objects = build_decals(document, primary, resources, family, decal_sets,
                                  collection)
     plane_objects = build_plane_sets(document, primary, collection,
-                                     (hull_record or {}).get("planeSets"))
+                                     (hull_record or {}).get("planeSets"),
+                                     resources)
     banner_objects = build_banner_sets(document, primary, collection,
                                        (hull_record or {}).get("bannerSets"),
                                        owners, cache_directory, resources)
