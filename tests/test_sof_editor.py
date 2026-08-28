@@ -153,3 +153,34 @@ class EditorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CatalogRetryTests(unittest.TestCase):
+    """A dropdown that vanished for the session because one fetch failed.
+
+    The kind is marked as requested BEFORE the fetch. Without a retry, a cold
+    start or a slow service left the ship field as a plain text box for the
+    rest of the session -- with nothing on screen to say why.
+    """
+
+    def source(self):
+        from pathlib import Path
+
+        here = Path(__file__).resolve().parents[1]
+        return (here / "addons" / "carbon_eve_resources"
+                / "sof_panels.py").read_text(encoding="utf-8")
+
+    def test_an_empty_catalog_is_forgotten_so_it_is_asked_for_again(self):
+        self.assertIn("_REQUESTED.discard(kind)", self.source())
+
+    def test_the_retry_is_capped(self):
+        # Or a service that is genuinely down is asked on every redraw,
+        # forever.
+        text = self.source()
+        self.assertIn("MAX_ATTEMPTS", text)
+        self.assertIn("_ATTEMPTS[kind] < MAX_ATTEMPTS", text)
+
+    def test_forgetting_the_catalogs_clears_the_attempts_too(self):
+        # Otherwise a build change cannot revive a catalog that gave up.
+        text = self.source()
+        self.assertIn("_ATTEMPTS.clear()", text)

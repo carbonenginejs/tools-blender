@@ -235,6 +235,17 @@ class CARBON_SOF_Name(PropertyGroup):
 #: every redraw.
 _REQUESTED = set()
 
+#: How many times a catalog may be asked for again after coming back empty.
+#:
+#: The kind is marked as requested BEFORE the fetch, so one failure -- a cold
+#: start, a slow service, a client that was not ready -- used to disable that
+#: dropdown for the rest of the session, silently, with the field degrading to
+#: plain text and never recovering. It is forgotten again on failure so a later
+#: redraw retries, and capped so a service that is genuinely down settles down
+#: instead of asking on every redraw forever.
+MAX_ATTEMPTS = 5
+_ATTEMPTS = {}
+
 
 def _populate(kind):
     """Fills one catalog list. Runs from a TIMER, never from a draw.
@@ -266,6 +277,12 @@ def _populate(kind):
             items.add().name = name
     except Exception as exc:
         print(f"[CarbonEngineJS SOF] {kind} catalog unavailable: {exc}")
+
+    if not len(getattr(bpy.context.window_manager, f"carbon_sof_{kind}", ())):
+        # Nothing arrived. Let a later redraw try again, up to a point.
+        _ATTEMPTS[kind] = _ATTEMPTS.get(kind, 0) + 1
+        if _ATTEMPTS[kind] < MAX_ATTEMPTS:
+            _REQUESTED.discard(kind)
     return None                       # a one-shot timer
 
 
@@ -308,6 +325,7 @@ def forget_catalogs():
     """Lets the catalogs be fetched again, after a build change."""
 
     _REQUESTED.clear()
+    _ATTEMPTS.clear()
     for kind in ("materials", "patterns", "hulls", "factions", "races", "ships"):
         items = getattr(bpy.context.window_manager, f"carbon_sof_{kind}", None)
         if items is not None:

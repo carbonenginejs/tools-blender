@@ -15,7 +15,10 @@ import bpy
 
 #: Prefix for the groups this module owns, so they are recognisable in the
 #: outliner and cannot collide with an authored group of the same name.
-PREFIX = "SOF"
+#: What a group IS, said in its name. The list of node groups is read by
+#: people, and "SOF gold_true_polished" next to "Carbon quadv5" said which
+#: system each came from and nothing about what either one was.
+PREFIX = "SofMaterial"
 
 #: The three values a slot reads, and the socket type each needs.
 OUTPUTS = (
@@ -108,10 +111,14 @@ def quad_group_node(material):
 
     if material is None or not material.use_nodes:
         return None
+    # Matched by what it IS, not by ruling out everything it is not. The old
+    # form excluded the material prefix and the word Pattern, which made every
+    # future group name a chance to break this quietly.
+    from .quad.nodes import GROUP_PREFIX
+
     return next((node for node in material.node_tree.nodes
                  if node.bl_idname == "ShaderNodeGroup" and node.node_tree
-                 and node.node_tree.name.startswith(PREFIX) is False
-                 and "Pattern" not in node.node_tree.name), None)
+                 and node.node_tree.name.startswith(GROUP_PREFIX)), None)
 
 
 def bind_slot(material, index: int, tree, *, is_pattern: bool = False) -> int:

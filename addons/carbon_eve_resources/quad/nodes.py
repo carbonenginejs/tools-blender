@@ -42,7 +42,9 @@ from . import reference
 from .interface import Member, load_family, socket_name
 
 
-GROUP_PREFIX = "Carbon"
+#: A shader family member's group: "CarbonShader quadv5". The type first,
+#: because that is what a person scanning the list is sorting by.
+GROUP_PREFIX = "CarbonShader"
 
 #: Sockets the group produces. `BSDF` makes it usable as a material on its own;
 #: the rest let a caller light the surface some other way.
@@ -144,7 +146,7 @@ MASK_PROPERTIES = {
 }
 
 #: The projection group's name; one per blend file, shared by every material.
-PROJECTION_GROUP = "Carbon Pattern Projection"
+PROJECTION_GROUP = "SofPattern Projection"
 
 #: `materialIndex` selects which material a projection paints with. Measured
 #: from the pixel stage's comparisons against 2, 3, 4 and 5:
@@ -601,7 +603,7 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
 
 #: The sails detail lookup's own group. Named separately from the pattern one
 #: because it is a different space, and reuses none of it.
-SAILS_GROUP = "Carbon Sails Projection"
+SAILS_GROUP = "SofPattern Sails Projection"
 
 
 def build_sails_group() -> bpy.types.ShaderNodeTree:
@@ -1204,17 +1206,17 @@ def build_all() -> list:
 
 
 #: The decal projection group; one per blend file, shared by every decal.
-DECAL_PROJECTION_GROUP = "Carbon Decal Projection"
+DECAL_PROJECTION_GROUP = "SofDecal Projection"
 
 
 
 #: The kill counter's group name; one per blend file.
-KILL_COUNTER_GROUP = "Carbon Kill Counter"
+KILL_COUNTER_GROUP = "SofDecal Kill Counter"
 
 
 
 #: The hull-breach interior group's name.
-HOLE_GROUP = "Carbon Decal Hole"
+HOLE_GROUP = "SofDecal Hole"
 
 
 def build_hole_group() -> bpy.types.ShaderNodeTree:
@@ -1525,8 +1527,8 @@ def build_decal_projection_group() -> bpy.types.ShaderNodeTree:
 #: chain is: compute noise UVs, sample the noise, compute a displacement, sample
 #: the glow. Each sample has to happen in the material, between groups, because
 #: a group cannot feed a texture that feeds itself back.
-HEAT_UV_GROUP = "Carbon Heat Noise UV"
-HEAT_DISPLACE_GROUP = "Carbon Heat Displace"
+HEAT_UV_GROUP = "CarbonShader Heat Noise UV"
+HEAT_DISPLACE_GROUP = "CarbonShader Heat Displace"
 
 
 def _tent_weights(tree, material_socket, x=-600):

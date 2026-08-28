@@ -19,6 +19,7 @@ except ImportError:                      # pragma: no cover - outside Blender
     bpy = None
 
 from carbon_eve_resources import sof_material_nodes as nodes  # noqa: E402
+from carbon_eve_resources.quad import nodes as quad_nodes  # noqa: E402
 
 
 BLACK = {"diffuse": (0.0012, 0.0012, 0.0012), "fresnel": (0.034, 0.034, 0.034),
@@ -30,7 +31,10 @@ ORANGE = {"diffuse": (0.3529, 0.0471, 0.0), "fresnel": (0.04, 0.04, 0.04),
 def _quad_material(name, sockets=("Mtl1DiffuseColor", "Mtl1FresnelColor", "Mtl1Gloss")):
     """A stand-in area material: a group node with the slot's three sockets."""
 
-    tree = bpy.data.node_groups.new(f"quad {name}", "ShaderNodeTree")
+    # Named the way a real one is. `quad_group_node` finds an area's shader
+    # by that prefix rather than by ruling out every other kind of group.
+    tree = bpy.data.node_groups.new(f"{quad_nodes.GROUP_PREFIX} {name}",
+                                    "ShaderNodeTree")
     for socket in sockets:
         kind = "NodeSocketFloat" if socket.endswith("Gloss") else "NodeSocketColor"
         tree.interface.new_socket(name=socket, in_out="INPUT", socket_type=kind)
