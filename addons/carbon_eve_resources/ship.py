@@ -1916,29 +1916,24 @@ def build_ship(document_path, resources_directory, *, clear=True,
 
 
 def ship_anchor(objects):
-    """The object the whole ship should hang off.
+    """The object the whole ship hangs off: the hull.
 
     Grabbing a ship in the viewport means clicking its hull, and a leaf cannot
     take its siblings with it. So the hull IS the parent of everything else,
-    and the empty above it is a handle rather than the only way to move the
-    ship.
+    and the empty above it is a handle rather than the only way to move it.
 
-    Unless something is skinned. Then the armature is the top, because Blender
-    deforms a mesh by an armature it is a CHILD of, and inverting that to make
-    the gesture nicer would break the rig -- which is a worse trade than one
-    extra click.
+    The biggest mesh, rather than the first: import order belongs to the GR2
+    loader, and a banner plane would otherwise be able to win.
+
+    This holds even when the hull is SKINNED, which inverts Blender's usual
+    mesh-under-armature. That costs nothing, measured rather than assumed:
+    reparenting a Legion moved its evaluated geometry by 0.0000, and moving the
+    hull by 100 then moved the banners, the rig and the deformed geometry by
+    exactly 100 each -- no double transform, and no dependency cycle. The
+    deform is relative, so as long as mesh and rig move together it does not
+    care which of them is the parent.
     """
 
-    for obj in objects:
-        if obj.type != "MESH":
-            continue
-        for modifier in obj.modifiers:
-            if modifier.type == "ARMATURE" and modifier.object is not None:
-                return modifier.object
-
-    # No skinning: the biggest mesh is the hull. Biggest rather than first,
-    # because import order is the GR2 loader's business and a banner would
-    # otherwise be able to win.
     meshes = [obj for obj in objects
               if obj.type == "MESH" and obj.data is not None]
     if not meshes:
@@ -1987,6 +1982,12 @@ def parent_to_root(objects, collection, document):
     # the skeleton behind whenever a person grabbed the hull itself, which is
     # the thing they can actually click.
     anchor = ship_anchor(unique)
+    if anchor is not None and anchor.parent is not None:
+        # The hull arrives under its own armature. Lifted out, world transform
+        # preserved, so the rig can hang off it a moment later.
+        keep = anchor.matrix_world.copy()
+        anchor.parent = None
+        anchor.matrix_world = keep
     adopted = 0
     for obj in unique:
         if obj.parent is not None or obj is anchor:

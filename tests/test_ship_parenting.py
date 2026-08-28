@@ -45,17 +45,21 @@ class AnchorTests(unittest.TestCase):
         self.assertIs(ship_anchor([banner, hull, Fake("plane_0_0", vertices=4)]),
                       hull)
 
-    def test_an_armature_that_deforms_something_wins(self):
-        # Blender deforms a mesh by an armature it is a CHILD of. Inverting
-        # that to make the gesture nicer would break the rig.
-        rig = Fake("ab1_skeleton", type_="ARMATURE")
-        hull = Fake("ab1_TShape1", vertices=12000,
+    def test_the_hull_wins_even_when_an_armature_deforms_it(self):
+        # Inverting Blender's usual mesh-under-armature. Measured on a Legion
+        # rather than assumed: reparenting moved the evaluated geometry by
+        # 0.0000, and moving the hull by 100 moved the banners, the rig and
+        # the DEFORMED geometry by exactly 100 each. The deform is relative,
+        # so it does not care which of the two is the parent -- only that they
+        # move together, which parenting is what guarantees.
+        rig = Fake("legion_skeleton", type_="ARMATURE")
+        hull = Fake("legion_TShape1", vertices=12000,
                     modifiers=[Modifier("ARMATURE", rig)])
-        self.assertIs(ship_anchor([hull, rig]), rig)
+        self.assertIs(ship_anchor([hull, rig]), hull)
 
-    def test_an_armature_that_deforms_nothing_does_not_win(self):
-        # Every ship carries a skeleton; almost none of them are skinned. An
-        # armature with no modifier pointing at it is bones, not a rig.
+    def test_an_armature_is_never_the_anchor(self):
+        # Every ship carries a skeleton, and it is never the thing a person
+        # clicks.
         rig = Fake("ab1_skeleton", type_="ARMATURE")
         hull = Fake("ab1_TShape1", vertices=12000)
         self.assertIs(ship_anchor([rig, hull]), hull)
