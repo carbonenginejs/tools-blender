@@ -123,6 +123,13 @@ class CARBON_PT_sidebar_about(Panel):
         cache.operator(addon.EVE_RESOURCE_OT_clear_cache.bl_idname,
                        text="", icon="TRASH")
 
+        # Colour space, here rather than only in Preferences: it is a
+        # WORKING choice. Blender's AgX default desaturates EVE's colours, and
+        # a person comparing against the game flips this while comparing.
+        space = self.layout.row(align=True)
+        space.label(text="Colour space")
+        space.prop(prefs, "view_transform_mode", expand=True)
+
         # The local folders are in Preferences, not here. They are set up
         # once and then left alone, and two path fields in a sidebar is a lot
         # of room for something nobody touches twice.

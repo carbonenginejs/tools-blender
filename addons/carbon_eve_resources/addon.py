@@ -105,6 +105,20 @@ def _local_path_set(self, context):
         self.use_local_source = True
 
 
+def _view_transform_chosen(self, context):
+    """Applied the moment it is chosen, not at the next ship load.
+
+    It is a two-button control on a panel, and a control that does nothing
+    until something else happens is a control people press twice.
+
+    A named function rather than a lambda: as a lambda its frame reported
+    `<string>` and it could not see this module's namespace at all, so every
+    press raised NameError into the console and changed nothing.
+    """
+
+    apply_view_transform(self)
+
+
 class EVE_RESOURCE_Preferences(AddonPreferences):
     bl_idname = ADDON_ID
 
@@ -160,12 +174,26 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
     #: and rolls colour off on purpose. EVE's textures and material colours are
     #: authored to be shown as they are, so a hull came out washed out and its
     #: blacks came out grey next to the same ship in the game.
-    standard_view_transform: BoolProperty(
-        name="Show colours as authored",
-        description="Set the scene's view transform to Standard when a ship "
-                    "loads. Blender's AgX default desaturates EVE's colours",
-        default=True,
+    #:
+    #: Two states rather than a tickbox, because both are legitimate: an
+    #: artist matching the game wants OVERRIDE, and one lighting a shot has
+    #: their own colour management and wants BLENDER left alone.
+    view_transform_mode: EnumProperty(
+        name="Colour space",
+        description="Whether to override the scene's view transform so EVE's "
+                    "colours read as authored",
+        items=(
+            ("BLENDER", "Blender", "Leave the scene's own view transform "
+                                   "alone, whatever it is"),
+            ("OVERRIDE", "Override", "Use Standard, so textures and material "
+                                     "colours are shown as authored"),
+        ),
+        default="OVERRIDE",
+        update=_view_transform_chosen,
     )
+    #: What the scene was on before we overrode it, so choosing Blender again
+    #: gives back what the person had rather than Blender's factory default.
+    previous_view_transform: StringProperty(default="", options={"HIDDEN"})
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -190,7 +218,7 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         else:
             row.operator(EVE_RESOURCE_OT_accept_creator_terms.bl_idname, text="Accept")
         layout.prop(self, "cache_directory")
-        layout.prop(self, "standard_view_transform")
+        layout.prop(self, "view_transform_mode", expand=True)
 
         row = layout.row(align=True)
         row.prop(self, "use_local_source")
@@ -692,29 +720,56 @@ def _hull_record(dna: str) -> dict:
     return record if isinstance(record, dict) else {}
 
 
+def _scene_view_settings():
+    """The scene's colour management, or None when there is no scene."""
+
+    try:
+        return bpy.context.scene.view_settings
+    except AttributeError:
+        return None
+
+
 def apply_view_transform(prefs) -> bool:
-    """Shows colours as authored rather than through a film look.
+    """Puts the scene where the chosen mode says it should be.
 
-    Blender 4 and 5 default to AgX, which desaturates and rolls off highlights
-    by design. Against the same ship in the game it reads as washed out, with
-    grey where the blacks should be. Standard shows what the textures and the
-    SOF material colours actually say.
+    Blender 4 and 5 default to AgX, a film look that desaturates and rolls
+    highlights off by design. Against the same ship in the game it reads as
+    washed out with grey where the blacks should be. Standard shows what the
+    textures and SOF material colours actually say.
 
-    The scene's setting, so it is a preference rather than something done to
-    somebody's scene behind their back.
+    Returns whether anything moved, so nothing announces a change it did not
+    make.
     """
 
-    if not getattr(prefs, "standard_view_transform", False):
+    settings = _scene_view_settings()
+    if settings is None:
+        return False
+    mode = str(getattr(prefs, "view_transform_mode", "BLENDER"))
+
+    if mode != "OVERRIDE":
+        # Back to what they had, not to Blender's factory default: the point
+        # of the other state is that their own choice survives.
+        wanted = str(getattr(prefs, "previous_view_transform", "") or "")
+        if not wanted or settings.view_transform == wanted:
+            return False
+        try:
+            settings.view_transform = wanted
+            return True
+        except (AttributeError, TypeError):
+            return False
+
+    if settings.view_transform == "Standard":
         return False
     try:
-        settings = bpy.context.scene.view_settings
-        if settings.view_transform != "Standard":
-            settings.view_transform = "Standard"
-            return True
+        remembered = settings.view_transform
+        settings.view_transform = "Standard"
     except (AttributeError, TypeError) as exc:
         # A different OCIO config may not offer it under that name.
         print(f"[CarbonEngineJS SOF] view transform unchanged: {exc}")
-    return False
+        return False
+    if hasattr(prefs, "previous_view_transform"):
+        prefs.previous_view_transform = remembered
+    return True
 
 
 def _build_fetched_ship(document, resources, problems) -> str:
@@ -728,7 +783,8 @@ def _build_fetched_ship(document, resources, problems) -> str:
     dna = str(document.get("dna") or "")
     hull_record = _hull_record(dna)
     if apply_view_transform(_prefs(bpy.context)):
-        print("  view transform set to Standard; AgX desaturates EVE's colours")
+        print("  colour space overridden to Standard; "
+              "AgX desaturates EVE's colours")
     problems = list(problems)
 
     # `build_ship` reads a document from a path and resources from a manifest
