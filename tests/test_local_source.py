@@ -216,3 +216,37 @@ class TranslationsStayInTheCacheTests(unittest.TestCase):
             self.assertFalse(str(found).startswith(str(self.local)), source)
             self.assertFalse(str(found).startswith(str(self.resfiles)), source)
             self.assertTrue(str(found).startswith(str(self.cache)), source)
+
+
+class ResFilesFolderShapeTests(unittest.TestCase):
+    """Either way round, because both are what people actually point at.
+
+    The field is called "Local ResFiles", so pointing it AT a ResFiles folder
+    is at least as likely as pointing it at the folder above one. Guessing
+    only one meant every lookup missed in silence and the ship downloaded
+    anyway -- which reads as the feature being broken, not as a wrong path.
+    """
+
+    LOCATION = "b4/b40590f110b66d26_f26d631c8e5491e4c1f3273b29019fce"
+
+    def place(self, root):
+        found = Path(root) / "b4" / self.LOCATION.split("/")[1]
+        found.parent.mkdir(parents=True, exist_ok=True)
+        found.write_bytes(b"theirs")
+        return found
+
+    def test_a_folder_containing_resfiles(self):
+        outer = Path(tempfile.mkdtemp(prefix="carbon-shape-a-"))
+        mine = self.place(outer / "ResFiles")
+        self.assertEqual(sof_fetch.local_at_address(outer, self.LOCATION), mine)
+
+    def test_the_resfiles_folder_itself(self):
+        inner = Path(tempfile.mkdtemp(prefix="carbon-shape-b-")) / "ResFiles"
+        mine = self.place(inner)
+        self.assertEqual(sof_fetch.local_at_address(inner, self.LOCATION), mine)
+
+    def test_a_folder_merely_named_resfiles_with_nothing_in_it(self):
+        # The name is a hint, not a promise: it must still find nothing.
+        empty = Path(tempfile.mkdtemp(prefix="carbon-shape-c-")) / "ResFiles"
+        empty.mkdir(parents=True)
+        self.assertIsNone(sof_fetch.local_at_address(empty, self.LOCATION))

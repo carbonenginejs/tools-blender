@@ -93,6 +93,18 @@ def _context_terms_accepted(context) -> bool:
         return False
 
 
+def _local_path_set(self, context):
+    """Filling in a folder means you want it used.
+
+    The paths were gated behind the toggle, so typing one in and pressing
+    Load downloaded the whole ship anyway -- correct by the letter of the
+    setting, and indistinguishable from the feature being broken.
+    """
+
+    if (self.local_source or self.local_resfiles) and not self.use_local_source:
+        self.use_local_source = True
+
+
 class EVE_RESOURCE_Preferences(AddonPreferences):
     bl_idname = ADDON_ID
 
@@ -128,6 +140,7 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
                     "path. Textures are taken as .tga first, then .dds",
         subtype="DIR_PATH",
         default="",
+        update=_local_path_set,
     )
     #: The other shape a local folder comes in: somebody's ResFiles, laid out
     #: the way the cache is. Kept separate from the authored folder because
@@ -141,6 +154,7 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
                     "read before downloading. Never written to",
         subtype="DIR_PATH",
         default="",
+        update=_local_path_set,
     )
     #: Blender 4 and 5 default to AgX, which is a FILM look: it desaturates
     #: and rolls colour off on purpose. EVE's textures and material colours are

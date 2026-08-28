@@ -275,13 +275,23 @@ def local_at_address(root, location: str):
 
     if not root or not location:
         return None
-    base = resfile.stored_path(root, location)
-    if base is None:
-        return None
-    for candidate in (base,) + tuple(base.with_suffix(s)
-                                     for s in TEXTURE_SUFFIXES):
-        if candidate.is_file() and candidate.stat().st_size > 0:
-            return candidate
+
+    # Either way round. `<root>/ResFiles/<shard>/<name>` is a game install or
+    # a copy of one; `<root>/<shard>/<name>` is somebody who pointed the field
+    # AT their ResFiles folder, which is what the field is called and so is at
+    # least as likely. Guessing wrong meant every lookup missed in silence and
+    # the ship downloaded anyway.
+    bases = [resfile.stored_path(root, location)]
+    inner = resfile.stored_path(Path(root).parent, location)
+    if Path(root).name.lower() == "resfiles" and inner is not None:
+        bases.insert(0, inner)
+    for base in bases:
+        if base is None:
+            continue
+        for candidate in (base,) + tuple(base.with_suffix(s)
+                                         for s in TEXTURE_SUFFIXES):
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                return candidate
     return None
 
 
@@ -472,6 +482,12 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
     if tally:
         print("  resources: " + ", ".join(
             f"{count} {kind}" for kind, count in sorted(tally.items())))
+    if (local_root or resfiles_root) and not tally.get("local"):
+        # A configured folder that supplied NOTHING is nearly always a folder
+        # pointed one level off. Saying so beats a silent download.
+        print("  local folders supplied nothing; expected "
+              "<folder>/ResFiles/<shard>/<name> or the logical path under "
+              "<folder>, e.g. dx9/model/ship/...")
     return document, resources, problems
 
 
