@@ -167,7 +167,36 @@ def find_meshes(document):
     return meshes
 
 
-def import_geometry(path):
+def strip_storage_name(objects, path):
+    """Takes the cached FILENAME back off the names an import made.
+
+    The importer names everything `<file stem>_<shape>`, and our file stem is
+    the resource's storage address -- sixteen hex, an underscore, thirty-two
+    more. So a Legion's hull arrived called
+
+        c9f99c58d3574e1b_12c0293aa9d0c653e45455b40be2061a_MDe3_TShape3
+
+    and every decal, plane and banner borrowed that as its ship id, which made
+    the outliner unreadable. The shape's own name is what a person recognises,
+    and Blender adds `.001` itself when a second ship brings the same one.
+    """
+
+    import re
+
+    stem = os.path.splitext(os.path.basename(str(path)))[0]
+    prefix = re.compile(r"^" + re.escape(stem) + r"[._]?", re.IGNORECASE)
+    for obj in objects:
+        shortened = prefix.sub("", obj.name)
+        if shortened and shortened != obj.name:
+            obj.name = shortened
+        if obj.data is not None and getattr(obj.data, "name", None):
+            shortened = prefix.sub("", obj.data.name)
+            if shortened:
+                obj.data.name = shortened
+    return objects
+
+
+def import_geometry(path, label=""):
     # The importer ships inside this add-on now, so it is a sibling import
     # rather than a separate add-on someone had to install. Registering it here
     # as well keeps the script paths working, which run the builder without
@@ -184,6 +213,15 @@ def import_geometry(path):
     created = [o for o in bpy.data.objects if o not in before and o.type == "MESH"]
     keep_actions([action for action in bpy.data.actions if action not in known_actions],
                  [o for o in bpy.data.objects if o not in before and o.type == "ARMATURE"])
+    fresh = [o for o in bpy.data.objects if o not in before]
+    strip_storage_name(fresh, path)
+    if label:
+        # Suffixed like everything else in the ship, so the hull and its
+        # skeleton say which ship they belong to instead of relying on
+        # Blender's .001 -- which says only that a name was taken.
+        for obj in fresh:
+            remember_name(obj, obj.name, label)
+            obj.name = unique_name(obj.name, label)
     parent_to_armature(created)
     for mesh in created:
         store_rest_position(mesh)
@@ -384,6 +422,7 @@ def assemble(document_path, resources_directory, *, clear=True,
     document = load_document(document_path) if document is None else document
     resources = load_manifest(resources_directory) if resources is None else resources
     family = quad_interface.load_family() if family is None else family
+    label = ship_label(document)
 
     if clear:
         for obj in list(bpy.data.objects):
@@ -401,7 +440,7 @@ def assemble(document_path, resources_directory, *, clear=True,
             warnings.append(f"geometry not downloaded: {path}")
             continue
 
-        objects = import_geometry(local)
+        objects = import_geometry(local, label)
         if not objects:
             warnings.append(f"{path}: importer created no mesh")
             continue
@@ -627,6 +666,32 @@ def unique_name(meaning, unique):
     width = max(NAME_FIELD, len(str(meaning)) + 1)
     return f"{meaning:_<{width}}{unique}"
 
+
+
+def ship_label(document):
+    """What to call this ship, and what everything in it is suffixed with.
+
+    The hull from the DNA -- `mde3_t3` -- numbered when the scene already has
+    one: `mde3_t3`, `mde3_t3_2`, `mde3_t3_3`. A name and a number, because the
+    id appears on every decal, plane and banner in the outliner and has to be
+    readable at a glance.
+    """
+
+    def taken(name):
+        # An EMPTY collection does not count. A rebuild deletes the objects
+        # and leaves the shell behind until it is pruned, and counting that
+        # would make every reload of one ship a "second" one.
+        found = bpy.data.collections.get(name)
+        return found is not None and bool(found.objects or found.children)
+
+    dna = str((document or {}).get("dna") or "")
+    base = dna.split(":", 1)[0].strip().lower() or "ship"
+    if not taken(base):
+        return base
+    number = 2
+    while taken(f"{base}_{number}"):
+        number += 1
+    return f"{base}_{number}"
 
 
 def ship_collection(name):
@@ -1870,7 +1935,7 @@ def build_ship(document_path, resources_directory, *, clear=True,
     root = primary
     while root.parent is not None:
         root = root.parent
-    collection = ship_collection(root.name.replace("_Armature", "") or "ship")
+    collection = ship_collection(ship_label(document))
     for obj in bpy.data.objects:
         if obj not in existing:
             move_to_collection(obj, collection)
