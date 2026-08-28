@@ -41,19 +41,14 @@ CARBON_DOCUMENT_SCHEMA = "carbon.document"
 def expand_document(document):
     """Expands a `carbon.document` node graph into the tree this script walks.
 
-    TWO shapes arrive here, and they are different formats rather than one
-    format written two ways:
+    One shape: the CjsModel hydration spelling. `_type` names the class, `_id`
+    identifies a node, and `{"_ref": id}` points at one.
 
-    - HYDRATION data, the CjsModel spelling: `_type` names the class, `_id`
-      identifies a node, and `{"_ref": id}` points at one. This is what a
-      dehydrated object graph looks like and what a reader should expect.
-    - a CLASS-POPULATION format, which is what the bundle at hand carries:
-      `{id, kind, fields}` with `{"$ref": id}`. It describes how to build the
-      objects rather than an object graph that has been saved.
-
-    Both are node graphs with shared references, so both expand the same way,
-    and this reads either. Do not treat the second as a variant spelling of the
-    first when writing anything back.
+    A second `{id, kind, fields}` / `{"$ref": id}` format used to arrive here
+    too. It was tools-core's internal class-population form and is retired, so
+    reading it is gone rather than kept "just in case" -- a reader that accepts
+    a format nothing writes only hides the day something starts writing it
+    again by accident.
 
     Either way the deduplication is the point: a hull's effect is referenced by
     every area that uses it rather than copied. Sharing is PRESERVED rather than
@@ -70,20 +65,16 @@ def expand_document(document):
     for node in document.get("nodes") or []:
         if not isinstance(node, dict):
             continue
-        identity = node.get("_id", node.get("id"))
+        identity = node.get("_id")
         if identity is not None:
             nodes[identity] = node
 
     cache = {}
 
     def reference_of(value):
-        """The id a value points at, under either spelling, or None."""
+        """The id a value points at, or None."""
 
-        if "_ref" in value:
-            return value["_ref"]
-        if "$ref" in value:
-            return value["$ref"]
-        return None
+        return value.get("_ref")
 
     def convert(value):
         if isinstance(value, dict):
@@ -101,13 +92,11 @@ def expand_document(document):
         node = nodes.get(node_id)
         if node is None:
             return None
-        out = {"_type": node.get("_type", node.get("kind"))}
+        out = {"_type": node.get("_type")}
         cache[node_id] = out
-        fields = node.get("fields")
-        if not isinstance(fields, dict):
-            # Under the contract the properties are on the node itself.
-            fields = {key: value for key, value in node.items()
-                      if key not in ("_type", "_id", "id", "kind")}
+        # The properties are on the node itself.
+        fields = {key: value for key, value in node.items()
+                  if key not in ("_type", "_id")}
         for key, value in fields.items():
             out[key] = convert(value)
         return out
