@@ -15,7 +15,10 @@ Textures are used as downloaded: Blender reads EVE's DXT5 `.dds` natively.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import gzip
+import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 from urllib.request import Request, urlopen
@@ -36,20 +39,138 @@ class FetchError(RuntimeError):
     """Raised when a ship cannot be fetched."""
 
 
+def document_path(cache_root, dna: str, build: str, target: str = "eve") -> Path:
+    """Where one DNA's document is kept.
+
+    Under the BUILD, so a new client build fetches a fresh document rather
+    than serving the old one forever. Gzipped: a document is 259KB of JSON and
+    39KB compressed, and a person may accumulate hundreds.
+
+    A DNA can carry commands, `;` and `?`, so the name is sanitised. A long one
+    is replaced by a hash of itself -- a DNA with several commands exceeds what
+    a filesystem will take, and truncating would collide two ships that differ
+    only at the end.
+    """
+
+    safe = re.sub(r"[^a-z0-9_.-]+", "_", str(dna or "").strip().lower()).strip("_")
+    if len(safe) > 100:
+        safe = f"{safe[:60]}-{hashlib.sha1(str(dna).encode('utf-8')).hexdigest()[:16]}"
+    return Path(cache_root) / "documents" / str(build) / target / f"{safe}.json.gz"
+
+
+#: What a stored document is wrapped in. The envelope is the point: the digest
+#: says WHICH document this is, so a consumer can tell a ship that genuinely
+#: changed from one whose build number merely moved, and can prove a file is
+#: intact without re-fetching it.
+DOCUMENT_ENVELOPE = "carbon.blender.document"
+ENVELOPE_VERSION = 1
+
+
+def document_digest(document) -> str:
+    """A stable sha256 over one document.
+
+    Keys sorted and separators fixed, so the same document hashes the same on
+    any machine and in any Python. This is the value worth comparing: two
+    builds carrying the same digest for a DNA mean nothing about that ship
+    changed, whatever the build numbers say.
+    """
+
+    canonical = json.dumps(document, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def read_document(path, *, verify: bool = True) -> dict:
+    """A stored document, checked against its own digest."""
+
+    with gzip.open(str(path), "rt", encoding="utf-8") as handle:
+        envelope = json.load(handle)
+    if not isinstance(envelope, Mapping) or envelope.get("envelope") != DOCUMENT_ENVELOPE:
+        raise FetchError(f"{path}: not a stored document")
+    document = envelope.get("document")
+    if not isinstance(document, Mapping):
+        raise FetchError(f"{path}: the envelope carries no document")
+    if verify and envelope.get("sha256") != document_digest(document):
+        raise FetchError(f"{path}: digest does not match its contents")
+    return dict(document)
+
+
+def read_envelope(path) -> dict:
+    """The envelope WITHOUT the document: dna, build, digest, when.
+
+    Reading this is cheap and answers "has this ship changed?" without loading
+    259KB of JSON to find out.
+    """
+
+    with gzip.open(str(path), "rt", encoding="utf-8") as handle:
+        envelope = json.load(handle)
+    if not isinstance(envelope, Mapping):
+        raise FetchError(f"{path}: not a stored document")
+    return {key: value for key, value in envelope.items() if key != "document"}
+
+
+def write_document_cache(path, document, *, dna: str = "", build: str = "",
+                         target: str = "eve") -> str:
+    """Stores one document with its digest. Returns the digest.
+
+    Written to a temporary name and moved, so a kill cannot leave half a file
+    that reads as cached.
+    """
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    digest = document_digest(document)
+    envelope = {
+        "envelope": DOCUMENT_ENVELOPE,
+        "version": ENVELOPE_VERSION,
+        "dna": str(dna),
+        "build": str(build),
+        "target": str(target),
+        "sha256": digest,
+        "document": document,
+    }
+    partial = path.with_name(path.name + ".part")
+    with gzip.open(str(partial), "wt", encoding="utf-8", compresslevel=9) as handle:
+        json.dump(envelope, handle, separators=(",", ":"))
+    partial.replace(path)
+    return digest
+
+
 def document_for(dna: str, client, *, build: str = "latest",
-                 target: str = "eve") -> dict:
-    """The built document for one DNA."""
+                 target: str = "eve", cache_root=None) -> dict:
+    """The built document for one DNA, from disk when it is there.
+
+    Stored so a ship already loaded once can be loaded again with the service
+    down. The service is asked only when the document is not on disk, and a
+    failure then still checks disk before giving up -- being offline should
+    cost the ships you have never opened, not the ones you have.
+    """
 
     wanted = str(dna or "").strip().lower()
     if not wanted:
         raise FetchError("a DNA is required")
+
+    cached = document_path(cache_root, wanted, build, target) if cache_root else None
+    if cached is not None and cached.is_file():
+        try:
+            return read_document(cached)
+        except (OSError, ValueError, FetchError):
+            pass                       # a bad file is not worth keeping
+
     try:
         found = client.request_json("GET", f"/{target}/{build}/sof/dna/{wanted}")
     except Exception as exc:
         raise FetchError(f"{wanted}: {exc}") from exc
     if not isinstance(found, Mapping):
         raise FetchError(f"{wanted}: the service did not answer with a document")
-    return dict(found)
+
+    document = dict(found)
+    if cached is not None:
+        try:
+            write_document_cache(cached, document, dna=wanted, build=build,
+                                 target=target)
+        except OSError as exc:
+            print(f"[CarbonEngineJS SOF] could not store {cached.name}: {exc}")
+    return document
 
 
 def resource_paths(document) -> tuple:
@@ -239,7 +360,8 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
         print(f"[CarbonEngineJS SOF] index unavailable, resolving per file: {exc}")
         index = None
 
-    document = document_for(dna, client, build=exact, target=target)
+    document = document_for(dna, client, build=exact, target=target,
+                            cache_root=cache_root)
     paths = resource_paths(document)
     resources = {}
     problems = []
