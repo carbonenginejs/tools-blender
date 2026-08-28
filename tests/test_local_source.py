@@ -10,6 +10,7 @@ ADDONS = Path(__file__).resolve().parents[1] / "addons"
 if str(ADDONS) not in sys.path:
     sys.path.insert(0, str(ADDONS))
 
+from carbon_eve_resources.core import sof_fetch  # noqa: E402
 from carbon_eve_resources.core.sof_fetch import local_file  # noqa: E402
 
 
@@ -116,3 +117,47 @@ class PrecedenceTests(unittest.TestCase):
     def test_neither_having_it_falls_through(self):
         self.assertIsNone(local_file(self.optional, TEXTURE))
         self.assertIsNone(local_file(self.cache, TEXTURE))
+
+
+class LocalAtCacheAddressTests(unittest.TestCase):
+    """A local folder that mirrors the cache exactly.
+
+    Same shard, same name, no extension -- so dropping a file in overrides
+    that resource and nothing has to be renamed or looked up.
+    """
+
+    LOCATION = "b4/b40590f110b66d26_f26d631c8e5491e4c1f3273b29019fce"
+    PATH = "res:/Texture/Global/noise32cube_volume.dds"
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="carbon-local-addr-"))
+
+    def place(self, name, data=b"mine"):
+        shard = self.root / "ResFiles" / self.LOCATION.split("/")[0]
+        shard.mkdir(parents=True, exist_ok=True)
+        found = shard / name
+        found.write_bytes(data)
+        return found
+
+    def test_a_file_at_the_address_is_used(self):
+        mine = self.place(self.LOCATION.split("/")[1])
+        self.assertEqual(
+            sof_fetch.local_at_address(self.root, self.LOCATION), mine)
+
+    def test_a_translated_file_beside_it_is_used(self):
+        # The one kind of file that carries an extension is one somebody
+        # translated -- ours or theirs, the rule is the same.
+        mine = self.place(self.LOCATION.split("/")[1] + ".png")
+        self.assertEqual(
+            sof_fetch.local_at_address(self.root, self.LOCATION), mine)
+
+    def test_an_empty_file_is_not_an_override(self):
+        self.place(self.LOCATION.split("/")[1], data=b"")
+        self.assertIsNone(
+            sof_fetch.local_at_address(self.root, self.LOCATION))
+
+    def test_nothing_there_is_not_an_override(self):
+        self.assertIsNone(
+            sof_fetch.local_at_address(self.root, self.LOCATION))
+        self.assertIsNone(sof_fetch.local_at_address(None, self.LOCATION))
+        self.assertIsNone(sof_fetch.local_at_address(self.root, ""))

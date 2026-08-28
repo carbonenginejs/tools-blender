@@ -29,15 +29,17 @@ class StoredPathTests(unittest.TestCase):
         self.assertEqual(found.parent.name, "b4")
         self.assertTrue(found.name.startswith("b40590f110b66d26_"))
 
-    def test_the_extension_is_kept(self):
-        # Nothing needs it to FIND the file; it is there so the file opens in
-        # whatever a person double-clicks.
+    def test_a_source_keeps_no_extension(self):
+        # EVE's layout, byte for byte, so a file is found whoever put it
+        # there. Blender reads an extensionless DDS fine -- verified against a
+        # real one, 2048x1024 and four channels -- so renaming what we were
+        # given buys nothing.
         self.assertEqual(resfile.stored_path("/cache", LOCATION, PATH).suffix,
-                         ".dds")
-
-    def test_a_path_with_no_extension_stores_without_one(self):
-        self.assertEqual(resfile.stored_path("/cache", LOCATION, "res:/a/b").suffix,
                          "")
+
+    def test_the_logical_path_cannot_add_one(self):
+        self.assertEqual(
+            resfile.stored_path("/cache", LOCATION, "res:/a/b.dds").suffix, "")
 
     def test_casing_in_the_path_cannot_change_where_the_file_goes(self):
         # The old bug, made impossible: the address comes from the row, so how

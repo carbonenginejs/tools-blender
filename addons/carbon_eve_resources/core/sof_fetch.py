@@ -263,6 +263,28 @@ def local_file(local_root, logical_path: str):
     return found if found.is_file() and found.stat().st_size > 0 else None
 
 
+def local_at_address(root, location: str):
+    """A locally provided file sitting at the resource's cache address.
+
+    The local folder mirrors the cache exactly: same shard, same name, no
+    extension -- so dropping a file in overrides that resource and nothing has
+    to be renamed or looked up. A file the person has TRANSLATED keeps the
+    extension it was translated to, the same way ours do, so both
+    `<address>` and `<address>.png` are theirs to provide.
+    """
+
+    if not root or not location:
+        return None
+    base = resfile.stored_path(root, location)
+    if base is None:
+        return None
+    for candidate in (base,) + tuple(base.with_suffix(s)
+                                     for s in TEXTURE_SUFFIXES):
+        if candidate.is_file() and candidate.stat().st_size > 0:
+            return candidate
+    return None
+
+
 def fetch_resource(logical_path: str, client, cache_root, *, build: str,
                    target: str = "eve", opener=urlopen, index=None,
                    local_root=None, sources=None) -> Path:
@@ -274,10 +296,11 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
     """
 
     # In order:
-    #   1. the optional folder, .tga then .dds -- what the person is authoring
-    #   2. the cache under the same human-readable layout, .tga then .dds
-    #   3. the cache's content-addressed store, where downloads land
-    #   4. the index, and CCP
+    #   1. the optional folder at the resource's own cache address
+    #   2. the optional folder by logical path, .tga then .png then .dds
+    #   3. the cache under that same human-readable layout
+    #   4. the cache's content-addressed store, where downloads land
+    #   5. the index, and CCP
     def note(kind, path):
         # Where each file CAME from, so a load can say so. Every load reads the
         # same fifty names aloud, and a person watching that cannot tell a
@@ -286,7 +309,13 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
             sources[logical_path] = kind
         return path
 
-    provided = local_file(local_root, logical_path)
+    # The index gives the address; nothing is computed from the path. Asking
+    # the service to resolve is the fallback for a path it has no row for.
+    row = resindex.locate(index, logical_path) if index else None
+
+    provided = local_at_address(local_root, row)
+    if provided is None:
+        provided = local_file(local_root, logical_path)
     if provided is not None:
         return note("local", provided)
 
@@ -294,26 +323,13 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
     if provided is not None:
         return note("cache", provided)
 
-    # The index gives the address; nothing is computed from the path. Asking
-    # the service to resolve is the fallback for a path it has no row for.
     def stored(location):
         found = resfile.stored_path(cache_root, location, logical_path)
-        if found is None:
-            return None
-        if found.is_file() and found.stat().st_size > 0:
+        if found is not None and found.is_file() and found.stat().st_size > 0:
             return found
-        # Files cached before the extension was kept. Renamed rather than
-        # re-downloaded: the bytes are right, only the name is old.
-        old = found.with_suffix("")
-        if old != found and old.is_file() and old.stat().st_size > 0:
-            try:
-                old.rename(found)
-                return found
-            except OSError:
-                return old
         return None
 
-    location = resindex.locate(index, logical_path) if index else None
+    location = row
     url = resindex.source_url(location) if location else ""
     if location:
         cached = stored(location)

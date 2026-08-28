@@ -6,9 +6,9 @@ the address out ourselves meant getting it right for a second time, and we did
 not: the hash is taken over the LOWERCASED path, so every path with a capital
 in it addressed a file that was not there and downloaded again on every load.
 
-The stored file keeps its extension. Nothing needs it to find the file, but
-`ab1_t1_a.dds` opens in whatever a person double-clicks and `b40590f110b66d26_
-f26d631c8e5491e4c1f3273b29019fce` does not.
+Nothing gets an extension here. The stored name is EVE's, exactly as given. A
+file we translate -- a BC7 texture Blender cannot read -- is the one thing that
+does, and it takes the same name with `.png` on the end.
 """
 
 from __future__ import annotations
@@ -34,14 +34,16 @@ def parse(stored) -> dict | None:
             "checksum": found.group(3)}
 
 
-def extension(logical_path: str) -> str:
-    """The extension to keep on the stored file, `.dds` and the like."""
-
-    return Path(str(logical_path or "").split("?", 1)[0]).suffix.lower()
-
-
 def stored_path(root, location: str, logical_path: str = ""):
     """Where the file at one index location is kept, or None.
+
+    No extension. This is EVE's own layout, byte for byte, so a file is found
+    whoever put it there -- us, tools-core, or the game. Blender reads a DDS
+    with no extension perfectly well (verified: 2048x1024, four channels), so
+    there is nothing to gain by renaming what we were given.
+
+    Only a file we TRANSLATED gets an extension, and it gets it by sitting
+    beside its source under the same name -- see dds.reader.derived_path.
 
     None when the location is not an address, which is the caller's cue to fall
     back to the cache's human-readable layout.
@@ -50,7 +52,7 @@ def stored_path(root, location: str, logical_path: str = ""):
     parts = parse(location)
     if parts is None:
         return None
-    name = f"{parts['path_hash']}_{parts['checksum']}{extension(logical_path)}"
+    name = f"{parts['path_hash']}_{parts['checksum']}"
     return Path(root) / "ResFiles" / parts["shard"] / name
 
 
