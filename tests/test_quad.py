@@ -489,7 +489,7 @@ class SocketNaming(unittest.TestCase):
 
     def test_general_data_is_exposed_as_paint_mask_influence(self):
         # Only .x is read, and Carbon's annotation names that lane. The spelling
-        # matches sof_shading.GROUP_INPUT_DEFAULTS so existing wiring drives it.
+        # a name the quad interface already drives, so wiring is unchanged.
         from carbon_eve_resources.quad import socket_name
         self.assertEqual(socket_name("GeneralData"), "PaintMapInfluence")
 

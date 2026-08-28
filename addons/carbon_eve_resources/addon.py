@@ -31,7 +31,6 @@ from .core.resource_index import (
     safe_join,
 )
 from .core.sof_builder import SofBuilderError, normalize_dna
-from .core.sof_document import SofBundle, SofDocumentError, load_sof_bundle
 
 
 ADDON_ID = __package__ or "carbon_eve_resources"
@@ -352,72 +351,6 @@ class EVE_RESOURCE_State(PropertyGroup):
     preview_error_path: StringProperty(default="")
 
 
-class EVE_RESOURCE_OT_import_sof_document(Operator):
-    """Builds a ship from a pre-compiled tools-core SOF bundle."""
-
-    bl_idname = "carbon.eve_resource_import_sof_document"
-    bl_label = "Assemble SOF Bundle"
-    bl_description = (
-        "Import the geometry, mesh areas, and textures described by a "
-        "pre-compiled tools-core SOF bundle or carbon.document JSON file"
-    )
-
-    filepath: StringProperty(subtype="FILE_PATH", options={"HIDDEN"})
-    filter_glob: StringProperty(default="*.json", options={"HIDDEN"})
-    include_secondary_meshes: BoolProperty(
-        name="Include additional meshes",
-        description=(
-            "Also import meshes the document attaches to the hull, such as the "
-            "shield impact overlay sphere"
-        ),
-        default=False,
-    )
-
-    @classmethod
-    def poll(cls, context):
-        state = getattr(context.window_manager, "carbon_eve_resources", None)
-        return state is not None and not state.busy and _context_terms_accepted(context)
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
-
-    def execute(self, context):
-        if not hasattr(bpy.ops.import_scene, "carbon_gr2"):
-            self.report({"ERROR"}, "Enable CarbonEngineJS GR2 Importer first")
-            return {"CANCELLED"}
-        if not self.filepath:
-            self.report({"ERROR"}, "Select a SOF bundle or document first")
-            return {"CANCELLED"}
-        try:
-            bundle = load_sof_bundle(self.filepath)
-        except SofDocumentError as exc:
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
-
-        prefs = _prefs(context)
-        primary_only = not self.include_secondary_meshes
-        pending = bundle.unresolved(primary_only=primary_only)
-        if pending and _catalog is None:
-            self.report(
-                {"ERROR"},
-                f"{len(pending)} resources are missing from the bundle; load the resource index "
-                "to download them",
-            )
-            return {"CANCELLED"}
-        _launch_job(
-            context,
-            "sof_document",
-            lambda: _run_with_cache_stats(
-                lambda: (bundle, primary_only, _fetch_sof_resources(pending, prefs)),
-                _cache_path(prefs),
-            ),
-            f"Assembling {bundle.assembly.dna or 'SOF bundle'}"
-            + (f" ({len(pending)} downloads)" if pending else ""),
-        )
-        return {"FINISHED"}
-
-
 class EVE_RESOURCE_OT_build_sof_dna(Operator):
     """Builds a DNA into a bundle with tools-core, then assembles it."""
 
@@ -688,36 +621,6 @@ def _run_with_cache_stats(worker: Callable[[], Any], cache_root: Path):
     return worker(), payload_cache_stats(cache_root)
 
 
-def _fetch_sof_resources(paths: tuple[str, ...], prefs) -> tuple[dict[str, Path], list[str]]:
-    """Materializes the document resources a bundle did not already provide."""
-
-    if not paths:
-        return {}, []
-    if _catalog is None:
-        raise ResourceIndexError("Load the EVE resource index before assembling a SOF document")
-    accepted = _creator_terms_accepted(prefs)
-    cache_root = _cache_path(prefs)
-    download_root = _download_path(prefs)
-    resolved: dict[str, Path] = {}
-    missing: list[str] = []
-    total = len(paths)
-    for index, logical_path in enumerate(paths, start=1):
-        _set_progress(f"Downloading {index}/{total}: {logical_path.rsplit('/', 1)[-1]}")
-        try:
-            entry = _catalog.get(logical_path)
-            fetched = materialize_resource(
-                entry,
-                cache_root,
-                download_root,
-                creator_terms_accepted=accepted,
-            )
-        except ResourceIndexError as exc:
-            missing.append(f"{logical_path}: {exc}")
-            continue
-        resolved[logical_path] = fetched.path
-    return resolved, missing
-
-
 def _hull_record(dna: str) -> dict:
     """The hull record for a DNA, or an empty dict if it cannot be had.
 
@@ -796,62 +699,6 @@ def _build_fetched_ship(document, resources, problems) -> str:
     for problem in problems:
         print(f"[CarbonEngineJS SOF] {problem}")
     summary = f"Loaded {dna or 'SOF document'}"
-    if problems:
-        summary += f"; {len(problems)} issue(s) logged to the console"
-    return summary
-
-
-def _assemble_sof_document(
-    bundle: SofBundle,
-    primary_only: bool,
-    downloaded: dict[str, Path],
-    missing: list[str],
-) -> str:
-    """Builds the whole ship from a bundle, through the one ship builder.
-
-    This used to import the meshes and route their areas onto material slots,
-    and stop there. That is a fraction of a ship: no decals, no plane or banner
-    sets, no per-ship values, and none of the drivers that carry them into the
-    shaders. A ship loaded from this panel was missing all of it while a ship
-    built by the preview script had it, because the two paths had quietly
-    become different builders.
-
-    There is one builder now. Whatever `build_ship` learns, this gets.
-    """
-
-    from . import ship as ship_builder
-
-    if bundle.document_path is None or bundle.directory is None:
-        return "This bundle has no document on disk to build from"
-
-    hull_record = _hull_record(bundle.assembly.dna)
-    problems = list(missing)
-    primary = ship_builder.build_ship(
-        str(bundle.document_path),
-        str(bundle.directory),
-        # Keep what is already in the scene. The builder's default is to empty
-        # the file first, which suits the preview script -- one ship per run --
-        # and is entirely wrong for a panel: loading a second hull silently
-        # deleted the first, leaving its empty collections behind so it looked
-        # like the ship was still there.
-        clear=False,
-        decal_sets=(hull_record.get("decalSets") or []),
-        hull_record=hull_record,
-        cache_directory=str(_cache_path(_prefs(bpy.context)) / "logos"),
-    )
-    if primary is None:
-        problems.append("no geometry was assembled")
-
-    if not hull_record:
-        # Said out loud: without it the decals have no names or visibility
-        # groups and the areas cannot be typed, which is a visibly poorer ship
-        # rather than an error.
-        problems.append(f"no hull record for {bundle.assembly.dna}; decals and "
-                        "area types are unavailable")
-
-    for problem in problems:
-        print(f"[CarbonEngineJS SOF] {problem}")
-    summary = f"Loaded {bundle.assembly.dna or 'SOF document'}"
     if problems:
         summary += f"; {len(problems)} issue(s) logged to the console"
     return summary
@@ -986,12 +833,6 @@ def _poll_job():
             (document, resources, problems), stats = job.result
             _set_cache_stats(state, stats)
             state.status = _build_fetched_ship(document, resources, problems)
-        elif job.kind == "sof_document":
-            (bundle, primary_only, (downloaded, missing)), stats = job.result
-            _set_cache_stats(state, stats)
-            state.status = _assemble_sof_document(bundle, primary_only, downloaded, missing)
-            if _catalog is not None:
-                _populate_results(context)
         elif job.kind == "import_gr2":
             fetched, stats = job.result
             _set_cache_stats(state, stats)
@@ -1142,7 +983,6 @@ classes = (
     EVE_RESOURCE_OT_revoke_creator_terms,
     EVE_RESOURCE_Result,
     EVE_RESOURCE_State,
-    EVE_RESOURCE_OT_import_sof_document,
     EVE_RESOURCE_OT_build_sof_dna,
     EVE_RESOURCE_OT_refresh_cache_stats,
     EVE_RESOURCE_OT_clear_cache,
