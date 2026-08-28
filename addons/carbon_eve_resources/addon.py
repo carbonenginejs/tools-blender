@@ -74,17 +74,6 @@ def _default_cache_directory() -> str:
     )
 
 
-def _default_download_directory() -> str:
-    """Default for `download_directory`.
-
-    Still here because the property is: its readers are the browser's download
-    operators, which are unreachable but not yet removed. Removing the default
-    without them left the add-on unable to register at all.
-    """
-
-    return str(Path.home() / "Downloads" / "EVE Resources")
-
-
 def _detail_filter_updated(self, context) -> None:
     _populate_results(context)
 
@@ -113,12 +102,6 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         subtype="DIR_PATH",
         default=_default_cache_directory(),
     )
-    download_directory: StringProperty(
-        name="Downloaded files",
-        description="Folder where selected files are materialized with their original EVE paths and extensions",
-        subtype="DIR_PATH",
-        default=_default_download_directory(),
-    )
     auto_load: BoolProperty(
         name="Load cached/latest index on startup",
         description="Open a cached exact build, or download the latest Tranquility index when none is cached",
@@ -130,18 +113,6 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         default=300,
         min=25,
         max=2000,
-    )
-    tools_core_directory: StringProperty(
-        name="tools-core checkout",
-        description="Directory containing tools-core's bin/cjs-sof-bundle.js; required to build a DNA",
-        subtype="DIR_PATH",
-        default="",
-    )
-    node_executable: StringProperty(
-        name="Node executable",
-        description="Node.js used to run tools-core; leave empty to use the first node on PATH",
-        subtype="FILE_PATH",
-        default="",
     )
     #: An optional folder of hand-authored files, laid out by LOGICAL path --
     #: `dx9/model/ship/.../gb2_t1_a.tga` -- so a person can drop in their own
@@ -183,13 +154,6 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
             row.operator(EVE_RESOURCE_OT_accept_creator_terms.bl_idname, text="Accept")
         layout.prop(self, "cache_directory")
 
-        # Optional, and only for people working on tools-core itself. It is
-        # drawn because Prune shells out to that checkout: without the field a
-        # person could never satisfy the error it reports.
-        advanced = layout.box()
-        advanced.label(text="Local tools-core (optional)", icon="CONSOLE")
-        advanced.prop(self, "tools_core_directory")
-        advanced.prop(self, "node_executable")
         row = layout.row(align=True)
         row.prop(self, "use_local_source")
         local = layout.row()
@@ -502,10 +466,9 @@ class EVE_RESOURCE_OT_prune_cache(Operator):
     and nothing notices, which means the cache only ever grows -- 379 MB of
     ResFiles here for a handful of ships.
 
-    tools-core already knows which files matter: it reads each kept build's
-    indexes, unions every path they mention, and removes the rest. That is a
-    real answer rather than "delete everything and download it again", which is
-    what clearing the cache does.
+    The kept builds' own indexes say which files matter, so this is a real
+    answer rather than "delete everything and download it again", which is
+    what clearing the cache does. See `core/cache_prune.py`.
     """
 
     bl_idname = "carbon.eve_resource_prune_cache"
@@ -526,41 +489,20 @@ class EVE_RESOURCE_OT_prune_cache(Operator):
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
-        import subprocess
+        from .core import cache_prune
 
-        from .core.sof_builder import _spawn_options
+        root = _cache_path(_prefs(context))
+        keep = int(self.keep_latest)
 
-        prefs = _prefs(context)
-        root = str(prefs.tools_core_directory or "").strip()
-        if not root:
-            self.report({"ERROR"}, "Set the tools-core checkout in preferences first")
-            return {"CANCELLED"}
-        script = Path(bpy.path.abspath(root)) / "bin" / "cjs-tools-cache-prune.js"
-        if not script.is_file():
-            self.report({"ERROR"}, f"{script.name} is not in this tools-core checkout")
-            return {"CANCELLED"}
+        def run():
+            done = cache_prune.prune(root, keep, apply=True)
+            freed = done["bytes"] / (1024 * 1024)
+            return [f"Removed {done['removed']} files ({freed:.0f} MB), "
+                    f"kept {done['kept']} across "
+                    f"{len(done['kept_builds'])} build(s)"]
 
-        node = str(prefs.node_executable or "node").strip() or "node"
-        # `--only-targets` is required, not optional politeness: without it the
-        # tool checks EVERY target it can see and refuses to prune when one is
-        # unreachable, on the grounds that a target it cannot read is not a
-        # target with no files. Sound reasoning, and it means a scoped prune
-        # has to say so out loud.
-        command = [node, str(script), "--target", "eve", "--only-targets",
-                   "--keep-latest", str(int(self.keep_latest)),
-                   "--cache", str(_cache_path(prefs)), "--apply"]
-
-        def prune():
-            done = subprocess.run(command, capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace",
-                                  **_spawn_options())
-            if done.returncode != 0:
-                raise ResourceIndexError(
-                    (done.stderr or done.stdout or "prune failed").strip()[:300])
-            return done.stdout.strip().splitlines()[-1:] or ["pruned"]
-
-        _launch_job(context, "prune_cache", prune,
-                    f"Pruning cached builds, keeping the newest {self.keep_latest}")
+        _launch_job(context, "prune_cache", run,
+                    f"Pruning cached builds, keeping the newest {keep}")
         return {"FINISHED"}
 
 
@@ -592,10 +534,6 @@ def _cache_path(prefs) -> Path:
     return Path(bpy.path.abspath(prefs.cache_directory)).expanduser().resolve()
 
 
-def _download_path(prefs) -> Path:
-    return Path(bpy.path.abspath(prefs.download_directory)).expanduser().resolve()
-
-
 def _start_catalog_job(context, refresh: bool) -> None:
     prefs = _prefs(context)
     if not _creator_terms_accepted(prefs):
@@ -624,13 +562,19 @@ def _run_with_cache_stats(worker: Callable[[], Any], cache_root: Path):
 def _hull_record(dna: str) -> dict:
     """The hull record for a DNA, or an empty dict if it cannot be had.
 
+    Carries the decal sets, plane sets, banner sets and area types, so a ship
+    built without it is missing real parts of itself -- which is why it goes
+    through the shared client like everything else. It used to go through a
+    local tools-core checkout and ONLY that, so an artist with nothing but the
+    zip got an empty record on every load.
+
     Returns empty rather than raising: a ship whose areas could not be typed is
     still a ship, and the failure is reported alongside the other assembly
     problems instead of taking the build down with it.
     """
 
+    from . import service_access
     from .core import sof_areas, sof_resolution  # noqa: F401
-    from .core.tools_service import ToolsServiceClient, ToolsServiceError
 
     try:
         hull = sof_resolution.parse(dna).hull
@@ -639,27 +583,15 @@ def _hull_record(dna: str) -> dict:
     if not hull:
         return {}
 
-    # Preferences can be absent -- a script that imports the package rather
-    # than enabling it, or a file reload between the two -- and a missing
-    # setting is not a reason to take a build down.
-    try:
-        prefs = _prefs(bpy.context)
-    except ResourceIndexError:
-        return {}
-    root = str(getattr(prefs, "tools_core_directory", "") or "").strip()
-    if not root:
+    client = service_access.client()
+    if client is None:
         return {}
     try:
-        client = ToolsServiceClient(
-            node_executable=str(prefs.node_executable or "node").strip() or "node",
-            service_script=Path(bpy.path.abspath(root)) / "bin" / "cjs-tools-service.js",
-            cache_root=_cache_path(prefs),
-        )
         # The RESOURCE build. `latest` resolves to two different numbers, one
         # for resources and one for the SDE, and a SOF route handed the SDE
         # build quietly acquires a whole second client build.
-        record = client._request("GET", f"/eve/latest/sof/hulls/{hull}")
-    except (ToolsServiceError, OSError, ValueError) as exc:
+        record = client.request_json("GET", f"/eve/latest/sof/hulls/{hull}")
+    except Exception as exc:
         print(f"[CarbonEngineJS SOF] hull record unavailable for {hull}: {exc}")
         return {}
     return record if isinstance(record, dict) else {}

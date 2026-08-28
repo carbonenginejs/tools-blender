@@ -1,8 +1,10 @@
 """One tools-core client for the panels to share.
 
-The hosted service by default, so an installed add-on needs nothing but the
-zip. A local tools-core checkout is used only when one is configured, which is
-for people working on tools-core itself.
+The hosted service, so an installed add-on needs nothing but the zip -- no
+checkout, no Node, no bundle. `core/tools_service.py` still holds a client for
+a local sidecar, against the day one ships with the tool; nothing reaches it
+today, and nothing should reach it through a preference an artist has to fill
+in.
 """
 
 from __future__ import annotations
@@ -47,46 +49,21 @@ def client(context=None):
 
     dds_reader.DERIVED_DIRECTORY["path"] = (
         str(Path(root).parent / "carbon-blender-derived") if root else None)
-    root = str(getattr(prefs, "tools_core_directory", "") or "").strip()
-    node = str(getattr(prefs, "node_executable", "") or "node").strip() or "node"
     url = service_url(context)
-
-    key = (root, node, url)
-    if _CLIENT["client"] is not None and _CLIENT["key"] == key:
+    if _CLIENT["client"] is not None and _CLIENT["key"] == url:
         return _CLIENT["client"]
 
-    made = _local(root, node) if root else None
-    if made is None:
-        from .core.tools_remote import RemoteToolsClient
+    from .core.tools_remote import RemoteToolsClient
 
-        try:
-            made = RemoteToolsClient(url)
-        except Exception as exc:
-            print(f"[CarbonEngineJS SOF] service unavailable: {exc}")
-            return None
+    try:
+        made = RemoteToolsClient(url)
+    except Exception as exc:
+        print(f"[CarbonEngineJS SOF] service unavailable: {exc}")
+        return None
 
     _CLIENT["client"] = made
-    _CLIENT["key"] = key
+    _CLIENT["key"] = url
     return made
-
-
-def _local(root: str, node: str):
-    """A client for a local checkout, or None when it cannot be built."""
-
-    from .core.tools_service import ToolsServiceClient
-
-    script = Path(bpy.path.abspath(root)) / "bin" / "cjs-tools-service.js"
-    if not script.is_file():
-        return None
-    try:
-        return ToolsServiceClient(
-            node_executable=node,
-            service_script=script,
-            cache_root=Path(bpy.path.abspath(root)),
-        )
-    except Exception as exc:
-        print(f"[CarbonEngineJS SOF] local tools-core unavailable: {exc}")
-        return None
 
 
 def forget():
