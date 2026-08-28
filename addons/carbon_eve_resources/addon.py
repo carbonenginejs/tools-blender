@@ -142,6 +142,16 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         subtype="DIR_PATH",
         default="",
     )
+    #: Blender 4 and 5 default to AgX, which is a FILM look: it desaturates
+    #: and rolls colour off on purpose. EVE's textures and material colours are
+    #: authored to be shown as they are, so a hull came out washed out and its
+    #: blacks came out grey next to the same ship in the game.
+    standard_view_transform: BoolProperty(
+        name="Show colours as authored",
+        description="Set the scene's view transform to Standard when a ship "
+                    "loads. Blender's AgX default desaturates EVE's colours",
+        default=True,
+    )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -166,6 +176,7 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         else:
             row.operator(EVE_RESOURCE_OT_accept_creator_terms.bl_idname, text="Accept")
         layout.prop(self, "cache_directory")
+        layout.prop(self, "standard_view_transform")
 
         row = layout.row(align=True)
         row.prop(self, "use_local_source")
@@ -615,6 +626,31 @@ def _hull_record(dna: str) -> dict:
     return record if isinstance(record, dict) else {}
 
 
+def apply_view_transform(prefs) -> bool:
+    """Shows colours as authored rather than through a film look.
+
+    Blender 4 and 5 default to AgX, which desaturates and rolls off highlights
+    by design. Against the same ship in the game it reads as washed out, with
+    grey where the blacks should be. Standard shows what the textures and the
+    SOF material colours actually say.
+
+    The scene's setting, so it is a preference rather than something done to
+    somebody's scene behind their back.
+    """
+
+    if not getattr(prefs, "standard_view_transform", False):
+        return False
+    try:
+        settings = bpy.context.scene.view_settings
+        if settings.view_transform != "Standard":
+            settings.view_transform = "Standard"
+            return True
+    except (AttributeError, TypeError) as exc:
+        # A different OCIO config may not offer it under that name.
+        print(f"[CarbonEngineJS SOF] view transform unchanged: {exc}")
+    return False
+
+
 def _build_fetched_ship(document, resources, problems) -> str:
     """Builds a ship from a fetched document and its cached files."""
 
@@ -625,6 +661,8 @@ def _build_fetched_ship(document, resources, problems) -> str:
 
     dna = str(document.get("dna") or "")
     hull_record = _hull_record(dna)
+    if apply_view_transform(_prefs(bpy.context)):
+        print("  view transform set to Standard; AgX desaturates EVE's colours")
     problems = list(problems)
 
     # `build_ship` reads a document from a path and resources from a manifest
