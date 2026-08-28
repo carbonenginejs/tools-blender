@@ -18,13 +18,10 @@ from bpy.props import (
     PointerProperty,
     StringProperty,
 )
-from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup, UIList
+from bpy.types import AddonPreferences, Operator, PropertyGroup, UIList
 
 from .core.resource_index import (
-    BrowserEntry,
     CacheStats,
-    FetchResult,
-    LATEST_BUILD_CHECK_INTERVAL_SECONDS,
     ResourceCatalog,
     ResourceIndexError,
     clear_payload_cache,
@@ -33,7 +30,7 @@ from .core.resource_index import (
     payload_cache_stats,
     safe_join,
 )
-from .core.sof_builder import BundleBuild, SofBuilderError, build_bundle, normalize_dna
+from .core.sof_builder import SofBuilderError, normalize_dna
 from .core.sof_document import SofBundle, SofDocumentError, load_sof_bundle
 
 
@@ -65,7 +62,6 @@ CREATOR_TERMS_ACCEPTANCE_ID = "eve-content-creation-terms-2024-08-07"
 _catalog: Optional[ResourceCatalog] = None
 _job: Optional["_BackgroundJob"] = None
 _registered = False
-_last_row_click: Optional[tuple[str, float]] = None
 _suppress_selection_actions = False
 _preview_collection = None
 _cache_stats_loaded = False
@@ -80,11 +76,14 @@ def _default_cache_directory() -> str:
 
 
 def _default_download_directory() -> str:
+    """Default for `download_directory`.
+
+    Still here because the property is: its readers are the browser's download
+    operators, which are unreachable but not yet removed. Removing the default
+    without them left the add-on unable to register at all.
+    """
+
     return str(Path.home() / "Downloads" / "EVE Resources")
-
-
-def _default_bundle_directory() -> str:
-    return str(Path.home() / "Downloads" / "EVE Resources" / "SOF Bundles")
 
 
 def _detail_filter_updated(self, context) -> None:
@@ -145,12 +144,6 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         subtype="FILE_PATH",
         default="",
     )
-    bundle_directory: StringProperty(
-        name="SOF bundles",
-        description="Where DNA builds are written; each DNA gets its own folder",
-        subtype="DIR_PATH",
-        default=_default_bundle_directory(),
-    )
     #: An optional folder of hand-authored files, laid out by LOGICAL path --
     #: `dx9/model/ship/.../gb2_t1_a.tga` -- so a person can drop in their own
     #: textures and geometry without knowing anything about content addressing.
@@ -190,7 +183,14 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         else:
             row.operator(EVE_RESOURCE_OT_accept_creator_terms.bl_idname, text="Accept")
         layout.prop(self, "cache_directory")
-        layout.prop(self, "bundle_directory")
+
+        # Optional, and only for people working on tools-core itself. It is
+        # drawn because Prune shells out to that checkout: without the field a
+        # person could never satisfy the error it reports.
+        advanced = layout.box()
+        advanced.label(text="Local tools-core (optional)", icon="CONSOLE")
+        advanced.prop(self, "tools_core_directory")
+        advanced.prop(self, "node_executable")
         row = layout.row(align=True)
         row.prop(self, "use_local_source")
         local = layout.row()
@@ -1077,31 +1077,6 @@ def _fetch_sof_resources(paths: tuple[str, ...], prefs) -> tuple[dict[str, Path]
     return resolved, missing
 
 
-def _resource_build(default: str = "latest") -> str:
-    """The RESOURCE build number `latest` currently means.
-
-    Two facets share the word `latest` -- resources and the SDE -- and they are
-    different numbers. This asks for the resource one, which is what a bundle
-    is built from.
-
-    Falls back to `latest` when the service cannot be reached: the bundle then
-    lands in the DNA's folder without a build under it, which is honest about
-    not knowing rather than inventing a number.
-    """
-
-    from . import service_access
-
-    client = service_access.client()
-    if client is None:
-        return default
-    try:
-        answer = client.request_json("GET", "/eve/latest/build")
-    except Exception:
-        return default
-    build = str((answer or {}).get("build") or "").strip()
-    return build or default
-
-
 def _hull_record(dna: str) -> dict:
     """The hull record for a DNA, or an empty dict if it cannot be had.
 
@@ -1498,21 +1473,6 @@ def _auto_preview_selected(context) -> None:
         state.status = f"Error: {exc}"
 
 
-def _is_row_double_click(context, key: str) -> bool:
-    global _last_row_click
-    now = time.monotonic()
-    previous = _last_row_click
-    _last_row_click = (key, now)
-    double_click_seconds = max(
-        0.1,
-        float(context.preferences.inputs.mouse_double_click_time) / 1000.0,
-    )
-    if previous is None or previous[0] != key or now - previous[1] > double_click_seconds:
-        return False
-    _last_row_click = None
-    return True
-
-
 def _selected_result(context):
     state = context.window_manager.carbon_eve_resources
     if not state.results or state.active_index < 0 or state.active_index >= len(state.results):
@@ -1653,8 +1613,14 @@ def unregister():
     sof_panels.unregister()
     from . import pattern_controls
     pattern_controls.unregister()
+    # Each on its own. An unhandled failure here aborts the loop, and whatever
+    # is left registered then blocks the next enable -- the settings class is
+    # first in the tuple, so it unregisters LAST and was the one stranded.
     for cls in reversed(classes):
-        bpy.utils.unregister_class(cls)
+        try:
+            bpy.utils.unregister_class(cls)
+        except (ValueError, RuntimeError) as exc:
+            print(f"[CarbonEngineJS] could not unregister {cls.__name__}: {exc}")
 
 
 if __name__ == "__main__":

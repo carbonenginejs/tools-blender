@@ -1790,13 +1790,17 @@ def banner_material(slot, set_index, index, owners=None, cache_directory="",
         variable.name = "v"
         variable.targets[0].id_type = "OBJECT"
         variable.targets[0].id = ship_object
-        variable.targets[0].data_path = '["carbon_ship_activation_strength"]'
+        # Named through SHIP_PROPERTIES, not spelled out. These were the only
+        # two driver targets written as literals, so renaming a ship property
+        # would have broken the banners alone, silently, at driver-evaluation
+        # time rather than with an exception.
+        variable.targets[0].data_path = '["%s"]' % nodes.SHIP_PROPERTIES["activationStrength"][0]
         booster = driver.variables.new()
         booster.name = "b"
         booster.type = "SINGLE_PROP"
         booster.targets[0].id_type = "OBJECT"
         booster.targets[0].id = ship_object
-        booster.targets[0].data_path = '["carbon_preview_banner_scale"]'
+        booster.targets[0].data_path = '["%s"]' % nodes.SHIP_PROPERTIES["previewBannerScale"][0]
         driver.expression = "v * b"
 
     transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
