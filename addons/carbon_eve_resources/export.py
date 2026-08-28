@@ -1,29 +1,23 @@
-"""Handing the files over: readable names, in a folder somebody chose.
+"""Saving a ship as a folder somebody else can open.
 
-Two things people want, and they are not the same thing:
+One button. It writes the model, a `.blend`, and every texture under the name
+the texture actually has, with the blend pointing at them by relative path.
+That folder opens on a machine with no cache, no service and no add-on.
 
-**Save Textures As** puts the cache's files somewhere readable and points the
-scene at them. It skips anything the artist supplied, because that file is
-already theirs, already under a name they can read, and copying it would make
-a second copy that starts drifting from the one they are editing.
-
-**Export Standalone** is the opposite trade on purpose: EVERY texture goes to
-the folder, including the artist's own, and a `.blend` is saved beside them
-with relative paths. That one opens on a machine with no cache, no service and
-no add-on -- which is worth the duplication, because the duplication is the
-point.
+Every texture goes, the artist's own included. A folder that still depends on
+a file sitting in somebody's working tree is not one you can hand over, so the
+duplication here is the feature rather than a cost.
 
 Nothing here writes to the cache, and nothing writes to the artist's folders.
 """
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 
 import bpy
-from bpy.props import BoolProperty, StringProperty
+from bpy.props import StringProperty
 from bpy.types import Operator
 
 from .core import resfile
@@ -44,32 +38,16 @@ def eve_images():
     return found
 
 
-def is_cached(image, cache_root) -> bool:
-    """Whether this image is reading OUR copy rather than the artist's.
+def export_images(folder, *, repoint: bool = True):
+    """Copies the textures out and points the scene at the copies.
 
-    Decided by where the file is, not by what it looks like. A name can be
-    guessed at; a location cannot.
-    """
-
-    if not cache_root:
-        return False
-    try:
-        current = Path(bpy.path.abspath(image.filepath)).resolve()
-        return current.is_relative_to(Path(cache_root).resolve())
-    except (OSError, ValueError):
-        return False
-
-
-def export_images(folder, cache_root, *, everything: bool, repoint: bool = True):
-    """Copies the images out and, optionally, points the scene at the copies.
-
-    Returns `(written, skipped, failed)`. A file already at the destination is
-    counted as written and not copied again, so exporting twice into the same
-    folder is free.
+    Returns `(written, failed)`. A file already at the destination counts as
+    written and is not copied again, so saving twice into the same folder
+    costs nothing and cannot clobber an edit somebody made there.
     """
 
     folder = Path(bpy.path.abspath(str(folder)))
-    written, skipped, failed = [], [], []
+    written, failed = [], []
 
     for image, logical in eve_images():
         source = Path(bpy.path.abspath(image.filepath))
@@ -77,18 +55,8 @@ def export_images(folder, cache_root, *, everything: bool, repoint: bool = True)
         if destination is None:
             failed.append(f"{image.name}: no path to export it under")
             continue
-
-        # Already there is the FIRST question, before whose file it is. After
-        # one export the scene points at the export folder, so asking about
-        # ownership first would report a finished export as "34 of yours,
-        # skipped" -- true, and useless.
-        already = destination.is_file() and destination.stat().st_size > 0
-        if not already and not everything and not is_cached(image, cache_root):
-            # Theirs. They have it, under a name they can already read.
-            skipped.append(image.name)
-            continue
         try:
-            if not already:
+            if not destination.is_file() or destination.stat().st_size == 0:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, destination)
             if repoint:
@@ -97,64 +65,21 @@ def export_images(folder, cache_root, *, everything: bool, repoint: bool = True)
         except OSError as exc:
             failed.append(f"{image.name}: {exc}")
 
-    return written, skipped, failed
+    return written, failed
 
 
-class CARBON_OT_export_textures(Operator):
-    """Copies this scene's EVE textures somewhere readable."""
+class CARBON_OT_save_standalone(Operator):
+    """Writes the model, its blend and its textures into one folder.
 
-    bl_idname = "carbon.eve_export_textures"
-    bl_label = "Save Textures As"
-    bl_description = ("Copy the textures this scene loaded from the cache into "
-                      "a folder, under their real names, and point the scene "
-                      "at the copies. Files you supplied are left alone")
-    bl_options = {"REGISTER"}
+    Standalone is the promise the name makes: nothing in that folder points
+    back at the cache, the service, or this add-on.
+    """
 
-    directory: StringProperty(subtype="DIR_PATH")
-    everything: BoolProperty(
-        name="Include my own files",
-        description="Also copy textures that came from your local folders. Off "
-                    "by default: you already have those",
-        default=False,
-    )
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
-
-    def execute(self, context):
-        from . import addon
-
-        try:
-            cache_root = str(addon._cache_path(addon._prefs(context)))
-        except Exception:
-            cache_root = ""
-
-        written, skipped, failed = export_images(
-            self.directory, cache_root, everything=self.everything)
-        for problem in failed:
-            print(f"[CarbonEngineJS SOF] export: {problem}")
-        if not written and not skipped:
-            self.report({"WARNING"}, "No EVE textures in this scene to export")
-            return {"CANCELLED"}
-
-        message = f"Exported {len(written)} texture(s) to {self.directory}"
-        if skipped:
-            message += f"; {len(skipped)} already yours, left where they are"
-        if failed:
-            message += f"; {len(failed)} failed, see the console"
-        self.report({"INFO"}, message)
-        return {"FINISHED"}
-
-
-class CARBON_OT_export_standalone(Operator):
-    """Writes a folder that opens anywhere, with no cache and no add-on."""
-
-    bl_idname = "carbon.eve_export_standalone"
-    bl_label = "Export Standalone"
-    bl_description = ("Write every texture and a .blend into one folder, with "
-                      "relative paths, so it opens on a machine without this "
-                      "add-on or the cache")
+    bl_idname = "carbon.eve_save_standalone"
+    bl_label = "Save as Standalone"
+    bl_description = ("Write the model, a .blend and every texture under its "
+                      "real name into one folder, with relative paths, so it "
+                      "opens without this add-on or the cache")
     bl_options = {"REGISTER"}
 
     directory: StringProperty(subtype="DIR_PATH")
@@ -165,28 +90,24 @@ class CARBON_OT_export_standalone(Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        from . import addon
-
-        try:
-            cache_root = str(addon._cache_path(addon._prefs(context)))
-        except Exception:
-            cache_root = ""
-
         folder = Path(bpy.path.abspath(self.directory))
-        # Everything, the artist's files included. A standalone folder that
-        # depends on a file still sitting in somebody's working tree is not
-        # standalone.
-        written, _, failed = export_images(folder, cache_root, everything=True)
-        for problem in failed:
-            print(f"[CarbonEngineJS SOF] export: {problem}")
-
         name = self.filename or "ship.blend"
         if not name.lower().endswith(".blend"):
             name += ".blend"
         target = folder / name
+
         try:
             folder.mkdir(parents=True, exist_ok=True)
-            bpy.ops.wm.save_as_mainfile(filepath=str(target), copy=False)
+        except OSError as exc:
+            self.report({"ERROR"}, f"Could not use {folder}: {exc}")
+            return {"CANCELLED"}
+
+        written, failed = export_images(folder)
+        for problem in failed:
+            print(f"[CarbonEngineJS SOF] save: {problem}")
+
+        try:
+            bpy.ops.wm.save_as_mainfile(filepath=str(target))
             # Relative AFTER saving: there is no "relative to" until the blend
             # has a location of its own.
             bpy.ops.file.make_paths_relative()
@@ -195,14 +116,14 @@ class CARBON_OT_export_standalone(Operator):
             self.report({"ERROR"}, f"Could not write {target.name}: {exc}")
             return {"CANCELLED"}
 
-        message = f"Wrote {target.name} and {len(written)} texture(s) to {folder}"
+        message = f"Saved {target.name} and {len(written)} texture(s) to {folder}"
         if failed:
             message += f"; {len(failed)} failed, see the console"
         self.report({"INFO"}, message)
         return {"FINISHED"}
 
 
-CLASSES = (CARBON_OT_export_textures, CARBON_OT_export_standalone)
+CLASSES = (CARBON_OT_save_standalone,)
 
 
 def register():

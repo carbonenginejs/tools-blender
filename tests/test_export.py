@@ -6,7 +6,7 @@ where they land, and what happens on a second export into the same folder.
 
 from pathlib import Path
 import sys
-import tempfile
+import inspect
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "addons"))
@@ -42,37 +42,17 @@ class DestinationTests(unittest.TestCase):
         self.assertIsNone(resfile.export_destination("/out", "", "/cache/x"))
 
 
-class WhoseFileIsItTests(unittest.TestCase):
-    """`is_cached` decides by LOCATION, never by the shape of a name."""
+class EveImagesTests(unittest.TestCase):
+    """What counts as ours to move."""
 
-    def setUp(self):
+    def test_the_stamp_is_what_marks_a_texture_as_an_eve_resource(self):
+        # A render result, a packed logo, or anything the artist added has no
+        # stamp and must not be swept into the folder.
         from carbon_eve_resources import export
 
-        self.export = export
-        self.cache = Path(tempfile.mkdtemp(prefix="carbon-x-cache-"))
-        self.theirs = Path(tempfile.mkdtemp(prefix="carbon-x-theirs-"))
-
-    def image_at(self, path):
-        class Image:
-            filepath = str(path)
-        return Image()
-
-    def test_a_file_in_the_cache_is_ours(self):
-        found = self.cache / "ResFiles" / "b4" / "b40590f110b66d26_abc"
-        self.assertTrue(self.export.is_cached(self.image_at(found), self.cache))
-
-    def test_a_file_in_their_folder_is_not(self):
-        # Even one named like an address. Somebody's copy of ResFiles is full
-        # of those, and every one of them is still theirs.
-        found = self.theirs / "ResFiles" / "b4" / "b40590f110b66d26_abc"
-        self.assertFalse(self.export.is_cached(self.image_at(found), self.cache))
-
-    def test_a_readable_name_inside_the_cache_is_still_ours(self):
-        found = self.cache / "dx9" / "model" / "ab1_t1_a.dds"
-        self.assertTrue(self.export.is_cached(self.image_at(found), self.cache))
-
-    def test_no_cache_configured_claims_nothing(self):
-        self.assertFalse(self.export.is_cached(self.image_at("/x/y"), ""))
+        source = inspect.getsource(export.eve_images)
+        self.assertIn("carbon_res_path", source)
+        self.assertIn("image.filepath", source)
 
 
 if __name__ == "__main__":

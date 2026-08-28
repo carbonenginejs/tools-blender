@@ -132,16 +132,11 @@ class CARBON_PT_sidebar_about(Panel):
         paths.prop(prefs, "local_source", text="")
         paths.prop(prefs, "local_resfiles", text="")
 
-        # Handing the files over. Two different trades, so two buttons rather
-        # than one with a surprising option: the first keeps ONE copy of every
-        # file, the second deliberately duplicates so the folder stands alone.
+        # Handing the ship over: model, blend and textures in one folder.
         from . import export as export_module
 
-        give = self.layout.row(align=True)
-        give.operator(export_module.CARBON_OT_export_textures.bl_idname,
-                      text="Save Textures As", icon="IMAGE_DATA")
-        give.operator(export_module.CARBON_OT_export_standalone.bl_idname,
-                      text="Standalone", icon="PACKAGE")
+        self.layout.operator(export_module.CARBON_OT_save_standalone.bl_idname,
+                             icon="PACKAGE")
 
 
 class CARBON_PT_sidebar_dna(Panel):
