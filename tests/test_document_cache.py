@@ -45,14 +45,21 @@ class PathTests(unittest.TestCase):
         path = sof_fetch.document_path("/c", DNA + ":pattern?a;b;c", "1")
         self.assertNotRegex(path.name, r"[?;:]")
 
-    def test_a_long_dna_is_hashed_rather_than_truncated(self):
-        # Truncating would collide two ships differing only at the end.
-        long_dna = DNA + ":material?" + ";".join(f"material_{n}" for n in range(30))
-        other = long_dna + "_x"
-        first = sof_fetch.document_path("/c", long_dna, "1")
-        second = sof_fetch.document_path("/c", other, "1")
-        self.assertNotEqual(first.name, second.name)
-        self.assertLess(len(first.name), 120)
+    def test_the_file_is_named_for_the_dna(self):
+        # No generated id: the DNA is already unique and already readable.
+        path = sof_fetch.document_path("/c", DNA, "1")
+        self.assertEqual(path.name, "mf4_t1_minmatarbase_minmatar.json.gz")
+
+    def test_a_skinned_dna_keeps_all_of_itself_in_the_name(self):
+        # Two skins on one hull often differ only in the last material, so
+        # nothing may be dropped from the end.
+        skinned = ("ab3_t1:amarrbase:amarr:mesh?blue_darknavy_enamel;"
+                   "grey_darksteel_brushed;black_gunmetal_metallic;orange_bright_matt")
+        other = skinned.replace("orange_bright_matt", "orange_bright_gloss")
+        first = sof_fetch.document_path("/c", skinned, "1").name
+        second = sof_fetch.document_path("/c", other, "1").name
+        self.assertNotEqual(first, second)
+        self.assertIn("orange_bright_matt", first)
 
 
 class DigestTests(unittest.TestCase):
@@ -149,3 +156,40 @@ class OfflineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LongPathTests(unittest.TestCase):
+    """Windows' MAX_PATH is 260, and a skinned DNA reaches it."""
+
+    SKINNED = ("ab3_t1:amarrbase:amarr:mesh?blue_darknavy_enamel;"
+               "grey_darksteel_brushed;black_gunmetal_metallic;"
+               "orange_bright_matt:respathinsert?amarr")
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="carbon-doc-"))
+
+    def test_the_prefix_is_the_four_characters_it_should_be(self):
+        # Every other spelling of it collapses into something that silently
+        # does nothing, so this is worth asserting rather than assuming.
+        # chr(92) is a backslash. Spelled that way because a literal here is
+        # subject to exactly the escaping mistake the test exists to catch.
+        self.assertEqual(list(sof_fetch.LONG_PREFIX),
+                         [chr(92), chr(92), "?", chr(92)])
+
+    def test_a_long_path_round_trips_through_the_store(self):
+        # Named for the whole DNA, no truncation and no generated id: the
+        # limit is lifted rather than the name shortened.
+        path = sof_fetch.document_path(self.root, self.SKINNED, "3482594")
+        self.assertIn("orange_bright_matt", path.name)
+        sof_fetch.write_document_cache(path, DOCUMENT, dna=self.SKINNED,
+                                       build="3482594")
+        self.assertEqual(sof_fetch.read_document(path), DOCUMENT)
+
+    def test_a_stored_long_path_is_found_again(self):
+        # `is_file` cannot see past MAX_PATH either, so a document written
+        # successfully was still refetched every time.
+        client = _Client()
+        for _ in range(2):
+            sof_fetch.document_for(self.SKINNED, client, build="3482594",
+                                   cache_root=self.root)
+        self.assertEqual(client.calls, 1)

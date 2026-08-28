@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import gzip
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Callable, Mapping, Optional
@@ -39,6 +40,31 @@ class FetchError(RuntimeError):
     """Raised when a ship cannot be fetched."""
 
 
+#: Windows' extended-length prefix. Written as a raw string because it is four
+#: characters -- backslash, backslash, question mark, backslash -- and every
+#: other spelling of it collapses to something that silently does nothing.
+LONG_PREFIX = r"\\?" + "\\"
+
+
+def long_path(path) -> str:
+    """A path Windows will accept however long it is.
+
+    `MAX_PATH` is 260 and a skinned DNA reaches it: the document for
+    `ab3_t1:amarrbase:amarr:mesh?...:respathinsert?amarr` lands at 261
+    characters under the default cache root, and the write fails.
+
+    The extended-length prefix lifts that to 32767. It applies to absolute
+    Windows paths only, needs backslashes throughout, and is a no-op
+    everywhere else -- which is why the name stays the DNA rather than becoming
+    a generated id nobody can read.
+    """
+
+    text = str(Path(path).resolve())
+    if os.name == "nt" and not text.startswith(LONG_PREFIX):
+        return LONG_PREFIX + text.replace("/", "\\")
+    return text
+
+
 def document_path(cache_root, dna: str, build: str, target: str = "eve") -> Path:
     """Where one DNA's document is kept.
 
@@ -46,15 +72,13 @@ def document_path(cache_root, dna: str, build: str, target: str = "eve") -> Path
     than serving the old one forever. Gzipped: a document is 259KB of JSON and
     39KB compressed, and a person may accumulate hundreds.
 
-    A DNA can carry commands, `;` and `?`, so the name is sanitised. A long one
-    is replaced by a hash of itself -- a DNA with several commands exceeds what
-    a filesystem will take, and truncating would collide two ships that differ
-    only at the end.
+    Named for the DNA itself, with the punctuation a filesystem will not take
+    replaced. No generated id: the DNA is already unique and already readable,
+    and a file called `ab3_t1_amarrbase_amarr_mesh_blue_darknavy_enamel...` can
+    be found by eye, which one called `cb04a41f...` cannot.
     """
 
     safe = re.sub(r"[^a-z0-9_.-]+", "_", str(dna or "").strip().lower()).strip("_")
-    if len(safe) > 100:
-        safe = f"{safe[:60]}-{hashlib.sha1(str(dna).encode('utf-8')).hexdigest()[:16]}"
     return Path(cache_root) / "documents" / str(build) / target / f"{safe}.json.gz"
 
 
@@ -82,7 +106,7 @@ def document_digest(document) -> str:
 def read_document(path, *, verify: bool = True) -> dict:
     """A stored document, checked against its own digest."""
 
-    with gzip.open(str(path), "rt", encoding="utf-8") as handle:
+    with gzip.open(long_path(path), "rt", encoding="utf-8") as handle:
         envelope = json.load(handle)
     if not isinstance(envelope, Mapping) or envelope.get("envelope") != DOCUMENT_ENVELOPE:
         raise FetchError(f"{path}: not a stored document")
@@ -101,7 +125,7 @@ def read_envelope(path) -> dict:
     259KB of JSON to find out.
     """
 
-    with gzip.open(str(path), "rt", encoding="utf-8") as handle:
+    with gzip.open(long_path(path), "rt", encoding="utf-8") as handle:
         envelope = json.load(handle)
     if not isinstance(envelope, Mapping):
         raise FetchError(f"{path}: not a stored document")
@@ -117,7 +141,7 @@ def write_document_cache(path, document, *, dna: str = "", build: str = "",
     """
 
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(long_path(path.parent), exist_ok=True)
     digest = document_digest(document)
     envelope = {
         "envelope": DOCUMENT_ENVELOPE,
@@ -129,9 +153,9 @@ def write_document_cache(path, document, *, dna: str = "", build: str = "",
         "document": document,
     }
     partial = path.with_name(path.name + ".part")
-    with gzip.open(str(partial), "wt", encoding="utf-8", compresslevel=9) as handle:
+    with gzip.open(long_path(partial), "wt", encoding="utf-8", compresslevel=9) as handle:
         json.dump(envelope, handle, separators=(",", ":"))
-    partial.replace(path)
+    os.replace(long_path(partial), long_path(path))
     return digest
 
 
@@ -150,7 +174,9 @@ def document_for(dna: str, client, *, build: str = "latest",
         raise FetchError("a DNA is required")
 
     cached = document_path(cache_root, wanted, build, target) if cache_root else None
-    if cached is not None and cached.is_file():
+    # `is_file` cannot see a path over MAX_PATH either, so the check goes
+    # through the same prefix the read does.
+    if cached is not None and os.path.isfile(long_path(cached)):
         try:
             return read_document(cached)
         except (OSError, ValueError, FetchError):
