@@ -127,9 +127,10 @@ class CARBON_PT_sidebar_about(Panel):
         # Preferences: it is a working choice, toggled while working.
         local = self.layout.row(align=True)
         local.prop(prefs, "use_local_source", text="")
-        path = local.row()
-        path.enabled = prefs.use_local_source
-        path.prop(prefs, "local_source", text="")
+        paths = local.column(align=True)
+        paths.enabled = prefs.use_local_source
+        paths.prop(prefs, "local_source", text="")
+        paths.prop(prefs, "local_resfiles", text="")
 
 
 class CARBON_PT_sidebar_dna(Panel):

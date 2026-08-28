@@ -287,7 +287,7 @@ def local_at_address(root, location: str):
 
 def fetch_resource(logical_path: str, client, cache_root, *, build: str,
                    target: str = "eve", opener=urlopen, index=None,
-                   local_root=None, sources=None) -> Path:
+                   local_root=None, resfiles_root=None, sources=None) -> Path:
     """One resource's bytes: cached if present, else fetched from CCP.
 
     The INDEX answers where a file lives, so nothing is asked per file. Falling
@@ -296,11 +296,15 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
     """
 
     # In order:
-    #   1. the optional folder at the resource's own cache address
-    #   2. the optional folder by logical path, .tga then .png then .dds
+    #   1. local ResFiles, laid out the way the cache is
+    #   2. the authored folder, by logical path, .tga then .png then .dds
     #   3. the cache under that same human-readable layout
-    #   4. the cache's content-addressed store, where downloads land
+    #   4. the cache's own store, where downloads land
     #   5. the index, and CCP
+    #
+    # Both local folders are READ ONLY. Nothing is ever written into either --
+    # a texture translated out of one goes to our cache, beside where the
+    # source WOULD live, not beside the file it came from.
     def note(kind, path):
         # Where each file CAME from, so a load can say so. Every load reads the
         # same fifty names aloud, and a person watching that cannot tell a
@@ -313,7 +317,7 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
     # the service to resolve is the fallback for a path it has no row for.
     row = resindex.locate(index, logical_path) if index else None
 
-    provided = local_at_address(local_root, row)
+    provided = local_at_address(resfiles_root, row)
     if provided is None:
         provided = local_file(local_root, logical_path)
     if provided is not None:
@@ -399,7 +403,7 @@ def download(source_url: str, destination: Path, *, opener=urlopen,
 def fetch_ship(dna: str, client, cache_root, *, build: str = "",
                target: str = "eve", progress: Optional[Callable] = None,
                opener=urlopen, cancelled: Optional[Callable] = None,
-               local_root=None) -> tuple:
+               local_root=None, resfiles_root=None) -> tuple:
     """`(document, {res path: local file})` for one DNA.
 
     A resource that cannot be fetched is left OUT of the map rather than
@@ -432,7 +436,9 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
     def one(path):
         return str(fetch_resource(path, client, cache_root, build=exact,
                                   target=target, opener=opener, index=index,
-                                  local_root=local_root, sources=sources))
+                                  local_root=local_root,
+                                  resfiles_root=resfiles_root,
+                                  sources=sources))
 
     # In parallel. A ship is fifty files, each a resolve and a download, and
     # serially that is over two minutes of a person watching nothing happen.

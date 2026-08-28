@@ -263,16 +263,48 @@ def to_rgba(data: bytes):
             decode_bc7(data, header.width, header.height, header.data_offset))
 
 
-def derived_path(source: Path) -> Path:
-    """Where one decoded texture is kept: beside its source, as a PNG.
+#: Our own cache root, and the local folders we may READ from. Set by
+#: `service_access` when the client is built.
+#:
+#: A translation is written to the cache and nowhere else. The local folders
+#: are somebody's source material -- an authored tree, or a copy of ResFiles --
+#: and writing a decoded PNG into either would put our output in their input.
+ROOTS = {"cache": None, "local": None, "resfiles": None}
 
-    Same folder, same name, different extension. The source is addressed by
-    its CONTENT, so the decoded copy inherits that for free -- every hull using
-    that texture finds the same decode, and cache pruning removes it with the
-    build it belongs to instead of leaving it behind in a folder of its own.
+
+def derived_path(source: Path) -> Path:
+    """Where one decoded texture is kept. Always inside our cache.
+
+    Beside its source when the source is already ours: same folder, same name,
+    `.png`. The source is addressed by its CONTENT, so the decode inherits
+    that -- shared by every hull using that texture, and pruned with the build
+    it belongs to.
+
+    A source read from a local folder is mirrored into the cache at the same
+    relative position, so the decode still lands somewhere stable and the
+    folder it came from is left exactly as it was found.
     """
 
-    return source.with_suffix(".png")
+    source = Path(source)
+    cache = ROOTS.get("cache")
+    if not cache:
+        # Nothing configured to write to. Beside the source is the old
+        # behaviour and only ever applies to our own cache in practice, but
+        # the caller handles a decode it cannot store.
+        return source.with_suffix(".png")
+
+    cache = Path(cache)
+    for root in (cache, ROOTS.get("resfiles"), ROOTS.get("local")):
+        if not root:
+            continue
+        try:
+            relative = source.relative_to(Path(root))
+        except ValueError:
+            continue
+        return (cache / relative).with_suffix(".png")
+
+    # Somewhere else entirely: keep it by name rather than refusing to decode.
+    return cache / "translated" / (source.name + ".png")
 
 
 def load_image(path, name: str = ""):

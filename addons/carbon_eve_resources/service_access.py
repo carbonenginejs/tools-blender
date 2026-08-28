@@ -40,6 +40,20 @@ def client(context=None):
     root = bpy.path.abspath(cache) if cache else None
     sof_lookup.CACHE_ROOT["path"] = root
 
+    # Everything this add-on WRITES goes in the cache. The two local folders
+    # are read-only source material, and the decoder needs to know which is
+    # which so a translated texture never lands in one of them.
+    from .dds import reader as dds_reader
+
+    def folder(name):
+        value = str(getattr(prefs, name, "") or "").strip()
+        enabled = bool(getattr(prefs, "use_local_source", False))
+        return bpy.path.abspath(value) if value and enabled else None
+
+    dds_reader.ROOTS["cache"] = root
+    dds_reader.ROOTS["local"] = folder("local_source")
+    dds_reader.ROOTS["resfiles"] = folder("local_resfiles")
+
     url = service_url(context)
     if _CLIENT["client"] is not None and _CLIENT["key"] == url:
         return _CLIENT["client"]

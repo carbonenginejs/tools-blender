@@ -161,3 +161,58 @@ class LocalAtCacheAddressTests(unittest.TestCase):
             sof_fetch.local_at_address(self.root, self.LOCATION))
         self.assertIsNone(sof_fetch.local_at_address(None, self.LOCATION))
         self.assertIsNone(sof_fetch.local_at_address(self.root, ""))
+
+
+class TranslationsStayInTheCacheTests(unittest.TestCase):
+    """The one rule the two local folders have in common: they are READ ONLY.
+
+    They are somebody's source material -- an authored tree, or a copy of
+    ResFiles. A decoded PNG written into either would put our output in their
+    input, where it would be backed up, synced and eventually mistaken for
+    something they made.
+    """
+
+    def setUp(self):
+        from carbon_eve_resources.dds import reader
+
+        self.reader = reader
+        self.previous = dict(reader.ROOTS)
+        self.cache = Path(tempfile.mkdtemp(prefix="carbon-cache-"))
+        self.local = Path(tempfile.mkdtemp(prefix="carbon-authored-"))
+        self.resfiles = Path(tempfile.mkdtemp(prefix="carbon-resfiles-"))
+        reader.ROOTS.update({"cache": str(self.cache), "local": str(self.local),
+                             "resfiles": str(self.resfiles)})
+
+    def tearDown(self):
+        self.reader.ROOTS.clear()
+        self.reader.ROOTS.update(self.previous)
+
+    def test_a_cache_source_decodes_beside_itself(self):
+        source = self.cache / "ResFiles" / "b4" / "b40590f110b66d26_abc"
+        found = self.reader.derived_path(source)
+        self.assertEqual(found, source.with_suffix(".png"))
+
+    def test_a_local_resfiles_source_decodes_into_the_cache(self):
+        source = self.resfiles / "ResFiles" / "b4" / "b40590f110b66d26_abc"
+        found = self.reader.derived_path(source)
+        self.assertTrue(str(found).startswith(str(self.cache)))
+        self.assertEqual(found.relative_to(self.cache),
+                         Path("ResFiles/b4/b40590f110b66d26_abc.png"))
+
+    def test_an_authored_source_decodes_into_the_cache(self):
+        source = self.local / "dx9" / "model" / "ship" / "gb2_t1_a.dds"
+        found = self.reader.derived_path(source)
+        self.assertTrue(str(found).startswith(str(self.cache)))
+        self.assertEqual(found.relative_to(self.cache),
+                         Path("dx9/model/ship/gb2_t1_a.png"))
+
+    def test_nothing_lands_in_either_local_folder(self):
+        # The rule stated as a rule, so it fails on ANY future path that
+        # would put a translation in somebody else's tree.
+        for source in (self.local / "a" / "b.dds",
+                       self.resfiles / "ResFiles" / "aa" / "name",
+                       Path("/elsewhere/entirely/thing.dds")):
+            found = self.reader.derived_path(source)
+            self.assertFalse(str(found).startswith(str(self.local)), source)
+            self.assertFalse(str(found).startswith(str(self.resfiles)), source)
+            self.assertTrue(str(found).startswith(str(self.cache)), source)

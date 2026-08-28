@@ -129,6 +129,19 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         subtype="DIR_PATH",
         default="",
     )
+    #: The other shape a local folder comes in: somebody's ResFiles, laid out
+    #: the way the cache is. Kept separate from the authored folder because
+    #: they are addressed differently and a person has one, the other, or both.
+    #:
+    #: Both are READ ONLY. Anything translated out of them is written to our
+    #: own cache -- never beside the file it came from.
+    local_resfiles: StringProperty(
+        name="Local ResFiles",
+        description="Folder laid out like the cache (ResFiles/<shard>/<name>), "
+                    "read before downloading. Never written to",
+        subtype="DIR_PATH",
+        default="",
+    )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -156,9 +169,10 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
 
         row = layout.row(align=True)
         row.prop(self, "use_local_source")
-        local = layout.row()
+        local = layout.column()
         local.enabled = self.use_local_source
         local.prop(self, "local_source")
+        local.prop(self, "local_resfiles")
 
 
 class EVE_RESOURCE_OT_open_creator_terms(Operator):
@@ -376,12 +390,16 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
 
         local_root = (bpy.path.abspath(prefs.local_source)
                       if prefs.use_local_source and prefs.local_source else None)
+        resfiles_root = (bpy.path.abspath(prefs.local_resfiles)
+                         if prefs.use_local_source and prefs.local_resfiles
+                         else None)
 
         def fetch():
             return sof_fetch.fetch_ship(dna, client, cache_root,
                                         progress=_set_progress,
                                         cancelled=_job_cancelled,
-                                        local_root=local_root)
+                                        local_root=local_root,
+                                        resfiles_root=resfiles_root)
 
         _launch_job(context, "sof_fetch",
                     lambda: _run_with_cache_stats(fetch, cache_root),
