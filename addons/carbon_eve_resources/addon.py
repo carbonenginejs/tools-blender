@@ -448,9 +448,22 @@ def _prepare_texture(logical_path, local_file):
 
     if not str(logical_path).lower().endswith(".dds"):
         return None
-    from .dds import reader
+    from .dds import reader, worker
 
-    return reader.decode_to_png(local_file)
+    destination = reader.derived_path(Path(local_file))
+    if destination.is_file() and destination.stat().st_size > 0:
+        return destination
+
+    # A CHILD PROCESS, not this one. A thread was not enough: with eight
+    # decode threads running, Blender's main thread got 9.6% of its idle
+    # ticks and stalled for a third of a second at a time, because pure
+    # Python holds the GIL. Waiting on a child releases it.
+    if worker.decode(local_file, destination):
+        return destination
+
+    # No interpreter, or the child failed. In-process is slow and rude, but a
+    # texture that does not arrive is worse than one that arrives late.
+    return reader.decode_to_png(local_file, destination)
 
 
 class EVE_RESOURCE_OT_refresh_cache_stats(Operator):
