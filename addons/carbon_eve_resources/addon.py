@@ -20,7 +20,7 @@ from bpy.props import (
 )
 from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup, UIList
 
-from .resource_index import (
+from .core.resource_index import (
     BrowserEntry,
     CacheStats,
     FetchResult,
@@ -33,8 +33,8 @@ from .resource_index import (
     payload_cache_stats,
     safe_join,
 )
-from .sof_builder import BundleBuild, SofBuilderError, build_bundle, normalize_dna
-from .sof_document import SofBundle, SofDocumentError, load_sof_bundle
+from .core.sof_builder import BundleBuild, SofBuilderError, build_bundle, normalize_dna
+from .core.sof_document import SofBundle, SofDocumentError, load_sof_bundle
 
 
 ADDON_ID = __package__ or "carbon_eve_resources"
@@ -151,6 +151,21 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         subtype="DIR_PATH",
         default=_default_bundle_directory(),
     )
+    #: An optional folder of hand-authored files, laid out by LOGICAL path --
+    #: `dx9/model/ship/.../gb2_t1_a.tga` -- so a person can drop in their own
+    #: textures and geometry without knowing anything about content addressing.
+    use_local_source: BoolProperty(
+        name="Use local files",
+        description="Look in a local folder before the cache or CCP",
+        default=False,
+    )
+    local_source: StringProperty(
+        name="Local files",
+        description="Folder of hand-authored resources, laid out by logical "
+                    "path. Textures are taken as .tga first, then .dds",
+        subtype="DIR_PATH",
+        default="",
+    )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -176,6 +191,11 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
             row.operator(EVE_RESOURCE_OT_accept_creator_terms.bl_idname, text="Accept")
         layout.prop(self, "cache_directory")
         layout.prop(self, "bundle_directory")
+        row = layout.row(align=True)
+        row.prop(self, "use_local_source")
+        local = layout.row()
+        local.enabled = self.use_local_source
+        local.prop(self, "local_source")
 
 
 class EVE_RESOURCE_OT_open_creator_terms(Operator):
@@ -760,7 +780,8 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
     def execute(self, context):
         # Fetched, not built. The document comes from the service and the files
         # from CCP, so there is no bundle on disk, no Node and no checkout.
-        from . import service_access, sof_fetch
+        from . import service_access
+        from .core import sof_fetch
 
         state = context.window_manager.carbon_eve_resources
         prefs = _prefs(context)
@@ -774,12 +795,20 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
         if client is None:
             self.report({"ERROR"}, "The CarbonEngineJS service is unreachable")
             return {"CANCELLED"}
+        # Our OWN root, with the same layout beneath it. Game install,
+        # tools-core and this add-on all store
+        # `ResFiles/<shard>/<pathHash>_<md5>`; only the root differs, so a
+        # store can be pointed at any of them and still resolve.
         cache_root = _cache_path(prefs)
+
+        local_root = (bpy.path.abspath(prefs.local_source)
+                      if prefs.use_local_source and prefs.local_source else None)
 
         def fetch():
             return sof_fetch.fetch_ship(dna, client, cache_root,
                                         progress=_set_progress,
-                                        cancelled=_job_cancelled)
+                                        cancelled=_job_cancelled,
+                                        local_root=local_root)
 
         _launch_job(context, "sof_fetch",
                     lambda: _run_with_cache_stats(fetch, cache_root),
@@ -901,7 +930,7 @@ class EVE_RESOURCE_OT_prune_cache(Operator):
     def execute(self, context):
         import subprocess
 
-        from .sof_builder import _spawn_options
+        from .core.sof_builder import _spawn_options
 
         prefs = _prefs(context)
         root = str(prefs.tools_core_directory or "").strip()
@@ -1217,7 +1246,7 @@ def _hull_record(dna: str) -> dict:
     """
 
     from . import sof_areas, sof_resolution  # noqa: F401
-    from .tools_service import ToolsServiceClient, ToolsServiceError
+    from .core.tools_service import ToolsServiceClient, ToolsServiceError
 
     try:
         hull = sof_resolution.parse(dna).hull
@@ -1257,7 +1286,8 @@ def _build_fetched_ship(document, resources, problems) -> str:
 
     import tempfile
 
-    from . import ship as ship_builder, sof_fetch
+    from . import ship as ship_builder
+    from .core import sof_fetch
 
     dna = str(document.get("dna") or "")
     hull_record = _hull_record(dna)

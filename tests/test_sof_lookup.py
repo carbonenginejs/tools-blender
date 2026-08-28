@@ -9,7 +9,7 @@ ADDONS = Path(__file__).resolve().parents[1] / "addons"
 if str(ADDONS) not in sys.path:
     sys.path.insert(0, str(ADDONS))
 
-from carbon_eve_resources import sof_lookup  # noqa: E402
+from carbon_eve_resources.core import sof_lookup  # noqa: E402
 
 
 #: Verbatim shapes from the live routes.
@@ -114,7 +114,9 @@ class LookupTests(unittest.TestCase):
 
     def test_a_skin_supplies_materials_faction_and_respath(self):
         made = sof_lookup.dna_for(24692, 4288, self.client)
-        self.assertIn("material?blue_darknavy_enamel;", made)
+        # `mesh?`, which is what CjsToolSde.BuildSkinDna emits and what live
+        # skins are authored with. The runtime reads it as `material`.
+        self.assertIn("mesh?blue_darknavy_enamel;", made)
         self.assertIn("respathinsert?amarr", made)
         self.assertTrue(made.startswith("ab3_t1:amarrbase:amarr"))
 
@@ -135,7 +137,19 @@ class LookupTests(unittest.TestCase):
     def test_a_capital_none_is_still_an_absence(self):
         # These arrive capitalised. A case-sensitive test read four absences as
         # four overrides and wrote a material command that said nothing.
-        self.assertNotIn("material?", sof_lookup.dna_for(33820, 12618, self.client))
+        made = sof_lookup.dna_for(33820, 12618, self.client)
+        self.assertNotIn("mesh?", made)
+        self.assertNotIn("material?", made)
+
+    def test_pattern_materials_are_read_under_either_spelling(self):
+        # Some rows spell them `customMaterial1`. A reader that knows only
+        # `patternMaterial1` silently drops those skins' patterns.
+        SKIN_SETS["3490"] = dict(SKIN_SETS["3490"])
+        SKIN_SETS["3490"].pop("patternMaterial1")
+        SKIN_SETS["3490"]["customMaterial1"] = "orange_fire_colorshift"
+        sof_lookup.forget()
+        self.assertIn("orange_fire_colorshift",
+                      sof_lookup.dna_for(33820, 12618, self.client))
 
     def test_nothing_is_fetched_twice(self):
         sof_lookup.dna_for(29984, client=self.client)

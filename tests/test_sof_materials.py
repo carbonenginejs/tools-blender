@@ -7,7 +7,7 @@ ADDONS = Path(__file__).resolve().parents[1] / "addons"
 if str(ADDONS) not in sys.path:
     sys.path.insert(0, str(ADDONS))
 
-from carbon_eve_resources import sof_materials  # noqa: E402
+from carbon_eve_resources.core import sof_materials  # noqa: E402
 
 
 #: legion_minmatar's table, verbatim from the live faction route. The sails

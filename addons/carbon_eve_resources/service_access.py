@@ -22,7 +22,7 @@ def _preferences(context):
 
 
 def service_url(context=None) -> str:
-    from .tools_remote import DEFAULT_SERVICE_URL
+    from .core.tools_remote import DEFAULT_SERVICE_URL
 
     prefs = _preferences(context or bpy.context)
     return str(getattr(prefs, "service_url", "") or "").strip() or DEFAULT_SERVICE_URL
@@ -34,10 +34,19 @@ def client(context=None):
     prefs = _preferences(context or bpy.context)
     # The name index is 6.4MB and changes only when EVE does, so it is kept in
     # the cache between sessions rather than downloaded on every start.
-    from . import sof_lookup
+    from .core import sof_lookup
 
     cache = str(getattr(prefs, "cache_directory", "") or "").strip()
-    sof_lookup.CACHE_ROOT["path"] = bpy.path.abspath(cache) if cache else None
+    root = bpy.path.abspath(cache) if cache else None
+    sof_lookup.CACHE_ROOT["path"] = root
+
+    # Anything this add-on DERIVES -- decoded textures, name indexes -- lives
+    # in its own disposable folder. The shared cache holds immutable payloads
+    # and nothing may be written beside them.
+    from .dds import reader as dds_reader
+
+    dds_reader.DERIVED_DIRECTORY["path"] = (
+        str(Path(root).parent / "carbon-blender-derived") if root else None)
     root = str(getattr(prefs, "tools_core_directory", "") or "").strip()
     node = str(getattr(prefs, "node_executable", "") or "node").strip() or "node"
     url = service_url(context)
@@ -48,7 +57,7 @@ def client(context=None):
 
     made = _local(root, node) if root else None
     if made is None:
-        from .tools_remote import RemoteToolsClient
+        from .core.tools_remote import RemoteToolsClient
 
         try:
             made = RemoteToolsClient(url)
@@ -64,7 +73,7 @@ def client(context=None):
 def _local(root: str, node: str):
     """A client for a local checkout, or None when it cannot be built."""
 
-    from .tools_service import ToolsServiceClient
+    from .core.tools_service import ToolsServiceClient
 
     script = Path(bpy.path.abspath(root)) / "bin" / "cjs-tools-service.js"
     if not script.is_file():

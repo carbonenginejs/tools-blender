@@ -47,6 +47,52 @@ CACHE_ROOT = {"path": None}
 NAMES_FILE = "carbon-names-{target}-{build}.json"
 
 
+#: The categories worth offering: 6 Ship, 65 Structure.
+#:
+#: A hull's GRAPHIC is shared by everything modelled on it, so filtering on
+#: "has a graphic" also answers with that hull's blueprints, the NPC entities
+#: flying it and a wreck of it -- all carrying the ship's name.
+#: `docs/contracts/dna-reverse-index.md` is explicit that `published` alone does
+#: not separate them, and the category does.
+DRAWABLE_CATEGORIES = (6, 65)
+
+#: The SDE pages at a thousand rows, and there are ~1610 groups.
+SDE_PAGE = 1000
+
+
+def ship_groups(client=None, *, build: str = "latest", target: str = "eve") -> set:
+    """Group ids whose category is one a person would want to load."""
+
+    key = (target, build, "shipGroups")
+    if key in _CACHE:
+        return _CACHE[key]
+    if client is None:
+        return set()
+
+    found = set()
+    offset = 0
+    while True:
+        try:
+            page = client.request_json(
+                "GET",
+                f"/{target}/{build}/sde/groups?limit={SDE_PAGE}&offset={offset}")
+        except Exception:
+            return set()
+        items = (page or {}).get("items") or []
+        for item in items:
+            payload = item.get("payload") or {}
+            if payload.get("categoryID") in DRAWABLE_CATEGORIES:
+                try:
+                    found.add(int(item.get("id")))
+                except (TypeError, ValueError):
+                    continue
+        offset += len(items)
+        if not items or offset >= int((page or {}).get("rowCount") or 0):
+            break
+    _CACHE[key] = found
+    return found
+
+
 def names(client=None, *, build: str = "latest", target: str = "eve") -> dict:
     """The name index: a lowercased name -> what it can refer to.
 
@@ -73,9 +119,15 @@ def names(client=None, *, build: str = "latest", target: str = "eve") -> dict:
     found = _fetch(client, f"/{target}/{build}/skin/names", key)
     if not isinstance(found, Mapping):
         return {}
-    drawable = {name: entries for name, entries in found.items()
-                if any(entry.get("graphicID") or entry.get("kind") == "skin"
-                       for entry in entries)}
+    groups = ship_groups(client, build=build, target=target)
+    drawable = {}
+    for name, entries in found.items():
+        kept = [entry for entry in entries
+                if entry.get("kind") == "skin"
+                or (entry.get("graphicID")
+                    and (not groups or entry.get("groupID") in groups))]
+        if kept:
+            drawable[name] = kept
     _CACHE[key] = drawable
     if path is not None:
         try:
@@ -244,6 +296,27 @@ def skin_applies(skin_id, type_id, client=None, *, build: str = "latest",
                       if isinstance(value, (int, float))}
 
 
+def _text(record, *names) -> str:
+    """The first of several spellings a field may arrive under."""
+
+    for name in names:
+        value = record.get(name)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _material(record, *names) -> str:
+    """A material name, lowercased, with absence spelled `none`.
+
+    These arrive capitalised -- "None" -- so the comparison has to be made on a
+    normalised value or four absences read as four overrides.
+    """
+
+    found = _text(record, *names).lower()
+    return found or sof_resolution.NONE
+
+
 def dna_for(type_id=0, skin_id=0, client=None, *, build: str = "latest",
             target: str = "eve") -> str:
     """The DNA a type, or a type wearing a skin, is drawn with.
@@ -260,25 +333,31 @@ def dna_for(type_id=0, skin_id=0, client=None, *, build: str = "latest",
     material_set = skin_material_set(skin_id, client, build=build, target=target)
     faction = components["faction"]
     if material_set:
-        # Lowercased before the `none` test: these arrive capitalised.
-        materials = [str(material_set.get(f"material{index}") or sof_resolution.NONE).lower()
+        # Field ALIASES, as `CjsToolSde.BuildSkinDna` reads them. The pattern
+        # materials are spelled `customMaterial1` in some rows, and a reader
+        # that knows only `patternMaterial1` silently drops those skins.
+        materials = [_material(material_set, f"material{index}",
+                               f"material_{index}")
                      for index in (1, 2, 3, 4)]
         if any(value != sof_resolution.NONE for value in materials):
-            commands["material"] = materials
+            # `mesh?`, which is the spelling the canonical builder emits and
+            # what live skins are authored with.
+            commands["mesh"] = materials
 
-        # A skin can repaint with a PATTERN instead of materials.
-        pattern = str(material_set.get("sofPatternName") or "").strip()
-        if pattern:
-            commands["pattern"] = [
-                pattern,
-                str(material_set.get("patternMaterial1") or sof_resolution.NONE).lower(),
-                str(material_set.get("patternMaterial2") or sof_resolution.NONE).lower(),
-            ]
+        pattern = [
+            _material(material_set, "sofPatternName", "sof_pattern_name"),
+            _material(material_set, "patternMaterial1", "pattern_material_1",
+                      "customMaterial1", "custommaterial1"),
+            _material(material_set, "patternMaterial2", "pattern_material_2",
+                      "customMaterial2", "custommaterial2"),
+        ]
+        if any(value != sof_resolution.NONE for value in pattern):
+            commands["pattern"] = pattern
 
-        insert = str(material_set.get("resPathInsert") or "")
+        insert = _text(material_set, "resPathInsert", "res_path_insert")
         if insert:
             commands["respathinsert"] = [insert]
-        faction = str(material_set.get("sofFactionName") or faction)
+        faction = _text(material_set, "sofFactionName", "sof_faction_name") or faction
 
     return sof_resolution.compose([components["hull"]], faction,
                                   components["race"], commands)

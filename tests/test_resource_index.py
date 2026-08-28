@@ -12,7 +12,7 @@ ADDONS = Path(__file__).resolve().parents[1] / "addons"
 if str(ADDONS) not in sys.path:
     sys.path.insert(0, str(ADDONS))
 
-from carbon_eve_resources.resource_index import (  # noqa: E402
+from carbon_eve_resources.core.resource_index import (  # noqa: E402
     APP_BASE_URL,
     INDEX_BASE_URL,
     LATEST_BUILD_CHECK_INTERVAL_SECONDS,

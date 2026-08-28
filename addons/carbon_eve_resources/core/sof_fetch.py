@@ -1,11 +1,13 @@
 """Fetches a ship straight from the service and CCP. No bundle, no Node.
 
     document   GET  /<target>/<build>/sof/dna/<dna>
-    resource   POST /v1/resources/resolve   -> resolution.sourceUrl
-    bytes      GET  sourceUrl               (resources.eveonline.com)
+    where      POST /v1/resources/resolve  -> resolution.sourceUrl
+    bytes      GET  sourceUrl              (resources.eveonline.com)
 
-Files land in the shared cache under their content hash, which is what the
-cache is keyed by anyway, so a texture two ships share is stored once.
+The BYTES come from CCP, not from the service. Files are stored
+content-addressed under `ResFiles/<shard>/<pathHash>_<md5>`, which is how EVE
+stores them and how tools-core caches them, so a file already on disk is found
+whoever put it there.
 
 Textures are used as downloaded: Blender reads EVE's DXT5 `.dds` natively.
 """
@@ -18,6 +20,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Optional
 from urllib.request import Request, urlopen
 
+from . import resfile, resindex
 from .tools_remote import USER_AGENT
 
 
@@ -79,17 +82,113 @@ def resource_paths(document) -> tuple:
     return tuple(found)
 
 
-def cache_file(cache_root, source_url: str) -> Path:
-    """Where one resource is cached, by the hash CCP gives it.
+def cache_file(cache_root, logical_path: str, md5: str) -> Path:
+    """Where one resource is stored: `ResFiles/<shard>/<pathHash>_<md5>`.
 
-    The same layout the tools-core cache uses -- `ResFiles/<2 hex>/<name>` --
-    so a cache filled by either side serves both.
+    Content-addressed, exactly as EVE stores it and as tools-core caches it:
+    the shard is the first two characters of the FNV-1 hash of the logical
+    path, and the file has no extension. Keying by anything else orphans every
+    file already on disk.
     """
 
-    name = str(source_url or "").rstrip("/").rsplit("/", 1)[-1]
-    if not name:
-        raise FetchError(f"cannot name a cache file for {source_url}")
-    return Path(cache_root) / "ResFiles" / name[:2] / name
+    return resfile.cache_path(cache_root, logical_path, md5)
+
+
+#: What a texture may be provided as, in the order they are preferred.
+#: Hand-authored first (TGA, then PNG), the shipped DDS last -- so dropping a
+#: file in beside the original overrides it without renaming anything.
+TEXTURE_SUFFIXES = (".tga", ".png", ".dds")
+
+
+def local_file(local_root, logical_path: str):
+    """A locally provided file for one resource, or None.
+
+    The optional directory mirrors the resfileindex's LOGICAL paths -- so
+    `res:/dx9/model/ship/.../gb2_t1_a.dds` is `dx9/model/ship/.../gb2_t1_a.tga`
+    under the root -- which is how a person can drop in their own textures
+    without knowing anything about content addressing.
+
+    A texture is looked for as TGA, then PNG, then DDS; anything else is looked
+    for under its own name. Nothing here writes: this is somebody's source
+    folder, not a cache.
+    """
+
+    if not local_root:
+        return None
+    relative = str(logical_path or "").split(":/", 1)[-1].strip("/")
+    if not relative:
+        return None
+    found = Path(local_root) / relative
+    if found.suffix.lower() == ".dds":
+        for suffix in TEXTURE_SUFFIXES:
+            candidate = found.with_suffix(suffix)
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                return candidate
+        return None
+    return found if found.is_file() and found.stat().st_size > 0 else None
+
+
+def fetch_resource(logical_path: str, client, cache_root, *, build: str,
+                   target: str = "eve", opener=urlopen, index=None,
+                   local_root=None) -> Path:
+    """One resource's bytes: cached if present, else fetched from CCP.
+
+    The INDEX answers where a file lives, so nothing is asked per file. Falling
+    back to the service's resolve only when the index has no row keeps a ship
+    loadable when the index is old or a path is overlay-only.
+    """
+
+    # In order:
+    #   1. the optional folder, .tga then .dds -- what the person is authoring
+    #   2. the cache under the same human-readable layout, .tga then .dds
+    #   3. the cache's content-addressed store, where downloads land
+    #   4. the index, and CCP
+    provided = local_file(local_root, logical_path)
+    if provided is not None:
+        return provided
+
+    provided = local_file(cache_root, logical_path)
+    if provided is not None:
+        return provided
+
+    cached = resfile.find_cached(cache_root, logical_path)
+    if cached is not None:
+        return cached
+
+    location = resindex.locate(index, logical_path) if index else None
+    if location:
+        url = resindex.source_url(location)
+    else:
+        found = client.resolve_resource(logical_path, build, target=target)
+        resolution = (found or {}).get("resolution") or found or {}
+        url = str(resolution.get("sourceUrl") or "")
+        location = "/".join(url.split("/")[-2:]) if url else ""
+    if not url:
+        raise FetchError(f"{logical_path}: no source for it")
+
+    payload = read_url(url, opener=opener)
+    stored = resfile.parse(location)
+    if stored is None:
+        destination = cache_file(cache_root, logical_path, resfile.md5_of(payload))
+    else:
+        destination = (Path(cache_root) / "ResFiles" / stored["shard"]
+                       / f"{stored['path_hash']}_{stored['checksum']}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(destination.name + ".part")
+    partial.write_bytes(payload)
+    partial.replace(destination)
+    return destination
+
+
+def read_url(url: str, *, opener=urlopen, timeout: float = 120.0) -> bytes:
+    """The bytes at one URL."""
+
+    request = Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with opener(request, timeout=timeout) as response:
+            return response.read()
+    except Exception as exc:
+        raise FetchError(f"{url}: {exc}") from exc
 
 
 def download(source_url: str, destination: Path, *, opener=urlopen,
@@ -115,52 +214,10 @@ def download(source_url: str, destination: Path, *, opener=urlopen,
     return destination
 
 
-def shared_index(shared_cache) -> dict:
-    """`res:/path -> hash` from an EVE install's own index, if it has one.
-
-    An installed client keeps `resfileindex.txt`, whose lines are
-    `logical path,storage path,md5,size,...`. With it a file needs no `resolve`
-    call at all, which is the slow part of a fetch.
-
-    Empty when there is no install or no index: the caller then resolves as
-    usual, which is slower but always works.
-    """
-
-    root = Path(shared_cache) if shared_cache else None
-    if root is None or not root.is_dir():
-        return {}
-    for name in ("resfileindex.txt", "tq/resfileindex.txt", "index_tq.txt"):
-        found = root / name
-        if not found.is_file():
-            continue
-        index = {}
-        try:
-            for line in found.read_text(encoding="utf-8", errors="replace").splitlines():
-                parts = line.split(",")
-                if len(parts) >= 2 and parts[0].lower().startswith("res:/"):
-                    index[parts[0].strip().lower()] = parts[1].strip()
-        except OSError:
-            return {}
-        return index
-    return {}
-
-
-def shared_file(index, logical_path: str, shared_cache):
-    """The file an EVE install already has for one resource, or None."""
-
-    if not index or not shared_cache:
-        return None
-    storage = index.get(str(logical_path).strip().lower())
-    if not storage:
-        return None
-    found = Path(shared_cache) / "ResFiles" / storage.replace("\\", "/")
-    return found if found.is_file() else None
-
-
 def fetch_ship(dna: str, client, cache_root, *, build: str = "",
                target: str = "eve", progress: Optional[Callable] = None,
                opener=urlopen, cancelled: Optional[Callable] = None,
-               shared_cache=None) -> tuple:
+               local_root=None) -> tuple:
     """`(document, {res path: local file})` for one DNA.
 
     A resource that cannot be fetched is left OUT of the map rather than
@@ -175,27 +232,22 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
         if not exact:
             raise FetchError("the service did not report a build")
 
+    # One index per build instead of a question per file.
+    try:
+        index = resindex.load(cache_root, exact)
+    except Exception as exc:
+        print(f"[CarbonEngineJS SOF] index unavailable, resolving per file: {exc}")
+        index = None
+
     document = document_for(dna, client, build=exact, target=target)
     paths = resource_paths(document)
     resources = {}
     problems = []
 
-    index = shared_index(shared_cache) if shared_cache else {}
-    if index and progress is not None:
-        progress(f"{len(index)} files in the EVE cache")
-
     def one(path):
-        # The local EVE install first, when there is one: the file is already
-        # on disk under the same content hash, so there is nothing to resolve
-        # and nothing to download.
-        local = shared_file(index, path, shared_cache)
-        if local is not None:
-            return str(local)
-        found = client.resolve_resource(path, exact, target=target)
-        url = str(((found or {}).get("resolution") or found or {}).get("sourceUrl") or "")
-        if not url:
-            raise FetchError("no source url")
-        return str(download(url, cache_file(cache_root, url), opener=opener))
+        return str(fetch_resource(path, client, cache_root, build=exact,
+                                  target=target, opener=opener, index=index,
+                                  local_root=local_root))
 
     # In parallel. A ship is fifty files, each a resolve and a download, and
     # serially that is over two minutes of a person watching nothing happen.
@@ -210,7 +262,7 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
                 # Named for what it is doing. "12/50 gb2_t1_a.dds" reads as
                 # downloading, and the download is the fast part -- what takes
                 # the time is asking the service where each file lives.
-                progress(f"Resolving {done}/{len(paths)} {path.rsplit('/', 1)[-1]}")
+                progress(f"{done}/{len(paths)} {path.rsplit('/', 1)[-1]}")
             if cancelled is not None and cancelled():
                 for pending in running:
                     pending.cancel()

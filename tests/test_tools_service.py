@@ -11,7 +11,7 @@ ADDONS = Path(__file__).resolve().parents[1] / "addons"
 if str(ADDONS) not in sys.path:
     sys.path.insert(0, str(ADDONS))
 
-from carbon_eve_resources.tools_service import (  # noqa: E402
+from carbon_eve_resources.core.tools_service import (  # noqa: E402
     ToolsServiceClient,
     ToolsServiceError,
     parse_bootstrap,

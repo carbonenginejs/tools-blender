@@ -24,6 +24,11 @@ DX10_HEADER_SIZE = 20
 DXGI_BC7_UNORM = 98
 DXGI_BC7_UNORM_SRGB = 99
 
+#: DDSCAPS2_VOLUME. A 3D texture is a stack of slices, not an image, and
+#: handing one to Blender as a 2D image hangs it -- a 128x128x128 DXT5 did not
+#: return in two minutes. EVE ships eight of them.
+DDSCAPS2_VOLUME = 0x200000
+
 
 class DdsError(RuntimeError):
     """Raised when a file is not a DDS this reader understands."""
@@ -33,9 +38,17 @@ class DdsError(RuntimeError):
 class DdsHeader:
     width: int
     height: int
+    depth: int
+    caps2: int
     fourcc: str
     dxgi_format: int
     data_offset: int
+
+    @property
+    def is_volume(self) -> bool:
+        """A 3D texture, which is not loadable as an image."""
+
+        return self.depth > 1 or bool(self.caps2 & DDSCAPS2_VOLUME)
 
     @property
     def is_bc7(self) -> bool:
@@ -49,6 +62,8 @@ def header_of(data: bytes) -> DdsHeader:
     if len(data) < HEADER_SIZE or data[:4] != MAGIC:
         raise DdsError("not a DDS file")
     height, width = struct.unpack_from("<II", data, 12)
+    depth = struct.unpack_from("<I", data, 24)[0]
+    caps2 = struct.unpack_from("<I", data, 112)[0]
     fourcc = data[84:88].decode("ascii", "replace")
     dxgi = 0
     offset = HEADER_SIZE
@@ -57,8 +72,8 @@ def header_of(data: bytes) -> DdsHeader:
             raise DdsError("DX10 header is truncated")
         dxgi = struct.unpack_from("<I", data, HEADER_SIZE)[0]
         offset = HEADER_SIZE + DX10_HEADER_SIZE
-    return DdsHeader(width=width, height=height, fourcc=fourcc,
-                     dxgi_format=dxgi, data_offset=offset)
+    return DdsHeader(width=width, height=height, depth=depth, caps2=caps2,
+                     fourcc=fourcc, dxgi_format=dxgi, data_offset=offset)
 
 
 def is_bc7(data: bytes) -> bool:
@@ -66,6 +81,15 @@ def is_bc7(data: bytes) -> bool:
 
     try:
         return header_of(data).is_bc7
+    except DdsError:
+        return False
+
+
+def is_volume(data: bytes) -> bool:
+    """Whether this DDS is a 3D texture, which must not be loaded as an image."""
+
+    try:
+        return header_of(data).is_volume
     except DdsError:
         return False
 
@@ -239,6 +263,30 @@ def to_rgba(data: bytes):
             decode_bc7(data, header.width, header.height, header.data_offset))
 
 
+#: Where decoded output goes. NOT beside the payload: the shared cache and a
+#: game install are immutable evidence, and nothing may be written beside them
+#: (`docs/agent-skills/skills/use-carbon-tools`). This is a disposable copy,
+#: rebuildable from the source at any time.
+DERIVED_DIRECTORY = {"path": None}
+
+
+def derived_path(source: Path) -> Path:
+    """Where one decoded texture is kept, outside the cache it came from."""
+
+    root = DERIVED_DIRECTORY.get("path")
+    if not root:
+        # No home configured: keep it beside the blend rather than in the
+        # cache, and let Blender pack it.
+        return Path(bpy_temp()) / (source.name + ".rgba.png")
+    return Path(root) / source.name[:2] / (source.name + ".rgba.png")
+
+
+def bpy_temp() -> str:
+    import bpy
+
+    return bpy.app.tempdir or "."
+
+
 def load_image(path, name: str = ""):
     """A Blender image from a BC7 DDS, or None when it is not BC7.
 
@@ -253,7 +301,7 @@ def load_image(path, name: str = ""):
     import bpy
 
     source = Path(path)
-    decoded = source.with_name(source.name + ".rgba.png")
+    decoded = derived_path(source)
     if decoded.is_file():
         image = bpy.data.images.load(str(decoded))
         image.name = name or source.name

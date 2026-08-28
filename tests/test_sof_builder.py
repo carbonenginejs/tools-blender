@@ -10,7 +10,7 @@ ADDONS = Path(__file__).resolve().parents[1] / "addons"
 if str(ADDONS) not in sys.path:
     sys.path.insert(0, str(ADDONS))
 
-from carbon_eve_resources.sof_builder import (  # noqa: E402
+from carbon_eve_resources.core.sof_builder import (  # noqa: E402
     SofBuilderError,
     build_bundle,
     bundle_directory_name,

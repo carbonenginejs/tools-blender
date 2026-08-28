@@ -17,7 +17,7 @@ from bpy.props import (BoolProperty, CollectionProperty, FloatProperty,
                        StringProperty)
 from bpy.types import Operator, Panel, PropertyGroup
 
-from . import sof_resolution
+from .core import sof_resolution
 from .quad import interface as quad_interface
 
 
@@ -245,7 +245,8 @@ def _populate(kind):
     reads what is already there, and asks for the rest to happen afterwards.
     """
 
-    from . import service_access, sof_materials
+    from . import service_access
+    from .core import sof_materials
 
     try:
         window = bpy.context.window_manager
@@ -254,7 +255,7 @@ def _populate(kind):
             return None
         client = service_access.client()
         if kind == "ships":
-            from . import sof_lookup
+            from .core import sof_lookup
 
             names = [name for name, entries in sof_lookup.names(client).items()
                      if any(entry.get("graphicID") or entry.get("kind") == "skin"
@@ -325,7 +326,8 @@ def _material_named(self, context):
 
     if _APPLYING["depth"] != 0:
         return
-    from . import service_access, sof_material_nodes, sof_materials
+    from . import service_access, sof_material_nodes
+    from .core import sof_materials
 
     obj = getattr(self, "id_data", None)
     _lowercase(self, "material")
@@ -456,7 +458,8 @@ def _identity_typed(self, context):
 
     if _APPLYING["depth"] != 0:
         return
-    from . import service_access, sof_lookup
+    from . import service_access
+    from .core import sof_lookup
 
     client = service_access.client(context)
     type_id, skin_id = int(self.type_id or 0), int(self.skin_id or 0)
@@ -687,7 +690,8 @@ class CARBON_SOF_Settings(PropertyGroup):
         the ship.
         """
 
-        from . import service_access, sof_material_nodes, sof_materials
+        from . import service_access, sof_material_nodes
+        from .core import sof_materials
 
         client = service_access.client()
         report = {"bound": 0, "materials": 0, "missing": []}
@@ -726,7 +730,8 @@ class CARBON_SOF_Settings(PropertyGroup):
 
         # The faction's own table, keyed `areaType:slot`. tools-core serves it
         # already flattened, so naming a faction-supplied slot is a lookup.
-        from . import service_access, sof_materials
+        from . import service_access
+        from .core import sof_materials
         names = sof_materials.faction_material_names(
             sof_materials.faction(self.faction, service_access.client()))
 

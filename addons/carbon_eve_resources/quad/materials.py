@@ -34,6 +34,7 @@ def load_texture(path, *, check_existing=True):
     from pathlib import Path
 
     from ..dds import load_image, is_bc7
+    from ..dds.reader import is_volume
 
     text = str(path)
     # Sniffed, not judged by extension. Fetched files are cached under their
@@ -46,6 +47,12 @@ def load_texture(path, *, check_existing=True):
         head = b""
 
     if head[:4] == b"DDS ":
+        if is_volume(head):
+            # A 3D texture is a stack of slices. Blender does not load one as
+            # an image; it hangs trying. Skipped with a note rather than
+            # taking the session down.
+            print(f"[CarbonEngineJS SOF] {text}: 3D volume texture, not loaded")
+            return None
         if is_bc7(head):
             try:
                 decoded = load_image(text)
@@ -56,10 +63,15 @@ def load_texture(path, *, check_existing=True):
                 return decoded
         elif not text.lower().endswith(".dds"):
             # Blender picks its decoder off the extension, so a DDS stored
-            # under a hash needs a name it can recognise.
-            named = Path(text).with_name(Path(text).name + ".dds")
+            # under a hash needs a name it can recognise. The copy goes to a
+            # DISPOSABLE directory: nothing may be written beside a cached
+            # payload, which is immutable evidence.
+            from ..dds.reader import derived_path
+
+            named = derived_path(Path(text)).with_suffix(".dds")
             if not named.is_file():
                 try:
+                    named.parent.mkdir(parents=True, exist_ok=True)
                     named.write_bytes(Path(text).read_bytes())
                 except OSError:
                     named = None
@@ -260,6 +272,8 @@ def build_area_material(area, family, resources, index):
         if socket is None or local is None:
             continue
         image = load_texture(local)
+        if image is None:
+            continue          # a 3D volume texture, or unreadable
         image.colorspace_settings.name = (
             "sRGB" if member.annotation(name).srgb else "Non-Color"
         )

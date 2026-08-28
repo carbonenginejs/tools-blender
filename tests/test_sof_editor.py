@@ -15,7 +15,8 @@ except ImportError:                      # pragma: no cover - outside Blender
     bpy = None
 
 if bpy is not None:
-    from carbon_eve_resources import sof_panels, sof_resolution
+    from carbon_eve_resources import sof_panels
+    from carbon_eve_resources.core import sof_resolution
 
 
 FULL = ("mde3_t3:legion_minmatar:minmatar"

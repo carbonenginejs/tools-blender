@@ -123,6 +123,14 @@ class CARBON_PT_sidebar_about(Panel):
         cache.operator(addon.EVE_RESOURCE_OT_clear_cache.bl_idname,
                        text="", icon="TRASH")
 
+        # The local source folder, switchable here rather than only in
+        # Preferences: it is a working choice, toggled while working.
+        local = self.layout.row(align=True)
+        local.prop(prefs, "use_local_source", text="")
+        path = local.row()
+        path.enabled = prefs.use_local_source
+        path.prop(prefs, "local_source", text="")
+
 
 class CARBON_PT_sidebar_dna(Panel):
     """Composing a DNA, and loading a ship from it.
@@ -194,11 +202,19 @@ class CARBON_PT_sidebar_dna(Panel):
         if state is None:
             layout.label(text="Resource browser is not registered", icon="ERROR")
             return
-        # Only what is happening NOW. "Resource index is not loaded" described
-        # a local index this tool no longer uses -- everything comes from
-        # tools-core over the wire.
-        if state.busy and state.status:
-            layout.label(text=state.status, icon="SORTTIME")
+        # Progress WHILE running, and the outcome after -- an error most of
+        # all. Showing the status only while busy meant every failure was
+        # written and then immediately hidden, so a load that did not work
+        # said nothing at all about why.
+        if state.status:
+            failed = state.status.lower().startswith("error")
+            row = layout.row()
+            row.alert = failed
+            row.label(text=state.status,
+                      icon="ERROR" if failed else
+                      ("SORTTIME" if state.busy else "CHECKMARK"))
+        if state.busy:
+            layout.operator("carbon.eve_resource_cancel", icon="X")
 
 
 def _command(layout, settings, toggle, idname, fields):

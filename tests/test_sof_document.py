@@ -9,13 +9,13 @@ ADDONS = Path(__file__).resolve().parents[1] / "addons"
 if str(ADDONS) not in sys.path:
     sys.path.insert(0, str(ADDONS))
 
-from carbon_eve_resources.sof_document import (  # noqa: E402
+from carbon_eve_resources.core.sof_document import (  # noqa: E402
     SofDocumentError,
     load_sof_bundle,
     load_sof_document,
     parse_sof_document,
 )
-from carbon_eve_resources.sof_shading import (  # noqa: E402
+from carbon_eve_resources.core.sof_shading import (  # noqa: E402
     plan_material,
     should_build_material,
 )

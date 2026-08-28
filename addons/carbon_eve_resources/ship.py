@@ -878,6 +878,8 @@ def build_decal_material(decal, resources, obj=None):
         if not local or not os.path.exists(local):
             continue
         image = quad_materials.load_texture(local)
+        if image is None:
+            continue          # a 3D volume texture, or unreadable
         image.colorspace_settings.name = (
             "sRGB" if decal_module.DECAL_TEXTURES.get(name) else "Non-Color"
         )
@@ -1146,7 +1148,7 @@ def populate_sof(obj, document, family):
     except Exception:
         pass                      # already registered, which is fine
 
-    from . import sof_resolution
+    from .core import sof_resolution
 
     settings = obj.carbon_sof
     dna = str(document.get("dna") or "")
@@ -1900,7 +1902,7 @@ def build_ship(document_path, resources_directory, *, clear=True,
     # name, index and count and not the type that chose its materials -- and
     # without it every material looks alike, so an edit meant for the hull
     # reaches the sails too.
-    from . import sof_areas
+    from .core import sof_areas
     stamped = sof_areas.stamp_ship(ship, hull_record)
     if stamped["materials"]:
         types = ", ".join(f"{name} x{count}"

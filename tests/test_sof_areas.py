@@ -7,7 +7,7 @@ ADDONS = Path(__file__).resolve().parents[1] / "addons"
 if str(ADDONS) not in sys.path:
     sys.path.insert(0, str(ADDONS))
 
-from carbon_eve_resources import sof_areas  # noqa: E402
+from carbon_eve_resources.core import sof_areas  # noqa: E402
 
 
 #: mde3_t3's opaque areas, verbatim from the live hull record. Two areas share

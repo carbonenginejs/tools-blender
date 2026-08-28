@@ -7,8 +7,8 @@ ADDONS = Path(__file__).resolve().parents[1] / "addons"
 if str(ADDONS) not in sys.path:
     sys.path.insert(0, str(ADDONS))
 
-from carbon_eve_resources import sof_resolution  # noqa: E402
-from carbon_eve_resources.sof_resolution import (  # noqa: E402
+from carbon_eve_resources.core import sof_resolution  # noqa: E402
+from carbon_eve_resources.core.sof_resolution import (  # noqa: E402
     NONE,
     SOURCE_DNA,
     SOURCE_FACTION,
