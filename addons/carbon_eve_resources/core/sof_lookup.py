@@ -367,3 +367,49 @@ def forget():
     """Drops the caches, for when the build changes under us."""
 
     _CACHE.clear()
+
+
+def name_for(type_id=0, skin_id=0, client=None, *, build: str = "latest",
+             target: str = "eve") -> str:
+    """What this ship is CALLED: `svipul abyssal glory`, or `svipul`.
+
+    The name index already carries the full thing -- a SKIN's name includes
+    the hull it belongs to -- so this is a reverse lookup over what is on disk
+    rather than two requests and a join.
+
+    The skin's name wins when there is one, because that is the ship a person
+    means. Empty when nothing matches, which is the caller's cue to fall back
+    to the DNA.
+    """
+
+    wanted_type, wanted_skin = int(type_id or 0), int(skin_id or 0)
+    if not wanted_type and not wanted_skin:
+        return ""
+
+    index = names(client, build=build, target=target)
+    fallback = ""
+    for name, entries in index.items():
+        for entry in entries:
+            if wanted_skin and int(entry.get("skinID") or 0) == wanted_skin:
+                return str(name)
+            if (not fallback and wanted_type
+                    and entry.get("kind") != "skin"
+                    and int(entry.get("typeID") or 0) == wanted_type):
+                fallback = str(name)
+    return fallback
+
+
+def file_name(name: str) -> str:
+    """One of those names as a filename: `svipul_hrada-oki_offender`.
+
+    Lowercased, spaces to underscores, and anything a filesystem argues about
+    dropped. Hyphens and dots are kept -- they are part of names like
+    `hrada-oki` and removing them makes the ship harder to recognise, which is
+    the whole reason for using the name at all.
+    """
+
+    import re
+
+    text = str(name or "").strip().lower()
+    text = re.sub(r"[^a-z0-9._-]+", "_", text)
+    return re.sub(r"_+", "_", text).strip("._-")

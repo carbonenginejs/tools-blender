@@ -68,6 +68,55 @@ def export_images(folder, *, repoint: bool = True):
     return written, failed
 
 
+def ship_settings(context):
+    """The SOF settings of the ship in hand, found from the selection.
+
+    Walked up from the selected object, because a person clicks a part of a
+    ship rather than the root.
+    """
+
+    obj = getattr(context, "object", None)
+    while obj is not None:
+        settings = getattr(obj, "carbon_sof", None)
+        if settings is not None and settings.dna:
+            return settings
+        obj = obj.parent
+    return None
+
+
+def suggested_name(context) -> str:
+    """What to call the file: the ship's own name.
+
+    "svipul_hrada-oki_offender.blend", not "ship.blend". The name index
+    already holds the full thing, SKIN included, so this is a lookup rather
+    than a guess -- and it falls back to the DNA's hull when the ship was
+    built from a raw DNA and there are no ids to look up.
+    """
+
+    settings = ship_settings(context)
+    if settings is None:
+        return "ship.blend"
+
+    name = ""
+    try:
+        from . import service_access
+        from .core import sof_lookup
+
+        name = sof_lookup.file_name(sof_lookup.name_for(
+            getattr(settings, "type_id", 0), getattr(settings, "skin_id", 0),
+            service_access.client(context)))
+    except Exception as exc:
+        print(f"[CarbonEngineJS SOF] name lookup: {exc}")
+
+    if not name:
+        # Built from a DNA typed in by hand: the hull is the best name there
+        # is, and it is still better than "ship".
+        from .core import sof_lookup
+
+        name = sof_lookup.file_name(str(settings.dna).split(":", 1)[0])
+    return f"{name or 'ship'}.blend"
+
+
 class CARBON_OT_save_standalone(Operator):
     """Writes the model, its blend and its textures into one folder.
 
@@ -86,6 +135,7 @@ class CARBON_OT_save_standalone(Operator):
     filename: StringProperty(name="Blend file", default="ship.blend")
 
     def invoke(self, context, event):
+        self.filename = suggested_name(context)
         context.window_manager.fileselect_add(self)
         return {"RUNNING_MODAL"}
 
