@@ -276,16 +276,13 @@ def local_at_address(root, location: str):
     if not root or not location:
         return None
 
-    # Either way round. `<root>/ResFiles/<shard>/<name>` is a game install or
-    # a copy of one; `<root>/<shard>/<name>` is somebody who pointed the field
-    # AT their ResFiles folder, which is what the field is called and so is at
-    # least as likely. Guessing wrong meant every lookup missed in silence and
-    # the ship downloaded anyway.
-    bases = [resfile.stored_path(root, location)]
-    inner = resfile.stored_path(Path(root).parent, location)
-    if Path(root).name.lower() == "resfiles" and inner is not None:
-        bases.insert(0, inner)
-    for base in bases:
+    # The folder they PICKED is the root of the shard tree, whatever it is
+    # called -- they may well have renamed it, and nothing here should depend
+    # on that name. `<root>/ResFiles/...` is tried as well, because with a game
+    # install the folder above is the natural one to pick. Guessing only one
+    # meant every lookup missed in silence and the ship downloaded anyway.
+    for base in (resfile.shard_path(root, location),
+                 resfile.stored_path(root, location)):
         if base is None:
             continue
         for candidate in (base,) + tuple(base.with_suffix(s)

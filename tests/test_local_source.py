@@ -219,12 +219,14 @@ class TranslationsStayInTheCacheTests(unittest.TestCase):
 
 
 class ResFilesFolderShapeTests(unittest.TestCase):
-    """Either way round, because both are what people actually point at.
+    """Either way round, and never depending on what the folder is called.
 
-    The field is called "Local ResFiles", so pointing it AT a ResFiles folder
-    is at least as likely as pointing it at the folder above one. Guessing
-    only one meant every lookup missed in silence and the ship downloaded
-    anyway -- which reads as the feature being broken, not as a wrong path.
+    The folder somebody picks IS the root of the shard tree. They may have
+    renamed it, so the name cannot be part of the answer. The folder above one
+    is tried too, because with a game install that is the natural thing to
+    pick. Guessing only one meant every lookup missed in silence and the ship
+    downloaded anyway -- which reads as the feature being broken, not as a
+    path typed one level off.
     """
 
     LOCATION = "b4/b40590f110b66d26_f26d631c8e5491e4c1f3273b29019fce"
@@ -245,8 +247,14 @@ class ResFilesFolderShapeTests(unittest.TestCase):
         mine = self.place(inner)
         self.assertEqual(sof_fetch.local_at_address(inner, self.LOCATION), mine)
 
-    def test_a_folder_merely_named_resfiles_with_nothing_in_it(self):
-        # The name is a hint, not a promise: it must still find nothing.
-        empty = Path(tempfile.mkdtemp(prefix="carbon-shape-c-")) / "ResFiles"
+    def test_a_root_the_person_renamed(self):
+        # The whole point: the name is theirs, not ours to depend on.
+        renamed = Path(tempfile.mkdtemp(prefix="carbon-shape-c-")) / "eve_bits"
+        mine = self.place(renamed)
+        self.assertEqual(sof_fetch.local_at_address(renamed, self.LOCATION),
+                         mine)
+
+    def test_an_empty_folder_claims_nothing(self):
+        empty = Path(tempfile.mkdtemp(prefix="carbon-shape-d-")) / "ResFiles"
         empty.mkdir(parents=True)
         self.assertIsNone(sof_fetch.local_at_address(empty, self.LOCATION))

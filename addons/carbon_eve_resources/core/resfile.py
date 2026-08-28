@@ -49,11 +49,23 @@ def stored_path(root, location: str, logical_path: str = ""):
     back to the cache's human-readable layout.
     """
 
+    return shard_path(Path(root) / "ResFiles", location)
+
+
+def shard_path(root, location: str):
+    """The `<shard>/<name>` part, under whatever root is given.
+
+    Separate from `stored_path` because a folder somebody PICKS is the root of
+    the shard tree whatever it happens to be called -- they may have renamed
+    it, or pointed straight at it. Only our own cache is guaranteed to have
+    `ResFiles` in the middle, so only our own path may assume it.
+    """
+
     parts = parse(location)
     if parts is None:
         return None
     name = f"{parts['path_hash']}_{parts['checksum']}"
-    return Path(root) / "ResFiles" / parts["shard"] / name
+    return Path(root) / parts["shard"] / name
 
 
 def readable_path(root, logical_path: str):
