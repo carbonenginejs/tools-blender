@@ -1359,8 +1359,19 @@ def build_kill_counter_group() -> bpy.types.ShaderNodeTree:
 
     column = math("TRUNC", math("MULTIPLY", px, 4.5, location=(-660, 200)),
                   location=(-500, 200), label="column")
-    row = math("TRUNC", math("MULTIPLY", py, 1.5, location=(-660, 40)),
-               location=(-500, 40), label="row")
+    # UNITS on the bottom row, so the tally grows upward.
+    #
+    # The row index runs the other way from the coordinate: row 0 is units,
+    # and units belongs at the BOTTOM. Taking the coordinate's own order put
+    # units at the top and the counter read upside down (operator, in game).
+    #
+    # Only the counter is inverted here, not the projection's V. The whole
+    # decal family shares that V, so flipping it would turn every logo over
+    # to fix one counter -- and the logos are right.
+    row = math("SUBTRACT", reference.KILL_COUNTER_ROWS - 1.0,
+               math("TRUNC", math("MULTIPLY", py, 1.5, location=(-660, 40)),
+                    location=(-560, 40)),
+               location=(-500, 40), label="row: units at the bottom")
 
     # Ten to the row, spelled as the shader spells it.
     place = math("POWER", 2.0,
