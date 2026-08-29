@@ -206,31 +206,38 @@ def ship_of(locator):
     return ship_module.ship_anchor(list(descendants(root)))
 
 
-def ship_faction(context) -> str:
-    """The faction of the ship being fitted, from its own DNA.
+def faction_of(locator) -> str:
+    """The faction of the ship THIS locator belongs to, from its own DNA.
 
     A slot defaults its faction to its parent's, and the parent's is the
-    SECOND field of the hull's DNA -- `hull:faction:race`. Nothing else needs
-    reading, and nothing is guessed: a hull whose DNA names no faction leaves
-    its turrets in the colours they shipped with, which is what the engine
-    does when either faction fails to resolve.
+    SECOND field of that hull's DNA -- `hull:faction:race`.
+
+    Per LOCATOR, not per fit. Fitting across a scene with more than one hull
+    in it used the first ship's faction for all of them, so a Duvolle Arazu
+    and a Roden Lachesis both came out in Gallente Navy colours. A hull whose
+    DNA names no faction keeps the colours its turrets shipped with, which is
+    what the engine does when either faction fails to resolve.
     """
 
-    for _kind, _bay, group in hardpoints(context):
-      for locator in group:
-        node = locator
-        while node is not None:
-            dna = str(getattr(getattr(node, "carbon_sof", None), "dna", "")
-                      or node.get("carbon_sof_dna") or "")
-            if dna:
-                parts = dna.split(":")
-                return parts[1] if len(parts) > 1 else ""
-            node = node.parent
+    node = locator
+    while node is not None:
+        dna = str(getattr(getattr(node, "carbon_sof", None), "dna", "")
+                  or node.get("carbon_sof_dna") or "")
+        if dna:
+            parts = dna.split(":")
+            return parts[1] if len(parts) > 1 else ""
+        node = node.parent
     return ""
 
 
+def factions_for(locators) -> list:
+    """Every distinct faction across the hulls being fitted."""
+
+    return sorted({faction_of(locator) for locator in locators})
+
+
 def fetch_turret(client, res_path: str, cache_root, *, progress=None,
-                 faction: str = ""):
+                 factions=()):
     """The turret's document and its files. Runs on the JOB thread.
 
     No `bpy` and no scene changes in here: what comes back is handed to the
@@ -274,13 +281,16 @@ def fetch_turret(client, res_path: str, cache_root, *, progress=None,
 
     # The turret takes the SHIP's faction, as the engine does: a slot defaults
     # its faction to the parent's, off the hull's own DNA.
-    colours = {}
-    if faction:
-        from .core import sof_materials
+    from .core import sof_materials
 
+    colours = {}
+    for faction in factions:
+        if not faction or faction in colours:
+            continue
         if progress is not None:
             progress(f"Reading {faction}")
-        colours = faction_colours(sof_materials.faction(faction, client), client)
+        colours[faction] = faction_colours(
+            sof_materials.faction(faction, client), client)
     return document, resources, colours
 
 
@@ -386,7 +396,7 @@ def self_name(name: str) -> str:
 
 
 def fit(context, document, resources, res_path: str, name: str,
-        locators=None):
+        locators=None, colours=None):
     """Places one turret on every hardpoint. MAIN thread only."""
 
     geometry = str(document.get("geometryResPath") or "")
@@ -406,7 +416,23 @@ def fit(context, document, resources, res_path: str, name: str,
     if not imported:
         raise RuntimeError(f"{Path(local).name} imported nothing")
 
-    material = _turret_material(document, resources, name)
+    # ONE material per faction, not one per fit. Two hulls of different
+    # factions carrying the same gun are two different paint jobs, and a
+    # single shared material can only be one of them.
+    colours = colours or {}
+    by_faction = {}
+
+    def material_for(faction: str):
+        if faction not in by_faction:
+            made = _turret_material(document, resources, name)
+            written = apply_faction_colours(made, colours.get(faction))
+            if made is not None:
+                made.name = f"{made.name} {faction}" if faction else made.name
+                made["carbon_turret_faction"] = faction
+            if faction:
+                print(f"    {faction}: {written} faction value(s)")
+            by_faction[faction] = made
+        return by_faction[faction]
 
     # The model's OWN base transform, taken off its first root before anything
     # is reparented.
@@ -485,6 +511,7 @@ def fit(context, document, resources, res_path: str, name: str,
                 source, mathutils.Matrix.Identity(4))
 
         copies = copies + [holder]
+        material = material_for(faction_of(locator))
         for obj in copies:
             obj[FITTED] = res_path
             obj["carbon_turret_locator"] = locator.name
@@ -507,8 +534,8 @@ def fit(context, document, resources, res_path: str, name: str,
         fitted.extend(copies)
 
     print(f"  fitted {name} to {len(locators)} hardpoint(s), "
-          f"{len(fitted)} object(s)")
-    return len(locators), material
+          f"{len(fitted)} object(s), {len(by_faction)} faction(s)")
+    return len(locators), by_faction
 
 
 #: Which area type a turret takes its materials from.
@@ -680,12 +707,11 @@ class CARBON_OT_fit_turrets(Operator):
         res_path, name = chosen["resPath"], chosen["name"]
         cache_root = _cache_root(context)
 
-        faction = ship_faction(context)
 
         def work():
             document, resources, colours = fetch_turret(
                 client, res_path, cache_root, progress=addon._set_progress,
-                faction=faction)
+                factions=factions_for(locators))
             return name, res_path, document, resources, colours, locators
 
         try:
@@ -702,11 +728,11 @@ def finish_job(context, result) -> str:
     name, res_path, document, resources, colours, locators = result
     state = context.window_manager.carbon_eve_turrets
     clear_fitted(locators)
-    count, material = fit(context, document, resources, res_path, name,
-                          locators)
-    written = apply_faction_colours(material, colours)
+    count, by_faction = fit(context, document, resources, res_path, name,
+                            locators, colours)
+    painted = [f for f in by_faction if f]
     state.status = (f"{name} on {count} hardpoint(s)"
-                    + (f", {written} faction value(s)" if written else ""))
+                    + (f", {len(painted)} faction(s)" if painted else ""))
     return state.status
 
 
