@@ -19,7 +19,8 @@ SHIP = (Path(__file__).resolve().parents[1] / "addons" / "carbon_eve_resources"
 
 #: The stages, in no particular order -- the tests below assert the order.
 STAGES = ("reset_set_collections", "assemble", "build_decals",
-          "build_plane_sets", "build_sprite_sets", "build_banner_sets",
+          "build_plane_sets", "build_sprite_sets", "build_haze_sets",
+          "build_banner_sets",
           "apply_ship_globals",
           "drive_ship_sockets", "stamp_ship", "populate_sof", "parent_to_root",
           "prune_empty_collections", "align_names")
@@ -74,7 +75,7 @@ class BuildOrderTests(unittest.TestCase):
         # drive_ship_sockets walks every material slot on the ship; decals,
         # planes and banners all contribute slots.
         for stage in ("build_decals", "build_plane_sets", "build_sprite_sets",
-                      "build_banner_sets"):
+                      "build_haze_sets", "build_banner_sets"):
             self._before(stage, "drive_ship_sockets",
                          f"{stage} adds materials drive_ship_sockets scans")
 

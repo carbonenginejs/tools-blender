@@ -1723,6 +1723,168 @@ def sprite_material(set_index, effect=None, resources=None):
     return material
 
 
+#: The sphere a haze is drawn as, shared by every one in the file.
+HAZE_MESH = "CarbonHaze sphere"
+
+#: How dense a haze is, per unit of its authored alpha.
+#:
+#: The alpha is around a tenth and the volume is a couple of units across at
+#: hull scale, so this is what turns "0.1" into something you can see.
+HAZE_DENSITY = 3.0
+
+
+def haze_mesh():
+    """The shared ellipsoid, made once and scaled per haze."""
+
+    mesh = bpy.data.meshes.get(HAZE_MESH)
+    if mesh is not None:
+        return mesh
+
+    import bmesh
+
+    mesh = bpy.data.meshes.new(HAZE_MESH)
+    working = bmesh.new()
+    # Smoother than a sprite: this one is metres across rather than a dot, so
+    # its silhouette is read directly.
+    bmesh.ops.create_icosphere(working, subdivisions=3, radius=1.0)
+    working.to_mesh(mesh)
+    working.free()
+    for polygon in mesh.polygons:
+        polygon.use_smooth = True
+    mesh.materials.append(None)
+    return mesh
+
+
+def haze_material(faction_tree, slot, colour):
+    """A haze: a VOLUME, not a surface.
+
+    `hazespherical.fx` carries no texture and no geometry beyond a sphere --
+    what it draws is a soft-edged cloud, and the honest Blender equivalent is
+    a volume rather than a shell with a clever falloff. A volume needs no
+    trick to fade at its edges and looks the same from every direction, which
+    is the whole difficulty of the sprite dots solved for free.
+
+    The density comes from the authored ALPHA, which is around a tenth and
+    invisible on its own, so it is scaled to something a person can see and
+    the authored value is kept on the object.
+    """
+
+    name = f"{sof_faction_nodes.PREFIX} haze {slot}" if slot else "SofHaze"
+    material = bpy.data.materials.new(unique_name(name, ""))
+    material.use_nodes = True
+    tree = material.node_tree
+    tree.nodes.clear()
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    output.location = (300, 0)
+
+    volume = tree.nodes.new("ShaderNodeVolumePrincipled")
+    volume.location = (0, 0)
+    alpha = float(colour[3]) if len(colour) > 3 else 0.1
+    volume.inputs["Density"].default_value = alpha * HAZE_DENSITY
+    # Emission as well as scatter: a haze on a hull glows in the dark rather
+    # than waiting for a light to find it.
+    if "Emission Strength" in volume.inputs:
+        volume.inputs["Emission Strength"].default_value = 1.0
+
+    source = None
+    if faction_tree is not None and slot:
+        node = tree.nodes.new("ShaderNodeGroup")
+        node.node_tree = faction_tree
+        node.location = (-300, 0)
+        source = node.outputs.get(slot)
+    if source is not None:
+        tree.links.new(source, volume.inputs["Color"])
+        if "Emission Color" in volume.inputs:
+            tree.links.new(source, volume.inputs["Emission Color"])
+        material["carbon_faction_slot"] = str(slot)
+    else:
+        flat = tuple(float(v) for v in colour[:3]) + (1.0,)
+        volume.inputs["Color"].default_value = flat
+        if "Emission Color" in volume.inputs:
+            volume.inputs["Emission Color"].default_value = flat
+
+    tree.links.new(volume.outputs[0], output.inputs["Volume"])
+    return material
+
+
+def build_haze_sets(document, hull, collection, hull_sets=None,
+                    faction_slots=None, faction_tree=None):
+    """The soft clouds a hull sits in: one ellipsoid per haze.
+
+    Rare -- of eight hulls checked only a Dominix had any, and it has five --
+    but they are what makes a ship look like it is venting rather than sitting
+    in a vacuum.
+
+    Each haze is placed AND SCALED by its own transform, so the shared sphere
+    becomes the ellipsoid the SOF describes: 119 by 93 by 162 on that hull,
+    which is metres across rather than a dot.
+    """
+
+    armature = ship_armature(hull, collection)
+    mesh = None
+    built, lights = [], []
+    hidden = 0
+    for set_index, haze_set in enumerate(find_typed(document, "EveHazeSet")):
+        hazes = haze_set.get("hazes") or haze_set.get("items") or []
+        if not hazes:
+            continue
+        source = ((hull_sets or [])[set_index]
+                  if set_index < len(hull_sets or []) else {})
+        group = attachment_collection(
+            collection, "hazeSets",
+            str(source.get("visibilityGroupName") or "primary"),
+            source.get("visibilityGroup"))
+        if mesh is None:
+            mesh = haze_mesh()
+
+        for index, item in enumerate(hazes):
+            obj = remember_name(bpy.data.objects.new(
+                unique_name(f"haze_{set_index}_{index}", collection.name), mesh),
+                f"haze_{set_index}_{index}", collection.name)
+            group.objects.link(obj)
+            obj.matrix_world = item_matrix(item, hull)
+
+            colour = tuple(float(v) for v in
+                           (item.get("color") or (1.0, 1.0, 1.0, 1.0)))
+            slot = sof_faction_nodes.slot_for(item, "_colorType",
+                                              faction_slots, colour)
+            if obj.material_slots:
+                obj.material_slots[0].link = "OBJECT"
+                obj.material_slots[0].material = haze_material(
+                    faction_tree, slot, colour)
+            if slot:
+                obj["carbon_faction_slot"] = slot
+
+            obj["carbon_haze_color"] = colour
+            # Four numbers nobody here has names for. Kept as authored rather
+            # than guessed at: whatever they mean, an export needs them.
+            obj["carbon_haze_data"] = tuple(
+                float(v) for v in (item.get("hazeData") or (0.0, 0.0, 0.0, 0.0)))
+            # The same rule the planes follow: a zero colour is not drawn.
+            if not any(colour[:3]):
+                obj.hide_viewport = True
+                obj.hide_render = True
+                obj["carbon_display"] = False
+                hidden += 1
+            attach_to_bone(obj, armature, item.get("boneIndex"))
+            stamp_identity(obj, f"haze_{index}", "haze",
+                           str(source.get("visibilityGroupName") or "primary"))
+            built.append(obj)
+
+        for order, light in enumerate(haze_set.get("lights") or []):
+            obj = attachment_light(
+                light, unique_name(f"haze_{set_index}_light_{order}",
+                                   collection.name), hull, armature)
+            group.objects.link(obj)
+            lights.append(obj)
+
+    if built or lights:
+        print(f"  built {len(built)} haze(s) and {len(lights)} haze light(s) "
+              f"from {len(find_typed(document, 'EveHazeSet'))} set(s)"
+              + (f"; {hidden} hidden" if hidden else ""))
+    return built + lights
+
+
 def build_sprite_sets(document, hull, collection, hull_sets=None,
                       faction_slots=None, faction_tree=None, size=None):
     """The blinking lights: a glowing dot at each authored position.
@@ -2622,6 +2784,9 @@ def build_ship(document_path, resources_directory, *, clear=True,
     plane_objects = build_plane_sets(document, primary, collection,
                                      (hull_record or {}).get("planeSets"),
                                      resources)
+    haze_objects = build_haze_sets(document, primary, collection,
+                                   (hull_record or {}).get("hazeSets"),
+                                   faction_slots, faction_tree)
     sprite_objects = build_sprite_sets(document, primary, collection,
                                        (hull_record or {}).get("spriteSets"),
                                        faction_slots, faction_tree, sprite_size)
@@ -2634,7 +2799,8 @@ def build_ship(document_path, resources_directory, *, clear=True,
     # its own object, so the values are written to all of them and the material
     # sockets are driven from the hull.
     ship = ([primary] + list(decal_objects) + list(plane_objects)
-            + list(sprite_objects) + list(banner_objects))
+            + list(sprite_objects) + list(haze_objects)
+            + list(banner_objects))
     apply_ship_globals(ship, globals_overrides)
     drive_ship_sockets(ship, primary)
 
