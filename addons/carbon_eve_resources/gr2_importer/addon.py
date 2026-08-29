@@ -848,10 +848,22 @@ def import_armature(
     rest_local, rest_world = _compute_rest_matrices(bones)
 
     name_to_index: Dict[str, int] = {}
+    order: List[str] = []
     for i, b in enumerate(bones):
         bn = (b.get("name") or f"Bone_{i}")
+        order.append(bn)
         if isinstance(bn, str):
             name_to_index[bn] = i
+
+    # The MODEL's bone order, kept because Blender does not.
+    #
+    # Bones are created below in model order, but leaving edit mode re-sorts
+    # them by hierarchy, so `armature.data.bones[i]` is not bone `i` of the
+    # model -- on a Celestis exactly one of nineteen positions still agrees.
+    # Every attachment the SOF places by bone INDEX therefore lands on the
+    # wrong bone, and the wrong bone is only obvious once the hull animates
+    # and the attachment leaves with it.
+    arm_obj["carbon_bone_order"] = order
 
     bpy.context.view_layer.objects.active = arm_obj
     arm_obj.select_set(True)

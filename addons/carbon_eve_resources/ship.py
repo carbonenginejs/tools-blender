@@ -1604,10 +1604,24 @@ def attach_to_bone(obj, armature, bone_index):
     obj["carbon_bone_index"] = int(bone_index)
     if armature is None or bone_index is None or bone_index < 0:
         return False
+
+    # Through the MODEL's own bone order, not Blender's.
+    #
+    # Blender re-sorts bones by hierarchy on leaving edit mode, so
+    # `data.bones[i]` is not bone `i` of the model: one of nineteen positions
+    # agrees on a Celestis. The importer records the real order, and reading
+    # it is the difference between an attachment on its own bone and one on
+    # somebody else's -- which looks fine at rest and flies off the moment the
+    # hull animates.
+    order = armature.get("carbon_bone_order")
     bones = armature.data.bones
-    if bone_index >= len(bones):
-        return False
-    bone = bones[bone_index]
+    bone = None
+    if order is not None and 0 <= bone_index < len(order):
+        bone = bones.get(str(order[bone_index]))
+    if bone is None:
+        if bone_index >= len(bones):
+            return False
+        bone = bones[bone_index]
     obj["carbon_bone_name"] = bone.name
     world = obj.matrix_world.copy()
     obj.parent = armature
