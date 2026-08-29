@@ -408,19 +408,38 @@ def fit(context, document, resources, res_path: str, name: str,
 
     material = _turret_material(document, resources, name)
 
+    # The model's OWN base transform, taken off its first root before anything
+    # is reparented.
+    #
+    # The importer gives every imported object the same EVE-to-Blender
+    # rotation, and a locator already carries that rotation because it was
+    # built through the hull -- so parenting the model to a locator as
+    # imported applies it TWICE, and the turrets come out on the wrong angles.
+    # Expressing each root relative to this base removes it exactly once and
+    # keeps whatever the roots' offsets are relative to each other.
+    tops = [obj for obj in imported if obj.parent is None] or imported[:1]
+    base = tops[0].matrix_world.copy()
+    try:
+        unbase = base.inverted()
+    except ValueError:                   # a singular matrix cannot be undone
+        unbase = mathutils.Matrix.Identity(4)
+    placement = {obj: (unbase @ obj.matrix_world.copy()) for obj in tops}
+
     fitted = []
     for order, locator in enumerate(locators):
         # The FIRST hardpoint keeps the imported objects; the rest get copies,
         # so one import serves the whole ship.
         if order == 0:
-            copies = imported
+            copies, origin = imported, {}
         else:
             copies, mapping = [], {}
+            origin = {}
             for obj in imported:
                 clone = obj.copy()
                 if obj.data is not None:
                     clone.data = obj.data       # one mesh, many turrets
                 mapping[obj] = clone
+                origin[clone] = obj
                 copies.append(clone)
             for obj, clone in mapping.items():
                 if obj.parent in mapping:
@@ -457,11 +476,13 @@ def fit(context, document, resources, res_path: str, name: str,
         holder.matrix_local = mathutils.Matrix.Identity(4)
 
         for obj in copies:
-            if obj.parent is None or obj.parent not in copies:
-                local = obj.matrix_local.copy()
-                obj.parent = holder
-                obj.matrix_parent_inverse.identity()
-                obj.matrix_local = local
+            if obj.parent is not None and obj.parent in copies:
+                continue
+            source = obj if order == 0 else origin.get(obj, obj)
+            obj.parent = holder
+            obj.matrix_parent_inverse.identity()
+            obj.matrix_local = placement.get(
+                source, mathutils.Matrix.Identity(4))
 
         copies = copies + [holder]
         for obj in copies:
