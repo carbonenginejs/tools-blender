@@ -1447,23 +1447,30 @@ def attach_to_bone(obj, armature, bone_index):
     return True
 
 
-#: How much of its authored size a sprite dot is drawn at.
+#: How much of its authored size a sprite dot is drawn at, by DEFAULT.
+#:
+#: The preference of the same name overrides it, and zero there draws none.
 #:
 #: EVE's sprites are camera-facing billboards that grow with distance, so
 #: `minScale` is a screen-space number rather than a radius in the world.
 #: Taken literally it makes beach balls. A tenth reads as a light on a hull,
 #: which is what the thing IS -- and the authored scales stay on the object,
 #: so nothing is lost by drawing it smaller.
-SPRITE_SIZE = 0.1
+SPRITE_SIZE = 0.047
 
 #: The rim falloff, as an exponent.
 #:
-#: This and the brightness together decide where the dot stops looking solid:
-#: the core blows out wherever t^falloff * brightness exceeds one, so a low
-#: exponent with a high brightness saturates most of the sphere and leaves the
-#: fade squeezed against the silhouette -- a hard edge. Six against twelve
-#: blows out only the middle and spends the rest of the sphere on the glow.
-SPRITE_FALLOFF = 6.0
+#: Lower means MORE visible glow, which is the opposite way round to the
+#: intuition. The core blows out wherever t^falloff * brightness exceeds one,
+#: and the halo is what the curve leaves between there and the silhouette:
+#:
+#:   6 against 12   core at t>0.66, but the tail is 0.05 at 40% of the radius
+#:                  -- arithmetically a gradient, visually a crisp dot
+#:   4 against 10   core at t>0.56, tail 0.26 at 40% -- a halo you can see
+#:
+#: Too low and the saturated part covers most of the sphere and the fade gets
+#: squeezed against the silhouette, which is a hard edge.
+SPRITE_FALLOFF = 4.0
 
 #: How hard the centre burns, in emission strength.
 #:
@@ -1471,7 +1478,7 @@ SPRITE_FALLOFF = 6.0
 #: while the curve below it does the halo -- which is how a point of light is
 #: drawn. Clamping to one instead gave a flat disc with a hard edge, and on a
 #: low-poly sphere that is a hexagon.
-SPRITE_BRIGHTNESS = 12.0
+SPRITE_BRIGHTNESS = 10.0
 
 #: One sphere, shared by every sprite in the file. A sprite is a glowing DOT
 #: and a sphere reads as one from any direction -- which a flat quad does not,
@@ -1712,7 +1719,7 @@ def sprite_material(set_index, effect=None, resources=None):
 
 
 def build_sprite_sets(document, hull, collection, hull_sets=None,
-                      faction_slots=None, faction_tree=None):
+                      faction_slots=None, faction_tree=None, size=None):
     """The blinking lights: a glowing dot at each authored position.
 
     Every hull has them and they are the most numerous thing on it -- a Legion
@@ -1725,6 +1732,12 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
     equivalent for. The dot is built at minScale and maxScale is kept on the
     object, so nothing is lost and nothing is invented.
     """
+
+    # Zero means draw none of them: a set that is off costs nothing to build
+    # and nothing to look at.
+    size = SPRITE_SIZE if size is None else float(size)
+    if size <= 0.0:
+        return []
 
     armature = ship_armature(hull, collection)
     mesh = None
@@ -1757,7 +1770,7 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
             # importer scales a hull by 0.01 -- so they sat a hundred times too
             # far out at a hundred times the size, which reads as "the lights
             # are wrong" rather than "the sprites missed a transform".
-            scale = float(item.get("minScale") or 1.0) * SPRITE_SIZE
+            scale = float(item.get("minScale") or 1.0) * size
             local = mathutils.Matrix.LocRotScale(
                 mathutils.Vector(tuple(float(v) for v in
                                        (item.get("position") or (0.0, 0.0, 0.0)))[:3]),
@@ -1795,6 +1808,9 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
                 obj.material_slots[0].material = wearing
             obj["carbon_sprite_color"] = colour
             obj["carbon_sprite_min_scale"] = scale
+            # What it was BUILT with, so the preference can resize it later as
+            # a ratio rather than having to rebuild the ship.
+            obj["carbon_sprite_size"] = size
             obj["carbon_sprite_max_scale"] = float(item.get("maxScale") or scale)
             rate = float(item.get("blinkRate") or 0.0)
             phase = float(item.get("blinkPhase") or 0.0)
@@ -2545,7 +2561,7 @@ def item_matrix(item, hull):
 def build_ship(document_path, resources_directory, *, clear=True,
                globals_overrides=None, decal_sets=None, hull_record=None,
                owners=None, cache_directory="", banner_images=None,
-               faction_record=None):
+               faction_record=None, sprite_size=None):
     """Builds a whole ship: geometry, areas, decals, and the SOF that drives it.
 
     ONE call, because the panel and the command line must produce the same
@@ -2603,7 +2619,7 @@ def build_ship(document_path, resources_directory, *, clear=True,
                                      resources)
     sprite_objects = build_sprite_sets(document, primary, collection,
                                        (hull_record or {}).get("spriteSets"),
-                                       faction_slots, faction_tree)
+                                       faction_slots, faction_tree, sprite_size)
     banner_objects = build_banner_sets(document, primary, collection,
                                        (hull_record or {}).get("bannerSets"),
                                        owners, cache_directory, resources,

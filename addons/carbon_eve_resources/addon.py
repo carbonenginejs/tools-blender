@@ -12,6 +12,7 @@ import bpy
 import bpy.utils.previews
 from bpy.props import (
     BoolProperty,
+    FloatProperty,
     CollectionProperty,
     EnumProperty,
     IntProperty,
@@ -103,6 +104,31 @@ def _local_path_set(self, context):
 
     if (self.local_source or self.local_resfiles) and not self.use_local_source:
         self.use_local_source = True
+
+
+def _sprite_scale_changed(self, context):
+    """Resizes the sprites already in the scene, rather than at the next load.
+
+    A number somebody is tuning has to answer while they are looking at it.
+    Each sprite remembers the factor it was built with, so this is a ratio
+    against that rather than a rebuild -- which keeps it correct whatever the
+    hull scale was and whichever bone the sprite rides.
+
+    Zero means do not draw: hidden rather than deleted, so putting the number
+    back brings them all straight back.
+    """
+
+    wanted = float(self.sprite_scale)
+    for obj in bpy.data.objects:
+        was = obj.get("carbon_sprite_size")
+        if was is None:
+            continue
+        if wanted > 0.0 and float(was) > 0.0:
+            ratio = wanted / float(was)
+            obj.scale = tuple(v * ratio for v in obj.scale)
+            obj["carbon_sprite_size"] = wanted
+        obj.hide_viewport = wanted <= 0.0
+        obj.hide_render = wanted <= 0.0
 
 
 def _view_transform_chosen(self, context):
@@ -222,6 +248,22 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         subtype="FILE_PATH",
         default="",
     )
+    #: How big a sprite dot is drawn, as a fraction of its authored minScale.
+    #:
+    #: A knob because it is a JUDGEMENT: EVE's sprites are camera-facing
+    #: billboards that grow with distance, so the authored number is
+    #: screen-space and there is no single right size for a fixed sphere.
+    sprite_scale: FloatProperty(
+        name="Sprite size",
+        description="How big blinking lights are drawn, as a fraction of the "
+                    "size the SOF authored. Zero draws none of them",
+        default=0.047,
+        min=0.0,
+        soft_max=1.0,
+        step=1,
+        precision=3,
+        update=_sprite_scale_changed,
+    )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -247,6 +289,7 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
             row.operator(EVE_RESOURCE_OT_accept_creator_terms.bl_idname, text="Accept")
         layout.prop(self, "cache_directory")
         layout.prop(self, "view_transform_mode", expand=True)
+        layout.prop(self, "sprite_scale")
 
         banners = layout.box()
         banners.label(text="Banners")
@@ -892,6 +935,7 @@ def _build_fetched_ship(document, resources, problems) -> str:
             cache_directory=str(_cache_path(_prefs(bpy.context)) / "logos"),
             banner_images=banner_overrides(_prefs(bpy.context)),
             faction_record=_faction_record(dna),
+            sprite_size=float(getattr(_prefs(bpy.context), "sprite_scale", 0.047)),
         )
 
     if primary is None:

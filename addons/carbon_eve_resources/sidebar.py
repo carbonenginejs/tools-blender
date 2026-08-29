@@ -130,6 +130,11 @@ class CARBON_PT_sidebar_about(Panel):
         space.label(text="Colour space")
         space.prop(prefs, "view_transform_mode", expand=True)
 
+        # Sprite size, beside the colour space for the same reason: it is a
+        # judgement somebody makes while looking at a hull, and it applies on
+        # the spot rather than at the next load. Zero draws none.
+        self.layout.prop(prefs, "sprite_scale")
+
         # Banners: a tick and a path each. Somebody's own artwork, instead of
         # the logo fetched for whoever owns the ship -- which is what a person
         # wants when the ship belongs to nobody yet, or when they are showing
