@@ -1431,6 +1431,18 @@ def attach_to_bone(obj, armature, bone_index):
 #: so nothing is lost by drawing it smaller.
 SPRITE_SIZE = 0.2
 
+#: The rim falloff, as an exponent. Higher pulls the glow in tighter around
+#: the core; lower spreads it out into a wide halo.
+SPRITE_FALLOFF = 3.0
+
+#: How hard the centre burns, in emission strength.
+#:
+#: Deliberately far above one. The core then clips to white and reads as SOLID
+#: while the curve below it does the halo -- which is how a point of light is
+#: drawn. Clamping to one instead gave a flat disc with a hard edge, and on a
+#: low-poly sphere that is a hexagon.
+SPRITE_BRIGHTNESS = 25.0
+
 #: One sphere, shared by every sprite in the file. A sprite is a glowing DOT
 #: and a sphere reads as one from any direction -- which a flat quad does not,
 #: since EVE's are camera-facing billboards and Blender has no such thing
@@ -1449,9 +1461,10 @@ def sprite_mesh():
 
     mesh = bpy.data.meshes.new(SPRITE_MESH)
     working = bmesh.new()
-    # Subdivision 1 is 42 vertices: round enough at the size these are drawn,
-    # and a hull carries two hundred of them.
-    bmesh.ops.create_icosphere(working, subdivisions=1, radius=1.0)
+    # Subdivision 2 is 162 vertices. One was 42 and its silhouette read as a
+    # hexagon at any size worth seeing, which no amount of shading fixes.
+    # Two hundred of these is 32k vertices, which is nothing next to a hull.
+    bmesh.ops.create_icosphere(working, subdivisions=2, radius=1.0)
     working.to_mesh(mesh)
     working.free()
     for polygon in mesh.polygons:
@@ -1570,12 +1583,16 @@ def sprite_falloff(tree, strength_socket):
     middle.inputs[0].default_value = 1.0
     tree.links.new(weight.outputs["Facing"], middle.inputs[1])
 
+    # The curve, NOT clamped. Clamping made a flat disc with a hard edge; an
+    # exponent keeps a smooth falloff all the way to the silhouette, and the
+    # brightness below overdrives the middle so it clips to white and reads as
+    # solid. Solid centre, soft glow, one curve.
     squared = tree.nodes.new("ShaderNodeMath")
-    squared.operation = "MULTIPLY"
+    squared.operation = "POWER"
     squared.location = (-340, 180)
-    squared.label = "soft dot"
+    squared.label = "falloff"
+    squared.inputs[1].default_value = SPRITE_FALLOFF
     tree.links.new(middle.outputs[0], squared.inputs[0])
-    tree.links.new(middle.outputs[0], squared.inputs[1])
 
     lit = tree.nodes.new("ShaderNodeMath")
     lit.operation = "MULTIPLY"
@@ -1583,7 +1600,14 @@ def sprite_falloff(tree, strength_socket):
     lit.label = "x blink"
     tree.links.new(squared.outputs[0], lit.inputs[0])
     tree.links.new(strength_socket, lit.inputs[1])
-    return lit.outputs[0]
+
+    bright = tree.nodes.new("ShaderNodeMath")
+    bright.operation = "MULTIPLY"
+    bright.location = (0, 180)
+    bright.label = "brightness"
+    bright.inputs[1].default_value = SPRITE_BRIGHTNESS
+    tree.links.new(lit.outputs[0], bright.inputs[0])
+    return bright.outputs[0]
 
 
 def drive_blink(obj, rate, phase):
