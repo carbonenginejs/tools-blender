@@ -1429,7 +1429,7 @@ def attach_to_bone(obj, armature, bone_index):
 #: Taken literally it makes beach balls. A tenth reads as a light on a hull,
 #: which is what the thing IS -- and the authored scales stay on the object,
 #: so nothing is lost by drawing it smaller.
-SPRITE_SIZE = 0.1
+SPRITE_SIZE = 0.2
 
 #: One sphere, shared by every sprite in the file. A sprite is a glowing DOT
 #: and a sphere reads as one from any direction -- which a flat quad does not,
@@ -1548,23 +1548,34 @@ def sprite_falloff(tree, strength_socket):
     what it draws is bright in the middle and gone at the edge. A sphere lit
     flat is a solid ball, which is what made these look like beads on a hull.
 
-    Facing is 1 looking straight at the surface and 0 at the silhouette, so
-    squaring it gives a soft round glow from EVERY angle -- no image to
-    invent, and no camera-facing constraint per object, which is the other way
-    to get a billboard and costs one constraint on every one of two hundred
-    sprites.
+    Blender's Layer Weight `Facing` is 0 looking straight at the surface and 1
+    at the silhouette -- the opposite way round to what the name suggests, and
+    using it directly lit the RIM and left the middle dark, which reads as a
+    bubble rather than a light. So it is inverted first, then squared to tighten
+    the centre.
+
+    No image to invent, and no camera-facing constraint per object, which is
+    the other way to get a billboard and costs one constraint on each of two
+    hundred sprites.
     """
 
     weight = tree.nodes.new("ShaderNodeLayerWeight")
-    weight.location = (-520, 180)
+    weight.location = (-700, 180)
     weight.inputs["Blend"].default_value = 0.5
+
+    middle = tree.nodes.new("ShaderNodeMath")
+    middle.operation = "SUBTRACT"
+    middle.location = (-520, 180)
+    middle.label = "centre, not rim"
+    middle.inputs[0].default_value = 1.0
+    tree.links.new(weight.outputs["Facing"], middle.inputs[1])
 
     squared = tree.nodes.new("ShaderNodeMath")
     squared.operation = "MULTIPLY"
     squared.location = (-340, 180)
     squared.label = "soft dot"
-    tree.links.new(weight.outputs["Facing"], squared.inputs[0])
-    tree.links.new(weight.outputs["Facing"], squared.inputs[1])
+    tree.links.new(middle.outputs[0], squared.inputs[0])
+    tree.links.new(middle.outputs[0], squared.inputs[1])
 
     lit = tree.nodes.new("ShaderNodeMath")
     lit.operation = "MULTIPLY"
