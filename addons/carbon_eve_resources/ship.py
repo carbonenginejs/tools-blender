@@ -393,10 +393,24 @@ def apply_custom_masks(obj, masks, effects):
 
         obj[prefix + "mirrored"] = 1.0 if mask.get("isMirrored") else 0.0
 
+        # Override if present, else the fallback below -- never recomputed
+        # from anything else, which is the rule the addressing contract sets.
+        #
+        # The fallback is EDGE, not REPEAT. REPEAT is the one mode that tiles a
+        # pattern across a whole hull, and Carbon treats clamp as the pattern
+        # norm: `CustomMaskClamps` is set from `addressUMode == 3` and the
+        # shader lerps the pattern UV toward `clamp(uv, 0, 1)`.
+        #
+        # It IS a fallback and not a fact. The true answer is the effect
+        # container's declared sampler default, which the measured family data
+        # does not carry yet -- see
+        # `/docs/contracts/webgl2-emulated-addressing.md`.
         sampler = overrides.get(f"PatternMask{index + 1}MapSampler", {})
         obj[prefix + "wrap"] = (
-            address_to_mode.get(sampler.get("addressUMode", sampler.get("addressU", 1)), 0.0),
-            address_to_mode.get(sampler.get("addressVMode", sampler.get("addressV", 1)), 0.0),
+            address_to_mode.get(sampler.get("addressUMode",
+                                            sampler.get("addressU", 3)), 1.0),
+            address_to_mode.get(sampler.get("addressVMode",
+                                            sampler.get("addressV", 3)), 1.0),
             0.0,
         )
 
