@@ -1732,7 +1732,15 @@ HAZE_FALLOFF_NODE = "carbon haze falloff"
 HAZE_DENSITY_NODE = "carbon haze density"
 
 #: How dense a haze is, per unit of its authored alpha.
-HAZE_DENSITY = 1.0
+#:
+#: The density fed to Blender is this over the cloud's own RADIUS, because a
+#: volume's density is per unit of path length: the same number through a
+#: cloud two metres across and one a hundred and twenty metres across are two
+#: completely different clouds. Dividing by the radius makes the authored
+#: alpha mean what it should -- how much is absorbed passing THROUGH -- and
+#: makes the look independent of the importer's scale, which is what broke
+#: when hulls stopped arriving at a hundredth of their real size.
+HAZE_DENSITY = 0.6
 
 #: How quickly a haze thins towards its shell, as an exponent on the distance
 #: from its centre.
@@ -1740,7 +1748,7 @@ HAZE_DENSITY = 1.0
 #: Without this the density is UNIFORM inside the ellipsoid, so the cloud stops
 #: dead at the mesh surface -- a hard-edged blob, which is not what haze does.
 #: Higher keeps it near the middle; lower spreads it to the shell.
-HAZE_FALLOFF = 2.5
+HAZE_FALLOFF = 4.0
 
 #: How much a haze glows in the dark, apart from what the scene lights do.
 #:
@@ -1771,7 +1779,7 @@ def haze_mesh():
     return mesh
 
 
-def haze_material(faction_tree, slot, colour):
+def haze_material(faction_tree, slot, colour, radius=1.0):
     """A haze: a VOLUME, not a surface.
 
     `hazespherical.fx` carries no texture and no geometry beyond a sphere --
@@ -1780,9 +1788,11 @@ def haze_material(faction_tree, slot, colour):
     trick to fade at its edges and looks the same from every direction, which
     is the whole difficulty of the sprite dots solved for free.
 
-    The density comes from the authored ALPHA, which is around a tenth and
-    invisible on its own, so it is scaled to something a person can see and
-    the authored value is kept on the object.
+    The density comes from the authored ALPHA over the cloud's own RADIUS.
+    A volume's density is per unit of path length, so alpha alone describes a
+    different cloud at every size -- and at real hull scale, where a haze is a
+    hundred metres rather than one, it describes an opaque one. The authored
+    value is kept on the object either way.
     """
 
     name = f"{sof_faction_nodes.PREFIX} haze {slot}" if slot else "SofHaze"
@@ -1796,6 +1806,8 @@ def haze_material(faction_tree, slot, colour):
     volume = tree.nodes.new("ShaderNodeVolumePrincipled")
     volume.location = (0, 0)
     alpha = float(colour[3]) if len(colour) > 3 else 0.1
+    # Per metre of the path through it, not per cloud.
+    alpha /= max(float(radius), 1e-6)
 
     # Density that THINS towards the shell. The distance from the object's own
     # centre is 0 in the middle and 1 at the surface, because the shared mesh
@@ -1905,8 +1917,13 @@ def build_haze_sets(document, hull, collection, hull_sets=None,
                                               faction_slots, colour)
             if obj.material_slots:
                 obj.material_slots[0].link = "OBJECT"
+                # Its own size in WORLD units, which is what the density has
+                # to be divided by. The mesh is a unit sphere, so the scale
+                # in the matrix is the radius.
+                extent = obj.matrix_world.to_scale()
+                radius = (abs(extent.x) + abs(extent.y) + abs(extent.z)) / 3.0
                 obj.material_slots[0].material = haze_material(
-                    faction_tree, slot, colour)
+                    faction_tree, slot, colour, radius)
             if slot:
                 obj["carbon_faction_slot"] = slot
 

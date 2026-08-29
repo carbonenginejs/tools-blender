@@ -39,7 +39,12 @@ class GR2ImporterPreferences(PropertyGroup):
     import_scale: FloatProperty(
         name="Import scale",
         description="Global scale applied to imported objects.",
-        default=0.01,
+        # 1.0: a hull arrives at its REAL size, metres for metres. It was
+        # a hundredth, which kept a cruiser inside Blender's default view
+        # but left every light, radius and distance a hundred times
+        # smaller than the numbers the SOF authored -- and a sun computed
+        # against that reads as wrong however right its direction is.
+        default=1.0,
         min=1e-6,
         soft_max=1000.0,
     )
@@ -1688,7 +1693,8 @@ class IMPORT_SCENE_OT_carbon_gr2(Operator, ImportHelper):
     import_scale: FloatProperty(
         name="Scale",
         description="Global scale applied to imported objects.",
-        default=0.01,
+        # The real size, as above.
+        default=1.0,
         min=1e-6,
         soft_max=1000.0,
     )
