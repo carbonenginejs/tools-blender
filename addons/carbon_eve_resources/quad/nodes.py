@@ -1140,6 +1140,13 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         if heat_amount is not None:
             scaled = math("MULTIPLY", scaled, heat_amount, location=(-800, -930),
                           label="gated by boosters")
+        # The engine's own boost, which is not in the authored colour: ten for
+        # a general glow and a hundred for a heat one.
+        boost = (reference.GENERAL_HEAT_GLOW_MULTIPLIER
+                 if glow_color == "GeneralHeatGlowColor"
+                 else reference.GENERAL_GLOW_MULTIPLIER)
+        scaled = math("MULTIPLY", scaled, boost, location=(-760, -900),
+                      label=f"boost lights x{boost:g}")
         emission = vector("SCALE", value(glow_color), None, location=(-680, -900))
         links.new(scaled, emission.node.inputs["Scale"])
 

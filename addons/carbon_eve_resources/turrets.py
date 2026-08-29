@@ -16,6 +16,7 @@ is why neither is recomputed here.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import bpy
 from bpy.props import EnumProperty, StringProperty
@@ -29,63 +30,82 @@ from .core import resindex, sof_fetch, weapons
 #: Held because Blender does NOT keep a reference to the strings a dynamic
 #: `items` callback returns -- letting them be collected shows up as mangled
 #: labels, or a crash.
-_ITEMS: list = []
-_FAMILIES: list = []
+_ITEMS: dict = {}
 
 #: What a fitted turret is marked with, so it can be found and cleared.
 FITTED = "carbon_turret"
+
+
+
+#: What a locator's NAME says it takes, and which weapons fit it.
+#:
+#: The prefixes are `EveLocator2.Type` -- the engine reads a hardpoint's kind
+#: off its own name and nothing else, so `locator_xl_3a` takes an extra-large
+#: turret because of what it is CALLED. The slot on the right is the weapons
+#: library's own field, which is why a hull only offers what it actually has.
+KINDS = (
+    ("turret", "turrets", "Turrets"),
+    ("xl", "xlTurrets", "XL Turrets"),
+    ("launcher", "launchers", "Missiles"),
+    ("atomic", "atomics", "Atomics"),
+    ("chain", "chains", "Chains"),
+)
+
+KIND_SLOT = {kind: slot for kind, slot, _label in KINDS}
+
+#: `locator_turret_1a` -- the bay is the NUMBER and the letter is one muzzle.
+#:
+#: This is the engine's own grouping: it strips the trailing letter to get a
+#: prefix and binds one turret set per prefix, so 1a and 1b are two barrels of
+#: bay ONE rather than two hardpoints. Fitting per locator gives a Celestis
+#: twelve independent guns where it has six.
+BAY = re.compile(r"^locator_[a-z0-9]+_(\d+)[a-z]*$", re.IGNORECASE)
+
+
+def bay_of(locator) -> str:
+    """Which hardpoint a locator is a muzzle of, as its number."""
+
+    found = BAY.match(str(locator.get("carbon_locator_name")
+                          or locator.name.split("___")[0] or ""))
+    return found.group(1) if found else ""
 
 
 def _catalogue(context):
     return weapons.catalogue(service_access.client(context))
 
 
-def family_items(self, context):
-    global _FAMILIES
+def _items_for(slot):
+    """An items callback for one weapon slot, holding its own strings."""
 
-    found = weapons.families(_catalogue(context))
-    # "ALL", not "": Blender warns that an empty identifier matches no enum
-    # and falls back to index 0 on every redraw.
-    _FAMILIES = [("ALL", "All", "Every turret in the library")]
-    _FAMILIES += [(name, name.title(), f"{name} turrets") for name in found]
-    return _FAMILIES
+    def items(self, context):
+        rows = [row for row in weapons.catalogue(
+            service_access.client(context), slots=(slot,))]
+        if not rows:
+            _ITEMS[slot] = [("", "None available", "")]
+            return _ITEMS[slot]
+        # Keyed by TYPE ID. 602 turrets share just 57 models, so keying by the
+        # model path gives sixteen entries the same identifier -- and Blender
+        # answers every one of them with the first, so picking a weapon showed
+        # a different weapon's name.
+        _ITEMS[slot] = [(str(row["typeID"]), row["name"],
+                         f"{row['resPath'].rsplit('/', 1)[-1]}")
+                        for row in rows]
+        return _ITEMS[slot]
 
-
-def turret_items(self, context):
-    """Every turret the library lists, narrowed by family."""
-
-    global _ITEMS
-
-    rows = _catalogue(context)
-    wanted = getattr(self, "family", "ALL")
-    if wanted and wanted != "ALL":
-        rows = [row for row in rows if row["family"] == wanted]
-    if not rows:
-        _ITEMS = [("", "No turrets loaded", "The service is unreachable")]
-        return _ITEMS
-    # Keyed by TYPE ID. 602 turrets share just 57 models, so keying by the
-    # model path gives sixteen entries the same identifier -- and Blender then
-    # answers every one of them with the first, so picking a weapon showed a
-    # different weapon's name.
-    _ITEMS = [(str(row["typeID"]), row["name"],
-               f"{row['slot']} - {row['resPath'].rsplit('/', 1)[-1]}")
-              for row in rows]
-    return _ITEMS
+    return items
 
 
 class CARBON_TurretState(PropertyGroup):
-    family: EnumProperty(
-        name="Family",
-        description="Narrow the list. Read off the model path, and used for "
-                    "nothing else -- what a weapon IS comes from its slot",
-        items=family_items,
-    )
-    turret: EnumProperty(
-        name="Turret",
-        description="Which turret to mount on every hardpoint",
-        items=turret_items,
-    )
-    status: StringProperty(default="")
+    # One chooser per kind rather than one with a filter: the panels are shown
+    # side by side, so a single shared chooser would make picking a missile
+    # change what the turret panel says it will fit.
+    __annotations__ = {
+        kind: EnumProperty(name=label, items=_items_for(slot),
+                           description=f"Which weapon to mount on a "
+                                       f"{label.lower()} hardpoint")
+        for kind, slot, label in KINDS
+    }
+    __annotations__["status"] = StringProperty(default="")
 
 
 def _cache_root(context):
@@ -94,25 +114,25 @@ def _cache_root(context):
     return _cache_path(_prefs(context))
 
 
-def hardpoints(context):
-    """The turret locators of the ACTIVE ship, or of the whole file.
+def weapon_locators(context, kind=""):
+    """The weapon locators of the ACTIVE ship, or of the whole file.
 
     Whatever is selected decides which hull gets fitted; with nothing selected
     every hull in the file does, which is what a demo scene wants.
     """
 
-    chosen = [obj for obj in context.selected_objects] or list(bpy.data.objects)
+    wanted = {kind} if kind else set(KIND_SLOT)
+    found = [obj for obj in bpy.data.objects
+             if obj.get("carbon_locator_kind") in wanted]
+    if not context.selected_objects:
+        return found
+
     roots = set()
-    for obj in chosen:
+    for obj in context.selected_objects:
         node = obj
         while node is not None:
             roots.add(node.name)
             node = node.parent
-
-    found = [obj for obj in bpy.data.objects
-             if obj.get("carbon_locator_kind") == "turret"]
-    if not context.selected_objects:
-        return found
 
     kept = []
     for locator in found:
@@ -123,6 +143,35 @@ def hardpoints(context):
                 break
             node = node.parent
     return kept or found
+
+
+def hardpoints(context, kind=""):
+    """`[(kind, bay, [locators])]` -- what a person actually fits.
+
+    A hardpoint is a BAY, and a bay is one or more muzzles: `locator_turret_1a`
+    and `_1b` are two barrels of bay one. The engine groups them the same way,
+    by stripping the trailing letter to get a prefix and binding one turret set
+    to each.
+    """
+
+    bays = {}
+    for locator in weapon_locators(context, kind):
+        key = (str(locator.get("carbon_locator_kind") or ""), bay_of(locator))
+        bays.setdefault(key, []).append(locator)
+
+    def order(item):
+        (found_kind, bay), _ = item
+        return (found_kind, int(bay) if bay.isdigit() else 0)
+
+    return [(found_kind, bay, sorted(group, key=lambda o: o.name))
+            for (found_kind, bay), group in sorted(bays.items(), key=order)]
+
+
+def kinds_present(context):
+    """The weapon kinds this hull has, in the order KINDS lists them."""
+
+    found = {kind for kind, _bay, _group in hardpoints(context)}
+    return [row for row in KINDS if row[0] in found]
 
 
 def ship_of(locator):
@@ -164,7 +213,8 @@ def ship_faction(context) -> str:
     does when either faction fails to resolve.
     """
 
-    for locator in hardpoints(context):
+    for _kind, _bay, group in hardpoints(context):
+      for locator in group:
         node = locator
         while node is not None:
             dna = str(getattr(getattr(node, "carbon_sof", None), "dna", "")
@@ -283,10 +333,51 @@ def _turret_material(document, resources, name):
         {"name": name, "effect": effect}, family, resources, 0)
     if problem:
         print(f"  ! {problem}")
+    strip_patterns(material)
     return material
 
 
-def fit(context, document, resources, res_path: str, name: str):
+def strip_patterns(material):
+    """A turret has no pattern. Say so, rather than relying on the mask.
+
+    A turret's shader IS the hull's -- the same `quadv5` group, the same maps
+    -- minus the pattern layers: nothing paints a SKIN onto a gun. The mask
+    textures come back unauthored and are filled with black, which makes the
+    pattern blend contribute nothing already, but the pattern MATERIALS were
+    then left at white while a hull's sit at black.
+
+    Zeroing both the materials and the targets makes it true by construction
+    rather than by the mask happening to be black -- and the hull's pattern
+    targets are driven onto this material along with its dirt, so "happens to
+    be" is doing real work there.
+    """
+
+    if material is None:
+        return 0
+    group = next((node for node in material.node_tree.nodes
+                  if node.type == "GROUP"), None)
+    if group is None:
+        return 0
+
+    cleared = 0
+    for socket in group.inputs:
+        name = socket.name
+        if not (name.startswith("PMtl") or "attern" in name):
+            continue
+        try:
+            if hasattr(socket.default_value, "__len__"):
+                socket.default_value = tuple(
+                    0.0 for _ in socket.default_value[:-1]) + (1.0,)
+            else:
+                socket.default_value = 0.0
+        except (TypeError, AttributeError):
+            continue
+        cleared += 1
+    return cleared
+
+
+def fit(context, document, resources, res_path: str, name: str,
+        locators=None):
     """Places one turret on every hardpoint. MAIN thread only."""
 
     geometry = str(document.get("geometryResPath") or "")
@@ -294,9 +385,11 @@ def fit(context, document, resources, res_path: str, name: str):
     if not local:
         raise RuntimeError(f"no local file for {geometry}")
 
-    locators = hardpoints(context)
+    if locators is None:
+        locators = [locator for _kind, _bay, group in hardpoints(context)
+                    for locator in group]
     if not locators:
-        raise RuntimeError("this ship has no turret locators")
+        raise RuntimeError("this ship has no hardpoints of that kind")
 
     before = set(bpy.data.objects)
     bpy.ops.import_scene.carbon_gr2(filepath=str(local))
@@ -496,15 +589,20 @@ class CARBON_OT_fit_turrets(Operator):
     """Mount the chosen turret on every hardpoint of the selected ship"""
 
     bl_idname = "carbon.fit_turrets"
-    bl_label = "Fit Turrets"
+    bl_label = "Fit"
     bl_options = {"REGISTER", "UNDO"}
+
+    kind: StringProperty(default="turret", options={"HIDDEN"})
+    #: One bay, or empty for every bay of this kind.
+    bay: StringProperty(default="", options={"HIDDEN"})
 
     def execute(self, context):
         from . import addon
 
         state = context.window_manager.carbon_eve_turrets
-        if not state.turret:
-            self.report({"ERROR"}, "Choose a turret first")
+        chosen_id = getattr(state, self.kind, "")
+        if not chosen_id:
+            self.report({"ERROR"}, "Choose a weapon first")
             return {"CANCELLED"}
 
         client = service_access.client(context)
@@ -512,12 +610,18 @@ class CARBON_OT_fit_turrets(Operator):
             self.report({"ERROR"}, "The CarbonEngineJS service is unreachable")
             return {"CANCELLED"}
 
-        if not hardpoints(context):
-            self.report({"ERROR"}, "No turret locators; load a ship first")
+        wanted = [(kind, bay, group) for kind, bay, group
+                  in hardpoints(context, self.kind)
+                  if not self.bay or bay == self.bay]
+        if not wanted:
+            self.report({"ERROR"}, "No hardpoints; load a ship first")
             return {"CANCELLED"}
+        locators = [locator for _kind, _bay, group in wanted
+                    for locator in group]
 
-        chosen = next((row for row in _catalogue(context)
-                       if str(row["typeID"]) == state.turret), None)
+        chosen = next((row for row in weapons.catalogue(
+                           client, slots=(KIND_SLOT.get(self.kind),))
+                       if str(row["typeID"]) == chosen_id), None)
         if chosen is None:
             self.report({"ERROR"}, "That turret is no longer listed")
             return {"CANCELLED"}
@@ -527,9 +631,10 @@ class CARBON_OT_fit_turrets(Operator):
         faction = ship_faction(context)
 
         def work():
-            return (name, res_path) + fetch_turret(
+            document, resources, colours = fetch_turret(
                 client, res_path, cache_root, progress=addon._set_progress,
                 faction=faction)
+            return name, res_path, document, resources, colours, locators
 
         try:
             addon._launch_job(context, "turrets", work, f"Fetching {name}")
@@ -542,10 +647,11 @@ class CARBON_OT_fit_turrets(Operator):
 def finish_job(context, result) -> str:
     """Applies a fetched turret. MAIN thread only."""
 
-    name, res_path, document, resources, colours = result
+    name, res_path, document, resources, colours, locators = result
     state = context.window_manager.carbon_eve_turrets
-    clear_fitted(hardpoints(context))
-    count, material = fit(context, document, resources, res_path, name)
+    clear_fitted(locators)
+    count, material = fit(context, document, resources, res_path, name,
+                          locators)
     written = apply_faction_colours(material, colours)
     state.status = (f"{name} on {count} hardpoint(s)"
                     + (f", {written} faction value(s)" if written else ""))
@@ -559,45 +665,97 @@ class CARBON_OT_clear_turrets(Operator):
     bl_label = "Clear"
     bl_options = {"REGISTER", "UNDO"}
 
+    kind: StringProperty(default="", options={"HIDDEN"})
+    bay: StringProperty(default="", options={"HIDDEN"})
+
     def execute(self, context):
-        removed = clear_fitted()
+        if self.kind:
+            locators = [locator for kind, bay, group
+                        in hardpoints(context, self.kind)
+                        if not self.bay or bay == self.bay
+                        for locator in group]
+            removed = clear_fitted(locators)
+        else:
+            removed = clear_fitted()
         context.window_manager.carbon_eve_turrets.status = (
             f"removed {removed} object(s)" if removed else "nothing fitted")
         return {"FINISHED"}
 
 
-class CARBON_PT_sidebar_turrets(Panel):
-    """The turret fitter."""
+def _draw_hardpoints(self, context):
+    """One panel's body: the chooser, fit-all, and a row per bay."""
 
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "CarbonEngineJS"
-    bl_label = "Turrets"
-    bl_idname = "CARBON_PT_sidebar_turrets"
-    bl_options = {"DEFAULT_CLOSED"}
+    layout = self.layout
+    state = getattr(context.window_manager, "carbon_eve_turrets", None)
+    if state is None:
+        layout.label(text="Not registered")
+        return
 
-    def draw(self, context):
-        layout = self.layout
-        state = getattr(context.window_manager, "carbon_eve_turrets", None)
-        if state is None:
-            layout.label(text="Not registered")
-            return
+    bays = hardpoints(context, self.KIND)
+    layout.prop(state, self.KIND, text="")
 
-        points = len(hardpoints(context))
-        layout.label(text=f"{points} hardpoint(s)"
-                          + ("" if context.selected_objects else ", whole file"),
-                     icon="EMPTY_ARROWS")
-        layout.prop(state, "family")
-        layout.prop(state, "turret")
-        row = layout.row(align=True)
-        row.operator(CARBON_OT_fit_turrets.bl_idname, icon="TOOL_SETTINGS")
-        row.operator(CARBON_OT_clear_turrets.bl_idname, icon="X")
-        if state.status:
-            layout.label(text=state.status, icon="CHECKMARK")
+    row = layout.row(align=True)
+    fit = row.operator(CARBON_OT_fit_turrets.bl_idname, text="Fit All",
+                       icon="TOOL_SETTINGS")
+    fit.kind, fit.bay = self.KIND, ""
+    clear = row.operator(CARBON_OT_clear_turrets.bl_idname, text="",
+                         icon="X")
+    clear.kind, clear.bay = self.KIND, ""
+
+    for kind, bay, group in bays:
+        line = layout.row(align=True)
+        # What is on this bay already, if anything. Read off the fitted
+        # objects rather than remembered separately, so the panel cannot
+        # disagree with the scene.
+        fitted = next((obj.get("carbon_turret_name") for obj in bpy.data.objects
+                       if obj.get(FITTED)
+                       and obj.get("carbon_turret_locator")
+                       in {locator.name for locator in group}), None)
+        line.label(text=f"{bay}: {fitted or '-'}"
+                        + (f"  ({len(group)})" if len(group) > 1 else ""),
+                   icon="EMPTY_ARROWS")
+        one = line.operator(CARBON_OT_fit_turrets.bl_idname, text="",
+                            icon="IMPORT")
+        one.kind, one.bay = kind, bay
+        drop = line.operator(CARBON_OT_clear_turrets.bl_idname, text="",
+                             icon="X")
+        drop.kind, drop.bay = kind, bay
+
+    if state.status:
+        layout.label(text=state.status, icon="CHECKMARK")
 
 
-CLASSES = (CARBON_TurretState, CARBON_OT_fit_turrets, CARBON_OT_clear_turrets,
-           CARBON_PT_sidebar_turrets)
+def _make_panel(kind: str, label: str):
+    """One panel per weapon kind, shown only when the hull has that kind.
+
+    A hull offers what its LOCATORS say it offers -- a cruiser with no
+    `locator_xl_*` has no extra-large hardpoints, and a panel for them would
+    be a control that cannot do anything.
+    """
+
+    def poll(cls, context):
+        return bool(hardpoints(context, cls.KIND))
+
+    return type(
+        f"CARBON_PT_sidebar_hardpoints_{kind}",
+        (Panel,),
+        {
+            "bl_space_type": "VIEW_3D",
+            "bl_region_type": "UI",
+            "bl_category": "CarbonEngineJS",
+            "bl_label": f"Hardpoints - {label}",
+            "bl_idname": f"CARBON_PT_hardpoints_{kind}",
+            "bl_options": {"DEFAULT_CLOSED"},
+            "KIND": kind,
+            "poll": classmethod(poll),
+            "draw": _draw_hardpoints,
+        })
+
+
+PANELS = tuple(_make_panel(kind, label) for kind, _slot, label in KINDS)
+
+CLASSES = ((CARBON_TurretState, CARBON_OT_fit_turrets,
+            CARBON_OT_clear_turrets) + PANELS)
 
 
 def register():

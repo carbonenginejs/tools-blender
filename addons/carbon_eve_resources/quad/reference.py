@@ -78,6 +78,17 @@ NORMAL_BIAS = 0.0020000000949949026
 DUST_TILING = 20.0
 DUST_BIAS = 0.5
 
+#: How much the authored glow colours are boosted before they are emitted.
+#:
+#: The authored values are the colour a light IS, not how brightly it burns,
+#: and the engine multiplies them on the way in -- ten for a general glow, a
+#: hundred for a heat glow, under a comment that says "Boost lights".
+#:
+#: Without it every light on a hull is an order of magnitude too dim, which
+#: reads as the lights being broken rather than as a missing constant.
+GENERAL_GLOW_MULTIPLIER = 10.0
+GENERAL_HEAT_GLOW_MULTIPLIER = 100.0
+
 #: The glow map is squared and then raised to 1.2, so the exponent is 2.4.
 GLOW_INNER_EXPONENT = 2.0
 GLOW_OUTER_EXPONENT = 1.2000000476837158
