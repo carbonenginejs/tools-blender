@@ -131,6 +131,27 @@ def _sprite_scale_changed(self, context):
         obj.hide_render = wanted <= 0.0
 
 
+def _sprite_glow_changed(self, context):
+    """Re-spreads the glow on sprites already in the scene.
+
+    The same reason as the size: a curve somebody is judging by eye has to
+    answer while they are looking at it.
+
+    LOWER is more glow, which is the opposite of the intuition -- the number is
+    an exponent on the distance from the centre, so a small one keeps the tail
+    alive out towards the rim and a large one kills it just outside the core.
+    """
+
+    from .ship import SPRITE_FALLOFF_NODE
+
+    wanted = float(self.sprite_glow)
+    for material in bpy.data.materials:
+        tree = getattr(material, "node_tree", None)
+        node = tree.nodes.get(SPRITE_FALLOFF_NODE) if tree else None
+        if node is not None:
+            node.inputs[1].default_value = wanted
+
+
 def _view_transform_chosen(self, context):
     """Applied the moment it is chosen, not at the next ship load.
 
@@ -264,6 +285,22 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         precision=3,
         update=_sprite_scale_changed,
     )
+    #: How tightly a sprite's glow hugs its core.
+    #:
+    #: LOWER is MORE glow. It is the exponent on the distance from the centre,
+    #: so a small number keeps the tail alive out to the rim and a large one
+    #: kills it just outside the core.
+    sprite_glow: FloatProperty(
+        name="Sprite glow",
+        description="How far a blinking light's glow spreads. Lower is more "
+                    "glow; higher pulls it in tight around the centre",
+        default=2.5,
+        min=0.25,
+        soft_max=8.0,
+        step=10,
+        precision=2,
+        update=_sprite_glow_changed,
+    )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -290,6 +327,7 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         layout.prop(self, "cache_directory")
         layout.prop(self, "view_transform_mode", expand=True)
         layout.prop(self, "sprite_scale")
+        layout.prop(self, "sprite_glow")
 
         banners = layout.box()
         banners.label(text="Banners")

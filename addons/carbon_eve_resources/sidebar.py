@@ -133,7 +133,9 @@ class CARBON_PT_sidebar_about(Panel):
         # Sprite size, beside the colour space for the same reason: it is a
         # judgement somebody makes while looking at a hull, and it applies on
         # the spot rather than at the next load. Zero draws none.
-        self.layout.prop(prefs, "sprite_scale")
+        sprites = self.layout.row(align=True)
+        sprites.prop(prefs, "sprite_scale")
+        sprites.prop(prefs, "sprite_glow")
 
         # Banners: a tick and a path each. Somebody's own artwork, instead of
         # the logo fetched for whoever owns the ship -- which is what a person

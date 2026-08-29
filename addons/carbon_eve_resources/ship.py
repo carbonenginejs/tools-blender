@@ -1458,6 +1458,10 @@ def attach_to_bone(obj, armature, bone_index):
 #: so nothing is lost by drawing it smaller.
 SPRITE_SIZE = 0.047
 
+#: The name the falloff node carries, so the preference can find it in every
+#: sprite material without walking the graph looking for something plausible.
+SPRITE_FALLOFF_NODE = "carbon sprite falloff"
+
 #: The rim falloff, as an exponent.
 #:
 #: Lower means MORE visible glow, which is the opposite way round to the
@@ -1470,7 +1474,7 @@ SPRITE_SIZE = 0.047
 #:
 #: Too low and the saturated part covers most of the sphere and the fade gets
 #: squeezed against the silhouette, which is a hard edge.
-SPRITE_FALLOFF = 4.0
+SPRITE_FALLOFF = 2.5
 
 #: How hard the centre burns, in emission strength.
 #:
@@ -1478,7 +1482,7 @@ SPRITE_FALLOFF = 4.0
 #: while the curve below it does the halo -- which is how a point of light is
 #: drawn. Clamping to one instead gave a flat disc with a hard edge, and on a
 #: low-poly sphere that is a hexagon.
-SPRITE_BRIGHTNESS = 10.0
+SPRITE_BRIGHTNESS = 6.0
 
 #: One sphere, shared by every sprite in the file. A sprite is a glowing DOT
 #: and a sphere reads as one from any direction -- which a flat quad does not,
@@ -1627,7 +1631,8 @@ def sprite_falloff(tree, strength_socket):
     squared = tree.nodes.new("ShaderNodeMath")
     squared.operation = "POWER"
     squared.location = (-340, 180)
-    squared.label = "falloff"
+    squared.label = SPRITE_FALLOFF_NODE
+    squared.name = SPRITE_FALLOFF_NODE
     squared.inputs[1].default_value = SPRITE_FALLOFF
     tree.links.new(middle.outputs[0], squared.inputs[0])
 
