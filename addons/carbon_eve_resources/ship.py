@@ -803,6 +803,25 @@ def build_decals(document, hull, resources, family, decal_sets=None,
     skipped = {}
     boned = 0
 
+    # The hull's UVs, so a decal can read the hull's OWN maps where it sits.
+    #
+    # `decalv5` samples two sets: its own maps through the projection, and the
+    # hull's normal, dirt and dust at the MESH UV -- the decal is a re-draw of
+    # hull triangles and is lit as part of it. Copying only positions left the
+    # second set unreachable, so the hull's normal never reached the decal.
+    #
+    # UVs live per LOOP, not per vertex, so the source polygon has to be found
+    # again: a triangle's three vertex indices identify it.
+    source_uv = source.uv_layers.active if source.uv_layers else None
+    by_triangle = {}
+    if source_uv is not None:
+        for polygon in source.polygons:
+            if len(polygon.vertices) < 3:
+                continue
+            by_triangle[frozenset(polygon.vertices)] = {
+                vertex: source_uv.data[loop].uv.copy()
+                for vertex, loop in zip(polygon.vertices, polygon.loop_indices)}
+
     for decal in found:
         if not decal.triangles:
             skipped["no triangles"] = skipped.get("no triangles", 0) + 1
@@ -810,6 +829,7 @@ def build_decals(document, hull, resources, family, decal_sets=None,
 
         mesh = bpy.data.meshes.new(decal.name)
         bm = bmesh.new()
+        uvs = bm.loops.layers.uv.new("UV0") if by_triangle else None
         made = {}
         for triangle in decal.triangles:
             try:
@@ -820,7 +840,14 @@ def build_decals(document, hull, resources, family, decal_sets=None,
                         offset = mathutils.Vector(vertex.normal) * lift
                         made[index] = bm.verts.new(mathutils.Vector(vertex.co) + offset)
                     verts.append(made[index])
-                bm.faces.new(verts)
+                face = bm.faces.new(verts)
+                if uvs is not None:
+                    corners = by_triangle.get(frozenset(triangle))
+                    if corners:
+                        for loop, index in zip(face.loops, triangle):
+                            found_uv = corners.get(index)
+                            if found_uv is not None:
+                                loop[uvs].uv = found_uv
             except (IndexError, ValueError):
                 # A repeated triangle, or an index past the hull -- neither is
                 # worth losing the rest of the decal over.
@@ -959,6 +986,9 @@ def build_decal_material(decal, resources, obj=None, faction_slots=None,
         mlinks.new(projection.outputs["UV"], node.inputs["Vector"])
         sampled[name] = node
         row -= 300
+
+    wire_decal_normals(decal, resources, mnodes, mlinks, principled, projection,
+                       sampled)
 
     transparency = sampled.get("DecalTransparencyMap")
     albedo = sampled.get("DecalAlbedoMap")
@@ -1108,6 +1138,118 @@ def emissive_surface(mnodes, mlinks, output):
     mlinks.new(emission.outputs[0], mix.inputs[2])
     mlinks.new(mix.outputs[0], output.inputs["Surface"])
     return emission, mix
+
+
+def wire_decal_normals(decal, resources, mnodes, mlinks, principled, projection,
+                       sampled):
+    """A decal has TWO normals, and they live in different spaces.
+
+    The HULL's normal map is read at the MESH UV. A decal is a re-draw of hull
+    triangles and is lit as part of the hull, so it has to carry the same
+    surface detail as the plate around it or it reads as a sticker on smooth
+    metal. It is an ordinary tangent-space map.
+
+    The DECAL's own normal map is read through the PROJECTION, and its vectors
+    are in the DECAL's frame -- the one its position, rotation and scaling
+    describe -- not the surface's. So it is decoded, turned by the decal's own
+    rotation and handed over in OBJECT space. Feeding it as tangent-space would
+    light its relief as though every decal faced the same way, which is right
+    only for the one that happens to.
+
+    Summed and renormalised, which is the ordinary way to carry two
+    perturbations of one surface.
+    """
+
+    def texture(name, projected, y):
+        path = decal.textures.get(name)
+        local = resources.get(path) if path else None
+        if not local or not os.path.exists(local):
+            return None
+        image = quad_materials.load_texture(
+            local, name=resfile.display_name(path), logical_path=path)
+        if image is None:
+            return None
+        image.colorspace_settings.name = "Non-Color"
+        node = mnodes.new("ShaderNodeTexImage")
+        node.image = image
+        node.location = (-1240, y)
+        node.label = name
+        if projected:
+            node.extension = "CLIP"
+            mlinks.new(projection.outputs["UV"], node.inputs["Vector"])
+        else:
+            uv = mnodes.new("ShaderNodeUVMap")
+            uv.uv_map = "UV0"
+            uv.location = (-1440, y)
+            mlinks.new(uv.outputs["UV"], node.inputs["Vector"])
+        return node
+
+    hull = texture("NormalMap", False, -520)
+    own = sampled.get("DecalNormalMap") or texture("DecalNormalMap", True, -860)
+
+    vectors = []
+    if hull is not None:
+        node = mnodes.new("ShaderNodeNormalMap")
+        node.location = (-860, -520)
+        node.label = "hull normal, at the mesh UV"
+        mlinks.new(hull.outputs["Color"], node.inputs["Color"])
+        vectors.append(node.outputs["Normal"])
+
+    if own is not None:
+        # 0..1 back to a vector, which is what a normal map stores.
+        decode = mnodes.new("ShaderNodeVectorMath")
+        decode.operation = "MULTIPLY_ADD"
+        decode.location = (-1040, -860)
+        decode.label = "decode"
+        decode.inputs[1].default_value = (2.0, 2.0, 2.0)
+        decode.inputs[2].default_value = (-1.0, -1.0, -1.0)
+        mlinks.new(own.outputs["Color"], decode.inputs[0])
+
+        spin = mnodes.new("ShaderNodeAttribute")
+        spin.attribute_type = "OBJECT"
+        spin.attribute_name = "carbon_decal_rotation"
+        spin.location = (-1040, -1020)
+
+        turned = mnodes.new("ShaderNodeMapping")
+        # NORMAL, not POINT: it rotates and renormalises and applies no
+        # translation, which is what a direction needs.
+        turned.vector_type = "NORMAL"
+        turned.location = (-860, -860)
+        turned.label = "into the decal's own frame"
+        mlinks.new(decode.outputs[0], turned.inputs["Vector"])
+        mlinks.new(spin.outputs["Vector"], turned.inputs["Rotation"])
+
+        encode = mnodes.new("ShaderNodeVectorMath")
+        encode.operation = "MULTIPLY_ADD"
+        encode.location = (-700, -860)
+        encode.label = "encode"
+        encode.inputs[1].default_value = (0.5, 0.5, 0.5)
+        encode.inputs[2].default_value = (0.5, 0.5, 0.5)
+        mlinks.new(turned.outputs["Vector"], encode.inputs[0])
+
+        node = mnodes.new("ShaderNodeNormalMap")
+        node.space = "OBJECT"
+        node.location = (-540, -860)
+        node.label = "decal normal, in decal space"
+        mlinks.new(encode.outputs[0], node.inputs["Color"])
+        vectors.append(node.outputs["Normal"])
+
+    if not vectors:
+        return
+    combined = vectors[0]
+    if len(vectors) > 1:
+        added = mnodes.new("ShaderNodeVectorMath")
+        added.operation = "ADD"
+        added.location = (-360, -680)
+        added.label = "hull + decal"
+        mlinks.new(vectors[0], added.inputs[0])
+        mlinks.new(vectors[1], added.inputs[1])
+        unit = mnodes.new("ShaderNodeVectorMath")
+        unit.operation = "NORMALIZE"
+        unit.location = (-220, -680)
+        mlinks.new(added.outputs[0], unit.inputs[0])
+        combined = unit.outputs[0]
+    mlinks.new(combined, principled.inputs["Normal"])
 
 
 def wire_hull_breach(decal, principled, sampled, projection, mnodes, mlinks,
