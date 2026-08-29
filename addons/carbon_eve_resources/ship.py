@@ -2866,13 +2866,17 @@ def build_ship(document_path, resources_directory, *, clear=True,
                                        (hull_record or {}).get("bannerSets"),
                                        owners, cache_directory, resources,
                                        banner_images)
+    # The locators BEFORE the boosters: the boosters sit on them, and so will
+    # the turrets when they arrive.
+    locator_objects = build_locators(document, primary, collection)
+    booster_objects = build_boosters(document, primary, collection)
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material
     # sockets are driven from the hull.
     ship = ([primary] + list(decal_objects) + list(plane_objects)
             + list(sprite_objects) + list(haze_objects)
-            + list(banner_objects))
+            + list(banner_objects) + list(booster_objects))
     apply_ship_globals(ship, globals_overrides)
     drive_ship_sockets(ship, primary)
 
@@ -3014,3 +3018,288 @@ def prune_empty_collections():
         bpy.data.collections.remove(collection)
         removed += 1
     return removed
+
+
+# --- Locators, and the boosters that sit on them --------------------------
+
+#: How big a locator empty is drawn, as a fraction of the hull's radius.
+#:
+#: A locator has no size of its own -- it is a place, not a thing -- so this is
+#: only about being able to see one and click it. Proportional rather than
+#: fixed, because hulls run from frigates to titans.
+LOCATOR_SIZE = 0.012
+
+#: The kinds drawn by default. The rest are built but hidden: a cruiser has 271
+#: locators and 122 of them are `vds_ambient`, which would bury the outliner in
+#: points nobody asked for.
+LOCATOR_SHOWN = ("turret", "booster", "cargobay", "camera")
+
+
+def locator_matrix(locator, hull):
+    """One locator's world transform, whichever form it arrived in.
+
+    A named locator carries a 4x4 laid out ROW-major with the translation in
+    the last row, which is the transpose of what Blender wants. A set entry
+    carries a position, a quaternion the SOF calls `direction`, and a scale.
+    """
+
+    if locator.transform is not None:
+        rows = locator.transform
+        local = mathutils.Matrix((rows[0:4], rows[4:8], rows[8:12],
+                                  rows[12:16])).transposed()
+    else:
+        x, y, z, w = locator.rotation
+        local = mathutils.Matrix.LocRotScale(
+            mathutils.Vector(locator.position),
+            mathutils.Quaternion((w, x, y, z)),
+            mathutils.Vector(locator.scaling))
+    return (hull.matrix_world @ local) if hull is not None else local
+
+
+def build_locators(document, hull, collection, found=None):
+    """An empty per locator, grouped by kind.
+
+    These are the places everything else bolts onto -- turrets, boosters,
+    docking lights, the camera's look-at -- so they are built once, generically,
+    rather than each consumer reading the document its own way. An artist can
+    see them, snap to them, and parent their own work to them.
+
+    Never rendered: a locator is a place, not a thing.
+    """
+
+    from .core import locators as locator_module
+
+    found = locator_module.locators(document) if found is None else found
+    if not found:
+        return []
+
+    armature = ship_armature(hull, collection)
+    unit = abs(hull.matrix_world.to_scale().x) if hull is not None else 1.0
+    radius = float(document.get("boundingSphereRadius") or 0.0) or 100.0
+    size = max(radius * unit * LOCATOR_SIZE, 1e-4)
+
+    built = []
+    for locator in found:
+        obj = remember_name(
+            bpy.data.objects.new(
+                unique_name(locator.name, collection.name), None),
+            locator.name, collection.name)
+        obj.empty_display_type = ("ARROWS" if locator.kind in LOCATOR_SHOWN
+                                  else "PLAIN_AXES")
+        obj.empty_display_size = size
+        obj.hide_render = True
+
+        group = attachment_collection(collection, "locators", locator.kind)
+        group.objects.link(obj)
+        obj.matrix_world = locator_matrix(locator, hull)
+        attach_to_bone(obj, armature, locator.bone_index)
+
+        obj["carbon_locator_kind"] = locator.kind
+        obj["carbon_locator_set"] = locator.set_name
+        obj["carbon_locator_index"] = locator.index
+        stamp_identity(obj, locator.name, "locator", locator.kind)
+        if locator.kind not in LOCATOR_SHOWN:
+            obj.hide_viewport = True
+        built.append(obj)
+
+    counted = locator_module.kinds(found)
+    summary = ", ".join(f"{kind} x{count}" for kind, count
+                        in sorted(counted.items(), key=lambda row: -row[1]))
+    print(f"  built {len(built)} locator(s): {summary}")
+    return built
+
+
+#: The flame mesh, shared by every booster in the file.
+BOOSTER_MESH = "CarbonBooster flame"
+
+#: How wide the flame is at its far end, against its width at the nozzle.
+#:
+#: Not zero: an EVE booster does not taper to a point, it opens slightly and
+#: fades out, so a true cone reads as a spike.
+BOOSTER_TAPER = 0.45
+
+#: How bright the glow is, per unit of the authored colour.
+#:
+#: The authored glow colours are TINY, around 0.02, and the set carries its own
+#: `glowScale` -- typically 10 -- which is what brings them up. That is the
+#: SOF's own arrangement, so this is the remaining fudge and stays near one.
+BOOSTER_GLOW = 1.0
+
+#: The node the per-ship `boosterGain` drives, so the throttle is live.
+BOOSTER_GAIN_NODE = "carbon booster gain"
+
+
+def booster_mesh():
+    """A cone down NEGATIVE Z, one unit long, made once.
+
+    Measured rather than assumed: across five hulls of four races every booster
+    transform is pure scale and translation -- the mean cosine between the
+    locator's own Z and the ship's is exactly 1.000, so there is no rotation
+    anywhere -- and every booster sits at the stern. The flame therefore runs
+    aft along -Z, and the transform's Z scale is its LENGTH while X and Y are
+    its radius.
+    """
+
+    mesh = bpy.data.meshes.get(BOOSTER_MESH)
+    if mesh is not None:
+        return mesh
+
+    import bmesh
+
+    mesh = bpy.data.meshes.new(BOOSTER_MESH)
+    working = bmesh.new()
+    bmesh.ops.create_cone(
+        working, cap_ends=False, cap_tris=False, segments=16,
+        radius1=1.0, radius2=BOOSTER_TAPER, depth=1.0,
+        matrix=mathutils.Matrix.Translation((0.0, 0.0, -0.5)))
+    working.to_mesh(mesh)
+    working.free()
+    for polygon in mesh.polygons:
+        polygon.use_smooth = True
+    mesh.materials.append(None)
+    return mesh
+
+
+def booster_material(booster):
+    """The flame: emission that fades along its length, and with the throttle.
+
+    Unlit and additive, like every other glow on a hull -- a booster is light,
+    not a surface. It fades to nothing at the far end so the open cone has no
+    visible lid, and its brightness runs through one named node so the ship's
+    `boosterGain` can drive it.
+    """
+
+    material = bpy.data.materials.new(unique_name("SofBooster", ""))
+    material.use_nodes = True
+    material.blend_method = "BLEND"
+    tree = material.node_tree
+    tree.nodes.clear()
+
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    output.location = (500, 0)
+    emission = tree.nodes.new("ShaderNodeEmission")
+    emission.location = (200, 60)
+
+    scale = float(booster.get("glowScale") or 1.0) or 1.0
+    colour = tuple(float(v) for v in
+                   (booster.get("glowColor") or (1.0, 1.0, 1.0, 1.0)))
+    emission.inputs["Color"].default_value = tuple(
+        min(1.0, channel * scale) for channel in colour[:3]) + (1.0,)
+
+    # Along the flame: 1 at the nozzle, 0 at the far end. The mesh is a unit
+    # cone down -Z, so the object coordinate IS the distance travelled.
+    where = tree.nodes.new("ShaderNodeTexCoord")
+    where.location = (-700, -200)
+    parts = tree.nodes.new("ShaderNodeSeparateXYZ")
+    parts.location = (-520, -200)
+    tree.links.new(where.outputs["Object"], parts.inputs[0])
+
+    along = tree.nodes.new("ShaderNodeMath")
+    along.operation = "ADD"
+    along.location = (-360, -200)
+    along.use_clamp = True
+    along.label = "1 at the nozzle, 0 at the tip"
+    along.inputs[1].default_value = 1.0
+    tree.links.new(parts.outputs["Z"], along.inputs[0])
+
+    curve = tree.nodes.new("ShaderNodeMath")
+    curve.operation = "POWER"
+    curve.location = (-200, -200)
+    curve.inputs[1].default_value = 2.0
+    tree.links.new(along.outputs[0], curve.inputs[0])
+
+    gain = tree.nodes.new("ShaderNodeMath")
+    gain.operation = "MULTIPLY"
+    gain.location = (-40, -200)
+    gain.name = gain.label = BOOSTER_GAIN_NODE
+    gain.inputs[1].default_value = BOOSTER_GLOW
+    tree.links.new(curve.outputs[0], gain.inputs[0])
+    tree.links.new(gain.outputs[0], emission.inputs["Strength"])
+
+    # The same value drives the alpha, so a throttled-down booster fades out
+    # instead of staying as a dark cone stuck to the hull.
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (200, -160)
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    mix.location = (340, 0)
+    tree.links.new(gain.outputs[0], mix.inputs["Fac"])
+    tree.links.new(transparent.outputs[0], mix.inputs[1])
+    tree.links.new(emission.outputs[0], mix.inputs[2])
+    tree.links.new(mix.outputs[0], output.inputs["Surface"])
+    return material
+
+
+def build_boosters(document, hull, collection):
+    """The engine flames, one per booster item.
+
+    The set carries what every booster shares -- the glow and halo colours, the
+    light, whether it is always on -- and each item carries its own transform,
+    whether it trails, and which atlas cell its flame uses. Everything without
+    a Blender equivalent is kept on the object so the ship stays exportable.
+    """
+
+    booster = document.get("boosters") or {}
+    items = booster.get("items") or []
+    if not items:
+        return []
+
+    armature = ship_armature(hull, collection)
+    mesh = booster_mesh()
+    group = attachment_collection(collection, "boosters")
+    unit = abs(hull.matrix_world.to_scale().x) if hull is not None else 1.0
+    built, lights = [], []
+
+    for index, item in enumerate(items):
+        obj = remember_name(bpy.data.objects.new(
+            unique_name(f"booster_{index}", collection.name), mesh),
+            f"booster_{index}", collection.name)
+        group.objects.link(obj)
+
+        rows = tuple(float(v) for v in (item.get("transform") or ()))
+        if len(rows) == 16:
+            local = mathutils.Matrix((rows[0:4], rows[4:8], rows[8:12],
+                                      rows[12:16])).transposed()
+            obj.matrix_world = ((hull.matrix_world @ local)
+                                if hull is not None else local)
+
+        if obj.material_slots:
+            obj.material_slots[0].link = "OBJECT"
+            obj.material_slots[0].material = booster_material(booster)
+
+        # Kept as authored: the atlas cells choose which flame the client
+        # draws, and a trail is a motion effect nothing here produces.
+        obj["carbon_booster_atlas"] = (int(item.get("atlasIndex0") or 0),
+                                       int(item.get("atlasIndex1") or 0))
+        obj["carbon_booster_has_trail"] = bool(item.get("hasTrail"))
+        obj["carbon_booster_functionality"] = tuple(
+            float(v) for v in (item.get("functionality") or (0, 0, 0, 0)))
+        obj["carbon_booster_light_scale"] = float(item.get("lightScale") or 1.0)
+        stamp_identity(obj, f"booster_{index}", "booster")
+        built.append(obj)
+
+        # One light per booster, from the SET's light: every booster on a hull
+        # shares its colour and radius, and only the scale is per item.
+        colour = tuple(float(v) for v in
+                       (booster.get("lightColor") or (0, 0, 0, 0)))
+        reach = float(booster.get("lightRadius") or 0.0)
+        if any(colour[:3]) and reach > 0.0:
+            lamp = bpy.data.lights.new(
+                unique_name(f"booster_{index}_light", collection.name), "POINT")
+            lamp.color = colour[:3]
+            lamp.shadow_soft_size = (reach * float(item.get("lightScale") or 1.0)
+                                     * unit)
+            lamp.energy = reach * unit
+            light = remember_name(bpy.data.objects.new(lamp.name, lamp),
+                                  f"booster_{index}_light", collection.name)
+            light.matrix_world = obj.matrix_world
+            group.objects.link(light)
+            attach_to_bone(light, armature, -1)
+            light["carbon_booster_light_scale"] = float(
+                item.get("lightScale") or 1.0)
+            lights.append(light)
+
+    trails = sum(1 for item in items if item.get("hasTrail"))
+    print(f"  built {len(built)} booster(s) and {len(lights)} booster light(s)"
+          + ("; always on" if booster.get("alwaysOn") else "")
+          + (f"; {trails} trail(s) authored, not drawn" if trails else ""))
+    return built + lights
