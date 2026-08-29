@@ -23,7 +23,7 @@ import os
 import bpy
 import mathutils
 
-from . import logos, placeholders, sof_enums
+from . import logos, placeholders, sof_enums, sof_faction_nodes
 from .core import resfile
 from .quad import decals as decal_module
 from .quad import interface as quad_interface
@@ -1432,6 +1432,53 @@ def sprite_mesh():
     return mesh
 
 
+def faction_colour_material(faction_tree, slot, fallback=(1.0, 1.0, 1.0, 1.0)):
+    """An additive glow that READS one of the faction's colour slots.
+
+    One material per slot, not per set and not per object: everything naming
+    `primary` shares this, so changing that colour on the faction changes all
+    of them at once. That is the whole point of the faction being a source.
+
+    Without a faction to read -- an unknown one, or a colour that matches no
+    slot -- the colour is baked in and the material stands alone.
+    """
+
+    name = f"{sof_faction_nodes.PREFIX} {slot}" if faction_tree is not None         else "SofFaction literal"
+    material = bpy.data.materials.new(unique_name(name, ""))
+    material.use_nodes = True
+    tree = material.node_tree
+    tree.nodes.clear()
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    output.location = (400, 0)
+
+    emission = tree.nodes.new("ShaderNodeEmission")
+    emission.location = (0, 0)
+    emission.inputs["Strength"].default_value = 1.0
+
+    source = None
+    if faction_tree is not None and slot in {s.name for s in faction_tree.interface.items_tree if getattr(s, "in_out", "") == "OUTPUT"}:
+        node = tree.nodes.new("ShaderNodeGroup")
+        node.node_tree = faction_tree
+        node.location = (-300, 0)
+        source = node.outputs.get(slot)
+    if source is not None:
+        tree.links.new(source, emission.inputs["Color"])
+        material["carbon_faction_slot"] = str(slot)
+    else:
+        emission.inputs["Color"].default_value = tuple(fallback[:3]) + (1.0,)
+
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (0, 180)
+    add = tree.nodes.new("ShaderNodeAddShader")
+    add.location = (200, 60)
+    tree.links.new(transparent.outputs[0], add.inputs[0])
+    tree.links.new(emission.outputs[0], add.inputs[1])
+    tree.links.new(add.outputs[0], output.inputs["Surface"])
+    if hasattr(material, "surface_render_method"):
+        material.surface_render_method = "BLENDED"
+    return material
+
+
 def sprite_material(set_index, effect=None, resources=None):
     """One material for a whole sprite set, tinted PER OBJECT.
 
@@ -1472,7 +1519,8 @@ def sprite_material(set_index, effect=None, resources=None):
     return material
 
 
-def build_sprite_sets(document, hull, collection, hull_sets=None):
+def build_sprite_sets(document, hull, collection, hull_sets=None,
+                      faction_slots=None, faction_tree=None):
     """The blinking lights: a glowing dot at each authored position.
 
     Every hull has them and they are the most numerous thing on it -- a Legion
@@ -1490,6 +1538,10 @@ def build_sprite_sets(document, hull, collection, hull_sets=None):
         and hull.parent.type == "ARMATURE" else None
     mesh = None
     built, lights = [], []
+    # One material per faction colour SLOT, shared across every set: a hull
+    # names four or five of them between all its sprites, so this is a handful
+    # of materials rather than one per set or one per sprite.
+    by_slot = {}
     for set_index, sprite_set in enumerate(find_typed(document, "EveSpriteSet")):
         sprites = sprite_set.get("sprites") or []
         if not sprites:
@@ -1513,14 +1565,33 @@ def build_sprite_sets(document, hull, collection, hull_sets=None):
             scale = float(item.get("minScale") or 1.0)
             obj.scale = (scale, scale, scale)
 
+            # The colour is the FACTION's, not the hull's. It arrives already
+            # resolved from the faction's colour set, which is checkable: the
+            # same hull under two factions gives two colours, and ab1_t1 is
+            # (0.761, 0.518, 0.271) under amarrbase and (1.0, 0.302, 0.0)
+            # under empire_gallente. So it is read from the item and never
+            # looked up against the hull.
             colour = tuple(float(v) for v in (item.get("color") or (1.0, 1.0, 1.0, 1.0)))
             # The object's OWN colour, which the set's one material reads
             # through an Object Info node. Sixty-seven sprites, one material.
             obj.color = (colour + (1.0, 1.0, 1.0, 1.0))[:4]
+            # Which of the faction's colours this sprite named. Everything
+            # naming the same slot shares one material and follows the faction
+            # when it is edited; a colour that matches no slot keeps its own.
+            slot = sof_faction_nodes.slot_of(faction_slots, colour)
+            if slot is not None:
+                if slot not in by_slot:
+                    by_slot[slot] = faction_colour_material(
+                        faction_tree, slot, colour)
+                wearing = by_slot[slot]
+                obj["carbon_faction_slot"] = slot
+            else:
+                wearing = material
+
             # The material rides the OBJECT, not the shared mesh.
             if obj.material_slots:
                 obj.material_slots[0].link = "OBJECT"
-                obj.material_slots[0].material = material
+                obj.material_slots[0].material = wearing
             obj["carbon_sprite_color"] = colour
             obj["carbon_sprite_min_scale"] = scale
             obj["carbon_sprite_max_scale"] = float(item.get("maxScale") or scale)
@@ -2243,7 +2314,8 @@ def item_matrix(item, hull):
 
 def build_ship(document_path, resources_directory, *, clear=True,
                globals_overrides=None, decal_sets=None, hull_record=None,
-               owners=None, cache_directory="", banner_images=None):
+               owners=None, cache_directory="", banner_images=None,
+               faction_record=None):
     """Builds a whole ship: geometry, areas, decals, and the SOF that drives it.
 
     ONE call, because the panel and the command line must produce the same
@@ -2287,8 +2359,21 @@ def build_ship(document_path, resources_directory, *, clear=True,
     plane_objects = build_plane_sets(document, primary, collection,
                                      (hull_record or {}).get("planeSets"),
                                      resources)
+    # The faction's colours, as one source every child reads. Built before the
+    # attachments so they can bind to it as they are made.
+    faction_slots = sof_faction_nodes.colour_slots(faction_record)
+    faction_tree = None
+    if faction_slots:
+        # The DNA names the faction in its second field, which is the name a
+        # person recognises and the one they typed.
+        parts = str(document.get("dna") or "").split(":")
+        faction_name = parts[1] if len(parts) > 1 and parts[1] else "faction"
+        faction_tree = sof_faction_nodes.faction_group(faction_name,
+                                                       faction_slots)
+
     sprite_objects = build_sprite_sets(document, primary, collection,
-                                       (hull_record or {}).get("spriteSets"))
+                                       (hull_record or {}).get("spriteSets"),
+                                       faction_slots, faction_tree)
     banner_objects = build_banner_sets(document, primary, collection,
                                        (hull_record or {}).get("bannerSets"),
                                        owners, cache_directory, resources,

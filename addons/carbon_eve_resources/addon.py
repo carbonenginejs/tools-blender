@@ -833,6 +833,35 @@ def apply_view_transform(prefs) -> bool:
     return True
 
 
+def _faction_record(dna: str) -> dict:
+    """The faction record for a DNA, or an empty dict.
+
+    It carries the colour set: thirty-eight named slots that most colours on
+    the ship actually come from, so the sprites, spotlights and banners can
+    read ONE source instead of each baking a value nobody can trace back.
+    """
+
+    from . import service_access
+    from .core import sof_resolution
+
+    try:
+        faction = sof_resolution.parse(dna).faction
+    except sof_resolution.DnaError:
+        return {}
+    if not faction:
+        return {}
+
+    client = service_access.client()
+    if client is None:
+        return {}
+    try:
+        record = client.request_json("GET", f"/eve/latest/sof/factions/{faction}")
+    except Exception as exc:
+        print(f"[CarbonEngineJS SOF] faction record unavailable for {faction}: {exc}")
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
 def _build_fetched_ship(document, resources, problems) -> str:
     """Builds a ship from a fetched document and its cached files."""
 
@@ -862,6 +891,7 @@ def _build_fetched_ship(document, resources, problems) -> str:
             hull_record=hull_record,
             cache_directory=str(_cache_path(_prefs(bpy.context)) / "logos"),
             banner_images=banner_overrides(_prefs(bpy.context)),
+            faction_record=_faction_record(dna),
         )
 
     if primary is None:
