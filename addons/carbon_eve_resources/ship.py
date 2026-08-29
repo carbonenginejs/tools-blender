@@ -1389,6 +1389,31 @@ def find_typed(document, wanted):
     return found
 
 
+def ship_armature(hull, collection=None):
+    """The armature an attachment should ride, or None.
+
+    The hull's own parent when it is skinned -- `parent_to_armature` puts a
+    skinned mesh under its rig. But an UNSKINNED hull still has a skeleton;
+    it simply is not its parent, and looking only there meant every
+    attachment on such a hull stored its bone index and bound to nothing.
+    Measured: a Legion bound 78 sprites of 78, an Abaddon 0 of 11.
+
+    So the ship's own collection is the fallback. One armature is the normal
+    case; where a hull brings several, the first is the one the attachments
+    were authored against.
+    """
+
+    if hull is not None and hull.parent is not None             and hull.parent.type == "ARMATURE":
+        return hull.parent
+    for candidate in getattr(collection, "objects", ()):
+        if candidate.type == "ARMATURE":
+            return candidate
+    for candidate in bpy.data.objects:
+        if candidate.type == "ARMATURE":
+            return candidate
+    return None
+
+
 def attach_to_bone(obj, armature, bone_index):
     """Parents an object to a bone, keeping where it already is.
 
@@ -1429,11 +1454,16 @@ def attach_to_bone(obj, armature, bone_index):
 #: Taken literally it makes beach balls. A tenth reads as a light on a hull,
 #: which is what the thing IS -- and the authored scales stay on the object,
 #: so nothing is lost by drawing it smaller.
-SPRITE_SIZE = 0.2
+SPRITE_SIZE = 0.1
 
-#: The rim falloff, as an exponent. Higher pulls the glow in tighter around
-#: the core; lower spreads it out into a wide halo.
-SPRITE_FALLOFF = 3.0
+#: The rim falloff, as an exponent.
+#:
+#: This and the brightness together decide where the dot stops looking solid:
+#: the core blows out wherever t^falloff * brightness exceeds one, so a low
+#: exponent with a high brightness saturates most of the sphere and leaves the
+#: fade squeezed against the silhouette -- a hard edge. Six against twelve
+#: blows out only the middle and spends the rest of the sphere on the glow.
+SPRITE_FALLOFF = 6.0
 
 #: How hard the centre burns, in emission strength.
 #:
@@ -1441,7 +1471,7 @@ SPRITE_FALLOFF = 3.0
 #: while the curve below it does the halo -- which is how a point of light is
 #: drawn. Clamping to one instead gave a flat disc with a hard edge, and on a
 #: low-poly sphere that is a hexagon.
-SPRITE_BRIGHTNESS = 25.0
+SPRITE_BRIGHTNESS = 12.0
 
 #: One sphere, shared by every sprite in the file. A sprite is a glowing DOT
 #: and a sphere reads as one from any direction -- which a flat quad does not,
@@ -1696,8 +1726,7 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
     object, so nothing is lost and nothing is invented.
     """
 
-    armature = hull.parent if hull is not None and hull.parent is not None \
-        and hull.parent.type == "ARMATURE" else None
+    armature = ship_armature(hull, collection)
     mesh = None
     built, lights = [], []
     blinking = 0
@@ -1863,7 +1892,7 @@ def build_plane_sets(document, hull, collection, hull_sets=None,
     each rides its bone rather than being skinned.
     """
 
-    armature = hull.parent if hull is not None and hull.parent is not None         and hull.parent.type == "ARMATURE" else None
+    armature = ship_armature(hull, collection)
     built, lights = [], []
     hidden = 0
     for set_index, plane_set in enumerate(find_typed(document, "EvePlaneSet")):
@@ -2164,7 +2193,7 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
     built.
     """
 
-    armature = hull.parent if hull is not None and hull.parent is not None         and hull.parent.type == "ARMATURE" else None
+    armature = ship_armature(hull, collection)
     built, lights = [], []
     for set_index, banner_set in enumerate(find_typed(document, "EveBannerSet")):
         banners = banner_set.get("banners") or []
