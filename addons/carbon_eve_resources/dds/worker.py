@@ -56,6 +56,17 @@ sys.exit(0 if made else 2)
 """
 
 
+#: The same trick for a nebula. It is a bigger job than a texture -- six cube
+#: faces of BC6H, about twenty seconds -- which is exactly why it belongs in
+#: another process rather than in front of the artist.
+ENVIRONMENT_SCRIPT = """
+import sys
+sys.path.insert(0, sys.argv[1])
+from carbon_eve_resources.dds import environment
+environment.convert_file(sys.argv[2], sys.argv[3])
+"""
+
+
 def addons_directory() -> Path:
     """The folder the add-on package sits in, for the child's path."""
 
@@ -70,12 +81,24 @@ def decode(source, destination, *, timeout: float = TIMEOUT):
     that is not BC7 at all.
     """
 
+    return _run(SCRIPT, source, destination, timeout=timeout)
+
+
+def convert_environment(source, destination, *, timeout: float = TIMEOUT):
+    """Turns one nebula cube into a Radiance `.hdr`. True when it wrote it."""
+
+    return _run(ENVIRONMENT_SCRIPT, source, destination, timeout=timeout)
+
+
+def _run(script: str, source, destination, *, timeout: float):
+    """One child, one job. False means fall back rather than fail."""
+
     python = python_executable()
     if python is None:
         return False
     try:
         done = subprocess.run(
-            [str(python), "-c", SCRIPT, str(addons_directory()),
+            [str(python), "-c", script, str(addons_directory()),
              str(source), str(destination)],
             capture_output=True, timeout=timeout, creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
@@ -83,6 +106,6 @@ def decode(source, destination, *, timeout: float = TIMEOUT):
     if done.returncode == 0:
         return True
     if done.returncode != 2 and done.stderr:
-        print(f"[CarbonEngineJS SOF] decode child: "
+        print(f"[CarbonEngineJS SOF] worker child: "
               f"{done.stderr.decode('utf-8', 'replace').strip()[:200]}")
     return False

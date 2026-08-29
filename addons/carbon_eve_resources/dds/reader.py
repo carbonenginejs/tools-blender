@@ -273,11 +273,12 @@ def to_rgba(data: bytes):
 ROOTS = {"cache": None, "local": None, "resfiles": None}
 
 
-def derived_path(source: Path) -> Path:
+def derived_path(source: Path, suffix: str = ".png") -> Path:
     """Where one decoded texture is kept. Always inside our cache.
 
     Beside its source when the source is already ours: same folder, same name,
-    `.png`. The source is addressed by its CONTENT, so the decode inherits
+    `suffix` -- `.png` for a texture, `.hdr` for a nebula turned into an
+    environment. The source is addressed by its CONTENT, so the decode inherits
     that -- shared by every hull using that texture, and pruned with the build
     it belongs to.
 
@@ -292,7 +293,7 @@ def derived_path(source: Path) -> Path:
         # Nothing configured to write to. Beside the source is the old
         # behaviour and only ever applies to our own cache in practice, but
         # the caller handles a decode it cannot store.
-        return source.with_suffix(".png")
+        return source.with_suffix(suffix)
 
     cache = Path(cache)
     for root in (cache, ROOTS.get("resfiles"), ROOTS.get("local")):
@@ -302,10 +303,10 @@ def derived_path(source: Path) -> Path:
             relative = source.relative_to(Path(root))
         except ValueError:
             continue
-        return (cache / relative).with_suffix(".png")
+        return (cache / relative).with_suffix(suffix)
 
     # Somewhere else entirely: keep it by name rather than refusing to decode.
-    return cache / "translated" / (source.name + ".png")
+    return cache / "translated" / (source.name + suffix)
 
 
 def decode_to_png(source, destination=None):

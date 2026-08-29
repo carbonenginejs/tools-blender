@@ -34,11 +34,12 @@ def client(context=None):
     prefs = _preferences(context or bpy.context)
     # The name index is 6.4MB and changes only when EVE does, so it is kept in
     # the cache between sessions rather than downloaded on every start.
-    from .core import sof_lookup
+    from .core import nebula, sof_lookup
 
     cache = str(getattr(prefs, "cache_directory", "") or "").strip()
     root = bpy.path.abspath(cache) if cache else None
     sof_lookup.CACHE_ROOT["path"] = root
+    nebula.CACHE_ROOT["path"] = root
 
     # Everything this add-on WRITES goes in the cache. The two local folders
     # are read-only source material, and the decoder needs to know which is
