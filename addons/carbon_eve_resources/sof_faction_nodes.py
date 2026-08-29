@@ -133,26 +133,41 @@ def faction_group(faction: str, slots, *, rebuild: bool = False):
     return tree
 
 
-def slot_for(item, key, slots=None, colour=None):
-    """Which faction colour a thing names: by ID if it says, else by value.
+#: The runtime's SOF6 provenance properties: the original SOF selector kept
+#: beside the resolved value, under its own source field name with an
+#: underscore. Nothing here is invented -- no `_colorSet`, no `_colorTypes`,
+#: no reverse-inference from a colour.
+#:
+#: `_colorType`      sprite, spotlight, plane and haze items, and their lights
+#: `_glowColorType`  a decal whose glow was resolved from glowColorType
+#: `_lightColor`     a hull light owning the SOF6 lightColor selector
+#:
+#: A colour written as a vector carries none of these, because it named no
+#: slot: race booster colours, banner light colours and the damage emitters.
+SELECTORS = ("_colorType", "_glowColorType", "_lightColor")
 
-    The ID is the real answer. A decal names its glow as `glowColorType` in
-    the hull record -- 11, 12, 15 and 17 on an Abaddon are fire, hull,
-    darkhull and killmark -- and the SOF endpoint is gaining the same ids for
-    the rest, at which point nothing here has to look at a colour at all.
 
-    Until then the value is matched back, which is exact but not unique: on
-    amarrbase `primary` and `secondarySpotlight` hold the same colour, so
-    anything using either binds to the first. It follows the right VALUE and
-    carries the wrong label, and would come apart if somebody edited those two
-    slots away from each other. An id ends that.
+def slot_for(item, key="", slots=None, colour=None):
+    """Which faction colour a thing NAMED, by its own selector.
+
+    The selector is the answer, not the value. Matching a resolved colour back
+    to a slot is a guess that happens to be right most of the time and cannot
+    be right always: on amarrbase `primary` and `secondarySpotlight` hold the
+    same colour, so a match binds to whichever comes first and carries the
+    wrong label ever after.
+
+    So the selector is read where the runtime provides one, and matching is
+    left as the interim path for output that predates it. When the value came
+    from a vector rather than a selector there is nothing to name and nothing
+    is invented.
     """
 
-    for name in (key, f"{key}Type", "colorType", "colorId", "colorIndex"):
-        if name and isinstance(item, Mapping) and name in item:
-            slot = slot_named(item.get(name))
-            if slot is not None:
-                return slot
+    if isinstance(item, Mapping):
+        for name in ((key,) if key else ()) + SELECTORS:
+            if name and name in item:
+                slot = slot_named(item.get(name))
+                if slot is not None:
+                    return slot
     return slot_of(slots, colour)
 
 

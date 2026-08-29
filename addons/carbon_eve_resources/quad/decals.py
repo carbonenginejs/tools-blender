@@ -59,6 +59,19 @@ DECAL_TEXTURES = {
 DECAL_LIFT_FRACTION = 0.0004
 
 
+def _selector(value) -> int:
+    """One of the runtime's SOF selectors, or -1 when there is none.
+
+    Absent means the value did not come from a selector at all, which is a
+    different thing from a selector of zero.
+    """
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
 @dataclass(frozen=True, slots=True)
 class Decal:
     """One `EveSpaceObjectDecal`, projected onto a subset of hull triangles."""
@@ -80,6 +93,16 @@ class Decal:
     #: in when the source SOF is at hand -- the structure they feed is the same
     #: either way, which is the point of carrying them rather than inventing a
     #: name at the point of use.
+    #: What the SOF SELECTED, kept beside the resolved value.
+    #:
+    #: The runtime annotates its output with the original SOF6 selector under
+    #: an underscore: `_glowColorType` is the faction colour slot the glow was
+    #: resolved from, and `_logoType` the logo selector a decal was created
+    #: from. Both are -1 when the value did not come from a selector -- a
+    #: colour written as a vector has no slot to name, and inferring one from
+    #: the value would be inventing provenance.
+    glow_color_type: int = -1
+    logo_type: int = -1
     sof_name: str = ""
     visibility_group: str = ""
     #: The DECAL SET this belongs to. A set is the named group a consumer sees,
@@ -169,6 +192,8 @@ def read_decals(document) -> list:
             rotation=tuple(node.get("rotation") or (0.0, 0.0, 0.0, 1.0)),
             scaling=tuple(node.get("scaling") or (1.0, 1.0, 1.0)),
             parent_bone=int(node.get("parentBoneIndex", -1)),
+            glow_color_type=_selector(node.get("_glowColorType")),
+            logo_type=_selector(node.get("_logoType")),
             triangles=triangles_from_buffers(node.get("staticIndexBuffers")),
             textures={
                 str(r.get("name")): str(r.get("resourcePath"))
@@ -277,6 +302,7 @@ def name_decals(decals, decal_sets):
             rotation=decal.rotation, scaling=decal.scaling,
             parent_bone=decal.parent_bone, triangles=decal.triangles,
             textures=decal.textures, constants=decal.constants,
+            glow_color_type=decal.glow_color_type, logo_type=decal.logo_type,
             sof_name=item_name or decal.sof_name,
             visibility_group=group or decal.visibility_group,
             set_name=set_name or getattr(decal, "set_name", ""),

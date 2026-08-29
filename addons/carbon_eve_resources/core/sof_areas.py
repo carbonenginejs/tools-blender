@@ -120,12 +120,22 @@ def stamp_ship(objects: Iterable, hull_record: Mapping[str, Any] | None) -> dict
                 continue
             seen.add(material.name)
             result["materials"] += 1
-            area = match_area(
-                areas,
-                name=str(material.get("carbon_area", "") or ""),
-                index=_int(material.get("carbon_area_index"), default=-1),
-                shader=str(material.get("carbon_area_shader", "") or ""),
-            )
+            # The runtime says which area type it used, so where that is on
+            # the material there is nothing to recover: matching is for output
+            # that predates the annotation.
+            authored = material.get("carbon_area_type")
+            area = None
+            if authored is not None:
+                area = next((a for a in areas
+                             if _int(a.get("areaType"), default=-1) == _int(authored, default=-2)),
+                            {"areaType": _int(authored, default=0)})
+            if area is None:
+                area = match_area(
+                    areas,
+                    name=str(material.get("carbon_area", "") or ""),
+                    index=_int(material.get("carbon_area_index"), default=-1),
+                    shader=str(material.get("carbon_area_shader", "") or ""),
+                )
             if stamp_material(material, area):
                 result["matched"] += 1
                 name = sof_resolution.area_type_name(area.get("areaType"))

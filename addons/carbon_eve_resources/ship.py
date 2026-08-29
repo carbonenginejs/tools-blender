@@ -468,10 +468,19 @@ def assemble(document_path, resources_directory, *, clear=True,
             if not isinstance(index, int) or index >= slots:
                 warnings.append(f"{area.get('name')}: index {index} outside {slots} slots")
                 continue
-            # Which AREA this material is. The document does not carry the area
-            # TYPE that chose its materials -- `Tr2MeshArea` keeps name, index
-            # and count and drops it -- so record what it does carry, and let a
-            # later pass recover the type from the hull record by matching it.
+            # Which AREA this material is, and which area TYPE chose its
+            # materials.
+            #
+            # The type used to be missing: `Tr2MeshArea` keeps name, index and
+            # count and dropped it, so a later pass recovered it from the hull
+            # record by matching -- which found seven of twenty-six on a
+            # Legion. The runtime now annotates SOF-authored areas with
+            # `_areaType`, the selector it actually used, and depth-area clones
+            # inherit it. Where that is present it is the answer and no
+            # matching is needed.
+            authored = area.get("_areaType")
+            if authored is not None:
+                material["carbon_area_type"] = int(authored)
             material["carbon_area"] = str(area.get("name") or "")
             material["carbon_area_index"] = int(index)
             material["carbon_area_count"] = int(area.get("count") or 1)
@@ -977,7 +986,9 @@ def build_decal_material(decal, resources, obj=None, faction_slots=None,
         bind_faction_colour(mnodes, mlinks,
                             principled.inputs["Emission Color"], glow_colour,
                             faction_slots, faction_tree, (-200, 320),
-                            decal.constants, "DecalGlowColor")
+                            {"_glowColorType": decal.glow_color_type}
+                            if decal.glow_color_type >= 0 else None,
+                            "_glowColorType")
 
     if decal.shader == "decalholev5.fx":
         wire_hull_breach(decal, principled, sampled, projection, mnodes, mlinks,
@@ -1615,7 +1626,7 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
             # Which of the faction's colours this sprite named. Everything
             # naming the same slot shares one material and follows the faction
             # when it is edited; a colour that matches no slot keeps its own.
-            slot = sof_faction_nodes.slot_for(item, "color",
+            slot = sof_faction_nodes.slot_for(item, "_colorType",
                                               faction_slots, colour)
             if slot is not None:
                 if slot not in by_slot:
