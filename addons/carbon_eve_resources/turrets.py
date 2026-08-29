@@ -22,6 +22,7 @@ from bpy.props import EnumProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 
 from . import service_access
+from . import ship as ship_module
 from .core import resindex, sof_fetch, weapons
 
 
@@ -122,6 +123,35 @@ def hardpoints(context):
                 break
             node = node.parent
     return kept or found
+
+
+def ship_of(locator):
+    """The hull object a locator belongs to, or None.
+
+    The one carrying the per-ship values -- age, activation, booster gain,
+    kill count. Walking up from the locator finds it whichever collection the
+    turret ends up in.
+    """
+
+    # The ROOT first, then the same anchor rule the ship build used -- the
+    # biggest mesh under it. Every object of a ship carries the per-ship
+    # properties, but only one is the DRIVER SOURCE, and picking a different
+    # one silently decouples the turret: its dirt would then answer to an
+    # object nothing else writes to.
+    node = locator
+    root = None
+    while node is not None:
+        root = node
+        node = node.parent
+    if root is None:
+        return None
+
+    def descendants(obj):
+        yield obj
+        for child in obj.children:
+            yield from descendants(child)
+
+    return ship_module.ship_anchor(list(descendants(root)))
 
 
 def ship_faction(context) -> str:
@@ -311,6 +341,18 @@ def fit(context, document, resources, res_path: str, name: str):
             if material is not None and obj.type == "MESH":
                 obj.data.materials.clear()
                 obj.data.materials.append(material)
+
+        # A turret's DIRT is the ship's. It is bolted to the hull, so a dirty
+        # ship has dirty guns and moving the ship's age has to move both --
+        # the values are driven from the HULL rather than copied, exactly as a
+        # decal's are, so they cannot drift apart.
+        hull = ship_of(locator)
+        if hull is not None:
+            values = {key: hull[key] for key, (_, _default)
+                      in ship_module.nodes.SHIP_PROPERTIES.items()
+                      if hull.get(key) is not None}
+            ship_module.apply_ship_globals(copies, values)
+            ship_module.drive_ship_sockets(copies, hull)
         fitted.extend(copies)
 
     # The first import landed wherever the importer put it; put it with its
@@ -370,8 +412,15 @@ def faction_colours(faction_record, client):
         name = sof_materials.material_name_for(names, TURRET_AREA_TYPE, source)
         if not name:
             continue
-        values = sof_materials.material_values(
-            sof_materials.material(name, client))
+        record = sof_materials.material(name, client)
+        values = sof_materials.material_values(record)
+        # `AssignParameters` assigns EVERY parameter a material carries, not a
+        # chosen three, and `DustDiffuseColor` is one of them -- the colour the
+        # material goes when it is dirty. Left out, a dirty turret goes white
+        # while the hull beside it goes brown.
+        dust = ((record or {}).get("parameters") or {}).get("DustDiffuseColor")
+        if dust:
+            values = dict(values, dust=tuple(float(v) for v in dust[:3]))
         if values:
             found["materials"][slot] = {"name": name, **values}
 
@@ -412,6 +461,7 @@ def apply_faction_colours(material, colours):
     for slot, values in (colours.get("materials") or {}).items():
         for field, socket in (("diffuse", f"Mtl{slot}DiffuseColor"),
                               ("fresnel", f"Mtl{slot}FresnelColor"),
+                              ("dust", f"Mtl{slot}DustDiffuseColor"),
                               ("gloss", f"Mtl{slot}Gloss")):
             value = values.get(field)
             target = group.inputs.get(socket)
