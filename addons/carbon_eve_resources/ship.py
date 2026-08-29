@@ -1727,10 +1727,21 @@ def sprite_material(set_index, effect=None, resources=None):
 HAZE_MESH = "CarbonHaze sphere"
 
 #: How dense a haze is, per unit of its authored alpha.
+HAZE_DENSITY = 1.0
+
+#: How quickly a haze thins towards its shell, as an exponent on the distance
+#: from its centre.
 #:
-#: The alpha is around a tenth and the volume is a couple of units across at
-#: hull scale, so this is what turns "0.1" into something you can see.
-HAZE_DENSITY = 3.0
+#: Without this the density is UNIFORM inside the ellipsoid, so the cloud stops
+#: dead at the mesh surface -- a hard-edged blob, which is not what haze does.
+#: Higher keeps it near the middle; lower spreads it to the shell.
+HAZE_FALLOFF = 2.5
+
+#: How much a haze glows in the dark, apart from what the scene lights do.
+#:
+#: Small on purpose. At one the emission carried the whole look and the cloud
+#: read as a lamp rather than as air.
+HAZE_EMISSION = 0.05
 
 
 def haze_mesh():
@@ -1780,11 +1791,45 @@ def haze_material(faction_tree, slot, colour):
     volume = tree.nodes.new("ShaderNodeVolumePrincipled")
     volume.location = (0, 0)
     alpha = float(colour[3]) if len(colour) > 3 else 0.1
-    volume.inputs["Density"].default_value = alpha * HAZE_DENSITY
-    # Emission as well as scatter: a haze on a hull glows in the dark rather
-    # than waiting for a light to find it.
+
+    # Density that THINS towards the shell. The distance from the object's own
+    # centre is 0 in the middle and 1 at the surface, because the shared mesh
+    # is a unit sphere -- so one minus that, raised to a power, is a cloud that
+    # fades out instead of ending at the mesh.
+    where = tree.nodes.new("ShaderNodeTexCoord")
+    where.location = (-900, -260)
+    span = tree.nodes.new("ShaderNodeVectorMath")
+    span.operation = "LENGTH"
+    span.location = (-720, -260)
+    tree.links.new(where.outputs["Object"], span.inputs[0])
+
+    inward = tree.nodes.new("ShaderNodeMath")
+    inward.operation = "SUBTRACT"
+    inward.location = (-540, -260)
+    inward.label = "centre, not shell"
+    inward.use_clamp = True
+    inward.inputs[0].default_value = 1.0
+    tree.links.new(span.outputs["Value"], inward.inputs[1])
+
+    curve = tree.nodes.new("ShaderNodeMath")
+    curve.operation = "POWER"
+    curve.location = (-360, -260)
+    curve.label = "haze falloff"
+    curve.inputs[1].default_value = HAZE_FALLOFF
+    tree.links.new(inward.outputs[0], curve.inputs[0])
+
+    density = tree.nodes.new("ShaderNodeMath")
+    density.operation = "MULTIPLY"
+    density.location = (-180, -260)
+    density.label = "density"
+    density.inputs[1].default_value = alpha * HAZE_DENSITY
+    tree.links.new(curve.outputs[0], density.inputs[0])
+    tree.links.new(density.outputs[0], volume.inputs["Density"])
+
+    # A little emission so a haze is visible in the dark, but not so much that
+    # it reads as a lamp instead of as air.
     if "Emission Strength" in volume.inputs:
-        volume.inputs["Emission Strength"].default_value = 1.0
+        volume.inputs["Emission Strength"].default_value = HAZE_EMISSION
 
     source = None
     if faction_tree is not None and slot:
