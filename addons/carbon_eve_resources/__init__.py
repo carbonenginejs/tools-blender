@@ -3,7 +3,7 @@
 bl_info = {
     "name": "CarbonEngineJS",
     "author": "CarbonengineJS",
-    "version": (0, 5, 0),
+    "version": (0, 6, 0),
     "blender": (4, 0, 0),
     "location": "3D View > Sidebar > CarbonEngineJS",
     "description": "Build EVE ships from a SOF DNA: geometry, materials, decals "
