@@ -152,6 +152,30 @@ def _sprite_glow_changed(self, context):
             node.inputs[1].default_value = wanted
 
 
+def _haze_changed(self, context):
+    """Re-thins the hazes already in the scene.
+
+    Same reason as the sprite controls: a curve judged by eye has to answer
+    while somebody is looking at it. Density is rescaled against each haze's
+    OWN authored alpha rather than replacing it, so a faint haze stays fainter
+    than a thick one however the dial moves.
+    """
+
+    from .ship import HAZE_DENSITY_NODE, HAZE_FALLOFF_NODE
+
+    for material in bpy.data.materials:
+        tree = getattr(material, "node_tree", None)
+        if tree is None:
+            continue
+        curve = tree.nodes.get(HAZE_FALLOFF_NODE)
+        if curve is not None:
+            curve.inputs[1].default_value = float(self.haze_falloff)
+        density = tree.nodes.get(HAZE_DENSITY_NODE)
+        if density is not None:
+            alpha = float(material.get("carbon_haze_alpha", 0.1) or 0.1)
+            density.inputs[1].default_value = alpha * float(self.haze_density)
+
+
 def _view_transform_chosen(self, context):
     """Applied the moment it is chosen, not at the next ship load.
 
@@ -301,6 +325,22 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         precision=2,
         update=_sprite_glow_changed,
     )
+    #: How thick the haze clouds are, per unit of the alpha the SOF authored.
+    haze_density: FloatProperty(
+        name="Haze density",
+        description="How thick a haze cloud is. Zero clears them",
+        default=1.0, min=0.0, soft_max=10.0, step=10, precision=2,
+        update=_haze_changed,
+    )
+    #: How quickly a haze thins towards its shell. LOWER is a longer, gentler
+    #: gradient; higher keeps the cloud near its middle.
+    haze_falloff: FloatProperty(
+        name="Haze falloff",
+        description="How quickly a haze thins outwards. Lower is a longer, "
+                    "softer gradient; higher pulls it into the centre",
+        default=2.5, min=0.25, soft_max=8.0, step=10, precision=2,
+        update=_haze_changed,
+    )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -328,6 +368,8 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         layout.prop(self, "view_transform_mode", expand=True)
         layout.prop(self, "sprite_scale")
         layout.prop(self, "sprite_glow")
+        layout.prop(self, "haze_density")
+        layout.prop(self, "haze_falloff")
 
         banners = layout.box()
         banners.label(text="Banners")

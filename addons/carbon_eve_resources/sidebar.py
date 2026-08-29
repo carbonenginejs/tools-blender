@@ -136,6 +136,9 @@ class CARBON_PT_sidebar_about(Panel):
         sprites = self.layout.row(align=True)
         sprites.prop(prefs, "sprite_scale")
         sprites.prop(prefs, "sprite_glow")
+        haze = self.layout.row(align=True)
+        haze.prop(prefs, "haze_density")
+        haze.prop(prefs, "haze_falloff")
 
         # Banners: a tick and a path each. Somebody's own artwork, instead of
         # the logo fetched for whoever owns the ship -- which is what a person

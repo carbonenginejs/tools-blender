@@ -1726,6 +1726,11 @@ def sprite_material(set_index, effect=None, resources=None):
 #: The sphere a haze is drawn as, shared by every one in the file.
 HAZE_MESH = "CarbonHaze sphere"
 
+#: The names the haze nodes carry, so a preference can find them in every haze
+#: material without walking the graph looking for something plausible.
+HAZE_FALLOFF_NODE = "carbon haze falloff"
+HAZE_DENSITY_NODE = "carbon haze density"
+
 #: How dense a haze is, per unit of its authored alpha.
 HAZE_DENSITY = 1.0
 
@@ -1814,14 +1819,16 @@ def haze_material(faction_tree, slot, colour):
     curve = tree.nodes.new("ShaderNodeMath")
     curve.operation = "POWER"
     curve.location = (-360, -260)
-    curve.label = "haze falloff"
+    curve.label = HAZE_FALLOFF_NODE
+    curve.name = HAZE_FALLOFF_NODE
     curve.inputs[1].default_value = HAZE_FALLOFF
     tree.links.new(inward.outputs[0], curve.inputs[0])
 
     density = tree.nodes.new("ShaderNodeMath")
     density.operation = "MULTIPLY"
     density.location = (-180, -260)
-    density.label = "density"
+    density.label = HAZE_DENSITY_NODE
+    density.name = HAZE_DENSITY_NODE
     density.inputs[1].default_value = alpha * HAZE_DENSITY
     tree.links.new(curve.outputs[0], density.inputs[0])
     tree.links.new(density.outputs[0], volume.inputs["Density"])
@@ -1849,6 +1856,9 @@ def haze_material(faction_tree, slot, colour):
             volume.inputs["Emission Color"].default_value = flat
 
     tree.links.new(volume.outputs[0], output.inputs["Volume"])
+    # The authored alpha, kept so a density preference can rescale against it
+    # rather than replacing what the SOF said.
+    material["carbon_haze_alpha"] = alpha
     return material
 
 
