@@ -1622,6 +1622,40 @@ def attach_to_bone(obj, armature, bone_index):
     return True
 
 
+def attach_to_named_bone(obj, armature, name: str):
+    """Parents an object to the bone of the SAME NAME, if there is one.
+
+    This is how a hardpoint follows a moving hull. A locator carries no bone
+    index -- the named ones are just a name and a matrix -- and the engine
+    resolves them by NAME: `EveLocator2.GetTransform` multiplies in the bone
+    called the same thing when one is bound.
+
+    Most hulls have no such bone and nothing happens. The ones that do are the
+    ones that move: a Kronos has seven of its seventeen turret locators as
+    bones, which are exactly the hardpoints that deploy when it sieges.
+    """
+
+    if armature is None or not name:
+        return False
+    bone = armature.data.bones.get(str(name))
+    if bone is None:
+        return False
+
+    obj["carbon_bone_name"] = bone.name
+    world = obj.matrix_world.copy()
+    obj.parent = armature
+    obj.parent_type = "BONE"
+    obj.parent_bone = bone.name
+    # Bone parenting is relative to the bone's TAIL, and the object has not
+    # been evaluated since it was placed, so the inverse is computed here
+    # rather than left for Blender to work out later.
+    obj.matrix_parent_inverse = (
+        armature.matrix_world @ bone.matrix_local
+        @ mathutils.Matrix.Translation((0.0, bone.length, 0.0))).inverted()
+    obj.matrix_world = world
+    return True
+
+
 #: How much of its authored size a sprite dot is drawn at, by DEFAULT.
 #:
 #: The preference of the same name overrides it, and zero there draws none.
@@ -3307,6 +3341,11 @@ def build_locators(document, hull, collection, found=None):
         group.objects.link(obj)
         obj.matrix_world = locator_matrix(locator, hull)
         attach_to_bone(obj, armature, locator.bone_index)
+
+        # A named locator has no bone INDEX, so it is resolved by NAME -- the
+        # engine's own rule, and what makes a hardpoint ride a moving hull.
+        if locator.bone_index < 0:
+            attach_to_named_bone(obj, armature, locator.name)
 
         obj["carbon_locator_kind"] = locator.kind
         obj["carbon_locator_set"] = locator.set_name
