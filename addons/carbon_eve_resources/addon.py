@@ -1211,6 +1211,10 @@ def _poll_job():
             )
             if _catalog is not None and _context_terms_accepted(context):
                 _populate_results(context)
+        elif job.kind == "turrets":
+            from .turrets import finish_job as fit_turrets
+
+            state.status = fit_turrets(context, job.result)
         elif job.kind == "skybox":
             from .skybox import finish_job
 

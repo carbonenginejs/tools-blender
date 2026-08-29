@@ -105,6 +105,16 @@ def local_file(resources, path):
     return text if os.path.exists(text) else None
 
 
+#: The shared 1x1 black image's name, so there is one of it per file.
+#:
+#: It was referenced and never defined, which nothing noticed because a hull
+#: area binds every texture its member declares. A TURRET does not -- its
+#: effect carries a handful -- so the first turret fitted raised NameError out
+#: of the job thread and reported "name 'BLACK_IMAGE' is not defined" as the
+#: whole of its failure.
+BLACK_IMAGE = "CarbonShader black"
+
+
 def black_image():
     """A shared 1x1 black image, for texture slots with nothing authored.
 

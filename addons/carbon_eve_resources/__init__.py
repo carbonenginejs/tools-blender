@@ -18,17 +18,19 @@ def register():
     # The GR2 importer FIRST: every geometry import here goes through
     # `import_scene.carbon_gr2`, and a panel that loads ships without it is a
     # panel that reports an error instead of working.
-    from . import addon, export, gr2_importer, skybox
+    from . import addon, export, gr2_importer, skybox, turrets
 
     gr2_importer.register()
     addon.register()
     export.register()
     skybox.register()
+    turrets.register()
 
 
 def unregister():
-    from . import addon, export, gr2_importer, skybox
+    from . import addon, export, gr2_importer, skybox, turrets
 
+    turrets.unregister()
     skybox.unregister()
     export.unregister()
     addon.unregister()
