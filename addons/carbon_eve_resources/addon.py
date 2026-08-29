@@ -380,10 +380,10 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
     pattern_edge_blend: FloatProperty(
         name="Pattern edge blend",
         description="How far past its projection a clamped pattern mask "
-                    "fades, in UV. The authored wrap mode is untouched; this "
-                    "only stops a clamped edge texel running across the hull. "
-                    "Zero is the hard edge",
-        default=0.05, min=0.0, max=1.0, step=1, precision=3,
+                    "fades, in UV. Off by default: clamp is meant to carry "
+                    "the skin's edge colour across the hull, and fading it "
+                    "makes the paint stop partway along the plate",
+        default=0.0, min=0.0, max=1.0, step=1, precision=3,
         update=_pattern_edge_changed,
     )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
