@@ -411,7 +411,8 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
                target: str = "eve", progress: Optional[Callable] = None,
                opener=urlopen, cancelled: Optional[Callable] = None,
                local_root=None, resfiles_root=None,
-               prepare: Optional[Callable] = None) -> tuple:
+               prepare: Optional[Callable] = None,
+               extra_paths=()) -> tuple:
     """`(document, {res path: local file})` for one DNA.
 
     A resource that cannot be fetched is left OUT of the map rather than
@@ -435,7 +436,14 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
 
     document = document_for(dna, client, build=exact, target=target,
                             cache_root=cache_root)
-    paths = resource_paths(document)
+    # Paths the document does NOT name. A booster's shape atlas and its
+    # gradients are one: the document carries the shader and leaves every one
+    # of its texture paths null, so what a flame looks like has to be asked for
+    # separately or it is simply missing.
+    paths = tuple(resource_paths(document))
+    for path in extra_paths or ():
+        if path and path not in paths:
+            paths = paths + (path,)
     resources = {}
     problems = []
 

@@ -608,13 +608,23 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
                          if prefs.use_local_source and prefs.local_resfiles
                          else None)
 
+        # The booster's textures come from the RACE, and the document never
+        # names them, so they are asked for alongside the ship rather than
+        # after it -- one fetch, one cache pass, one progress line.
+        booster = _race_record(dna).get("booster") or {}
+        extra = tuple(path for path in (booster.get("shapeAtlasResPath"),
+                                        booster.get("gradient0ResPath"),
+                                        booster.get("gradient1ResPath"))
+                      if path)
+
         def fetch():
             return sof_fetch.fetch_ship(dna, client, cache_root,
                                         progress=_set_progress,
                                         cancelled=_job_cancelled,
                                         local_root=local_root,
                                         resfiles_root=resfiles_root,
-                                        prepare=_prepare_texture)
+                                        prepare=_prepare_texture,
+                                        extra_paths=extra)
 
         _launch_job(context, "sof_fetch",
                     lambda: _run_with_cache_stats(fetch, cache_root),
@@ -956,6 +966,37 @@ def apply_view_transform(prefs) -> bool:
     return True
 
 
+def _race_record(dna: str) -> dict:
+    """The race record for a DNA, or an empty dict.
+
+    The BOOSTER lives here, not on the faction and not on the hull: the shape
+    atlas that gives each exhaust its own outline, the gradients that colour
+    the flame along its length, and the two shape layers with their HDR
+    colours. The built document names the shader and leaves every one of its
+    texture paths null, so without this there is nothing to draw a flame with.
+    """
+
+    from . import service_access
+    from .core import sof_resolution
+
+    try:
+        race = sof_resolution.parse(dna).race
+    except sof_resolution.DnaError:
+        return {}
+    if not race:
+        return {}
+
+    client = service_access.client()
+    if client is None:
+        return {}
+    try:
+        record = client.request_json("GET", f"/eve/latest/sof/races/{race}")
+    except Exception as exc:
+        print(f"[CarbonEngineJS SOF] race record unavailable for {race}: {exc}")
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
 def _faction_record(dna: str) -> dict:
     """The faction record for a DNA, or an empty dict.
 
@@ -1015,6 +1056,7 @@ def _build_fetched_ship(document, resources, problems) -> str:
             cache_directory=str(_cache_path(_prefs(bpy.context)) / "logos"),
             banner_images=banner_overrides(_prefs(bpy.context)),
             faction_record=_faction_record(dna),
+            booster_record=(_race_record(dna).get("booster") or {}),
             sprite_size=float(getattr(_prefs(bpy.context), "sprite_scale", 0.047)),
         )
 

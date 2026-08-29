@@ -18,7 +18,9 @@ shaders, one with an approximation the panel could reach.
 from __future__ import annotations
 
 import json
+import math
 import os
+from pathlib import Path
 
 import bpy
 import mathutils
@@ -2800,7 +2802,7 @@ def item_matrix(item, hull):
 def build_ship(document_path, resources_directory, *, clear=True,
                globals_overrides=None, decal_sets=None, hull_record=None,
                owners=None, cache_directory="", banner_images=None,
-               faction_record=None, sprite_size=None):
+               faction_record=None, booster_record=None, sprite_size=None):
     """Builds a whole ship: geometry, areas, decals, and the SOF that drives it.
 
     ONE call, because the panel and the command line must produce the same
@@ -2869,7 +2871,8 @@ def build_ship(document_path, resources_directory, *, clear=True,
     # The locators BEFORE the boosters: the boosters sit on them, and so will
     # the turrets when they arrive.
     locator_objects = build_locators(document, primary, collection)
-    booster_objects = build_boosters(document, primary, collection)
+    booster_objects = build_boosters(document, primary, collection,
+                                     booster_record, resources)
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material
@@ -3109,133 +3112,301 @@ def build_locators(document, hull, collection, found=None):
     return built
 
 
-#: The flame mesh, shared by every booster in the file.
+#: The flame mesh, one per atlas cell, shared by every booster using it.
 BOOSTER_MESH = "CarbonBooster flame"
 
-#: How wide the flame is at its far end, against its width at the nozzle.
+#: How many stations along the flame, and how many points around it.
 #:
-#: Not zero: an EVE booster does not taper to a point, it opens slightly and
-#: fades out, so a true cone reads as a spike.
-BOOSTER_TAPER = 0.45
+#: The cross-section comes from a 32x32 mask, so 32 points around it is one
+#: per texel and more would be inventing detail the mask does not have.
+BOOSTER_RINGS = 14
+BOOSTER_SIDES = 32
 
-#: How bright the glow is, per unit of the authored colour.
+#: How far in the flame tapers by its far end, as a fraction of the nozzle.
 #:
-#: The authored glow colours are TINY, around 0.02, and the set carries its own
-#: `glowScale` -- typically 10 -- which is what brings them up. That is the
-#: SOF's own arrangement, so this is the remaining fudge and stays near one.
+#: Not to nothing: the gradient's alpha is still 0.3 at the end, so the flame
+#: is fading rather than closing, and a mesh that pinches to a point puts a
+#: hard vertex where the texture wants a soft tail.
+BOOSTER_TAIL = 0.12
+
+#: How the taper runs. Below one it holds its width and then narrows late,
+#: which is what a jet does; at one it is a straight cone.
+BOOSTER_TAPER = 0.55
+
+#: How bright the flame is, per unit of the authored shape colour.
+#:
+#: The shape colours are authored ABOVE one -- 8.7, 15, 11.9 on a Gallente
+#: cruiser -- because they are HDR emission, so this stays at one and the
+#: authored value does the work.
 BOOSTER_GLOW = 1.0
 
 #: The node the per-ship `boosterGain` drives, so the throttle is live.
 BOOSTER_GAIN_NODE = "carbon booster gain"
 
 
-def booster_mesh():
-    """A cone down NEGATIVE Z, one unit long, made once.
+def booster_profile(image, cell: int, count: int, sides: int = BOOSTER_SIDES):
+    """The outline of one exhaust, as a radius per angle.
+
+    The shape atlas is the per-ship part of a booster: each cell is a 32x32
+    picture of the exhaust OPENING -- a petal, an oval, a rectangle -- and the
+    flame is that outline carried aft. Reading it as geometry rather than as a
+    texture means the silhouette is real, so it can be seen from any angle,
+    selected, and exported.
+
+    Returns `sides` radii in 0..1, or None when the cell cannot be read.
+    """
+
+    width, height = image.size
+    if not width or not height or count <= 0:
+        return None
+    band = height // count
+    if band <= 0:
+        return None
+
+    pixels = tuple(image.pixels)
+    if len(pixels) < width * height * 4:
+        return None
+
+    # Blender's first row is the BOTTOM of the image; the atlas counts cells
+    # from the top, which is the order the SOF's indices use.
+    top = height - 1 - cell * band
+    centre = (width - 1) / 2.0, (band - 1) / 2.0
+    reach = min(centre) or 1.0
+
+    def lit(x: int, y: int) -> bool:
+        row = top - y
+        if row < 0 or row >= height or x < 0 or x >= width:
+            return False
+        return pixels[(row * width + x) * 4] > 0.5
+
+    # Every lit texel binned by ANGLE, keeping the furthest.
+    #
+    # Not a ray march outward: several cells are an OUTLINE with a dark middle
+    # rather than a filled shape, and a ray stepping along one angle slips
+    # between the outline's texels and reports a radius of zero. Binning every
+    # texel cannot miss one.
+    radii = [0.0] * sides
+    for y in range(band):
+        for x in range(width):
+            if not lit(x, y):
+                continue
+            dx, dy = x - centre[0], y - centre[1]
+            distance = math.hypot(dx, dy)
+            if distance <= 0.0:
+                continue
+            step = int((math.atan2(dy, dx) % (2.0 * math.pi))
+                       / (2.0 * math.pi) * sides) % sides
+            radii[step] = max(radii[step], distance)
+
+    # A bin with nothing in it takes the mean of its neighbours, so a thin
+    # outline does not leave a notch in the silhouette.
+    for step in range(sides):
+        if radii[step] > 0.0:
+            continue
+        before = next((radii[(step - k) % sides] for k in range(1, sides)
+                       if radii[(step - k) % sides] > 0.0), 0.0)
+        after = next((radii[(step + k) % sides] for k in range(1, sides)
+                      if radii[(step + k) % sides] > 0.0), 0.0)
+        radii[step] = (before + after) / 2.0 if before or after else 0.0
+    radii = [value / reach for value in radii]
+
+    if not any(radii):
+        return None
+    # Normalised so the widest point of any exhaust is the radius the item's
+    # own transform asks for.
+    widest = max(radii)
+    return [value / widest for value in radii]
+
+
+def booster_mesh(profile=None, key: str = ""):
+    """A flame: the exhaust outline carried aft and tapering in.
 
     Measured rather than assumed: across five hulls of four races every booster
     transform is pure scale and translation -- the mean cosine between the
-    locator's own Z and the ship's is exactly 1.000, so there is no rotation
-    anywhere -- and every booster sits at the stern. The flame therefore runs
-    aft along -Z, and the transform's Z scale is its LENGTH while X and Y are
-    its radius.
+    locator's Z and the ship's is exactly 1.000 -- and every booster sits at
+    the stern. So the flame runs aft along -Z, and the transform's Z scale is
+    its LENGTH while X and Y are its radius.
+
+    Without a profile it falls back to a circle, which is what a booster looked
+    like before the mask was read: right in size and placement, wrong in shape.
     """
 
-    mesh = bpy.data.meshes.get(BOOSTER_MESH)
+    name = f"{BOOSTER_MESH} {key}" if key else BOOSTER_MESH
+    mesh = bpy.data.meshes.get(name)
     if mesh is not None:
         return mesh
 
-    import bmesh
+    sides = len(profile) if profile else BOOSTER_SIDES
+    if not profile:
+        profile = [1.0] * sides
 
-    mesh = bpy.data.meshes.new(BOOSTER_MESH)
-    working = bmesh.new()
-    bmesh.ops.create_cone(
-        working, cap_ends=False, cap_tris=False, segments=16,
-        radius1=1.0, radius2=BOOSTER_TAPER, depth=1.0,
-        matrix=mathutils.Matrix.Translation((0.0, 0.0, -0.5)))
-    working.to_mesh(mesh)
-    working.free()
+    vertices, faces = [], []
+    for ring in range(BOOSTER_RINGS):
+        along = ring / (BOOSTER_RINGS - 1)
+        taper = 1.0 - (1.0 - BOOSTER_TAIL) * (along ** (1.0 / BOOSTER_TAPER))
+        for step in range(sides):
+            angle = 2.0 * math.pi * step / sides
+            radius = profile[step] * taper
+            vertices.append((radius * math.cos(angle),
+                             radius * math.sin(angle), -along))
+
+    for ring in range(BOOSTER_RINGS - 1):
+        base, following = ring * sides, (ring + 1) * sides
+        for step in range(sides):
+            nxt = (step + 1) % sides
+            faces.append((base + step, base + nxt,
+                          following + nxt, following + step))
+
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
     for polygon in mesh.polygons:
         polygon.use_smooth = True
     mesh.materials.append(None)
     return mesh
 
 
-def booster_material(booster):
-    """The flame: emission that fades along its length, and with the throttle.
+def booster_material(booster, record, resources, layer: int = 0):
+    """The flame's colour: a gradient along its length, in HDR.
 
-    Unlit and additive, like every other glow on a hull -- a booster is light,
-    not a surface. It fades to nothing at the far end so the open cone has no
-    visible lid, and its brightness runs through one named node so the ship's
-    `boosterGain` can drive it.
+    Two things the SOF separates and a first attempt conflates. `glowColor` is
+    the little sprite at the NOZZLE and is authored near 0.02; the FLAME's
+    colour is `shape0.color`, authored above one -- 8.7, 15, 11.9 on a Gallente
+    cruiser -- because it is emission and meant to blow out. Using the glow
+    colour for the flame gives a dim teal cone, which is what it did.
+
+    The gradient carries the rest: bright at the nozzle, gone within a quarter
+    of the length, with an alpha that keeps tailing off to 0.3 at the end.
     """
 
     material = bpy.data.materials.new(unique_name("SofBooster", ""))
     material.use_nodes = True
     material.blend_method = "BLEND"
+    material.show_transparent_back = False
     tree = material.node_tree
     tree.nodes.clear()
+    nodes, links = tree.nodes, tree.links
 
-    output = tree.nodes.new("ShaderNodeOutputMaterial")
-    output.location = (500, 0)
-    emission = tree.nodes.new("ShaderNodeEmission")
-    emission.location = (200, 60)
+    output = nodes.new("ShaderNodeOutputMaterial")
+    output.location = (700, 0)
+    emission = nodes.new("ShaderNodeEmission")
+    emission.location = (380, 80)
 
-    scale = float(booster.get("glowScale") or 1.0) or 1.0
+    shape = (record or {}).get(f"shape{layer}") or {}
     colour = tuple(float(v) for v in
-                   (booster.get("glowColor") or (1.0, 1.0, 1.0, 1.0)))
-    emission.inputs["Color"].default_value = tuple(
-        min(1.0, channel * scale) for channel in colour[:3]) + (1.0,)
+                   (shape.get("color")
+                    or booster.get("glowColor") or (1.0, 1.0, 1.0, 1.0)))[:3]
 
-    # Along the flame: 1 at the nozzle, 0 at the far end. The mesh is a unit
-    # cone down -Z, so the object coordinate IS the distance travelled.
-    where = tree.nodes.new("ShaderNodeTexCoord")
-    where.location = (-700, -200)
-    parts = tree.nodes.new("ShaderNodeSeparateXYZ")
-    parts.location = (-520, -200)
-    tree.links.new(where.outputs["Object"], parts.inputs[0])
+    # How far along the flame, 0 at the nozzle and 1 at the tail. The mesh runs
+    # from z=0 to z=-1, so the object coordinate IS the distance.
+    where = nodes.new("ShaderNodeTexCoord")
+    where.location = (-900, -100)
+    parts = nodes.new("ShaderNodeSeparateXYZ")
+    parts.location = (-720, -100)
+    links.new(where.outputs["Object"], parts.inputs[0])
 
-    along = tree.nodes.new("ShaderNodeMath")
-    along.operation = "ADD"
-    along.location = (-360, -200)
-    along.use_clamp = True
-    along.label = "1 at the nozzle, 0 at the tip"
-    along.inputs[1].default_value = 1.0
-    tree.links.new(parts.outputs["Z"], along.inputs[0])
+    along = nodes.new("ShaderNodeMath")
+    along.operation = "MULTIPLY"
+    along.location = (-560, -100)
+    along.label = "0 at the nozzle, 1 at the tail"
+    along.inputs[1].default_value = -1.0
+    links.new(parts.outputs["Z"], along.inputs[0])
 
-    curve = tree.nodes.new("ShaderNodeMath")
-    curve.operation = "POWER"
-    curve.location = (-200, -200)
-    curve.inputs[1].default_value = 2.0
-    tree.links.new(along.outputs[0], curve.inputs[0])
+    gradient = _booster_gradient(record, resources, layer)
+    tint = nodes.new("ShaderNodeVectorMath")
+    tint.operation = "MULTIPLY"
+    tint.location = (200, 80)
+    tint.label = "shape colour"
+    tint.inputs[1].default_value = colour
 
-    gain = tree.nodes.new("ShaderNodeMath")
+    if gradient is not None:
+        place = nodes.new("ShaderNodeCombineXYZ")
+        place.location = (-380, -100)
+        links.new(along.outputs[0], place.inputs["X"])
+        place.inputs["Y"].default_value = 0.5
+
+        sampled = nodes.new("ShaderNodeTexImage")
+        sampled.location = (-200, -60)
+        sampled.image = gradient
+        sampled.extension = "EXTEND"
+        sampled.interpolation = "Linear"
+        sampled.label = "gradient along the flame"
+        links.new(place.outputs[0], sampled.inputs["Vector"])
+        links.new(sampled.outputs["Color"], tint.inputs[0])
+        fade = sampled.outputs["Alpha"]
+    else:
+        # No gradient to read: a smooth fall-off, so the flame still ends.
+        tint.inputs[0].default_value = (1.0, 1.0, 1.0)
+        curve = nodes.new("ShaderNodeMath")
+        curve.operation = "SUBTRACT"
+        curve.location = (-200, -200)
+        curve.use_clamp = True
+        curve.inputs[0].default_value = 1.0
+        links.new(along.outputs[0], curve.inputs[1])
+        fade = curve.outputs[0]
+
+    links.new(tint.outputs[0], emission.inputs["Color"])
+
+    gain = nodes.new("ShaderNodeMath")
     gain.operation = "MULTIPLY"
-    gain.location = (-40, -200)
+    gain.location = (200, -160)
     gain.name = gain.label = BOOSTER_GAIN_NODE
     gain.inputs[1].default_value = BOOSTER_GLOW
-    tree.links.new(curve.outputs[0], gain.inputs[0])
-    tree.links.new(gain.outputs[0], emission.inputs["Strength"])
+    links.new(fade, gain.inputs[0])
+    emission.inputs["Strength"].default_value = 1.0
 
-    # The same value drives the alpha, so a throttled-down booster fades out
-    # instead of staying as a dark cone stuck to the hull.
-    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
-    transparent.location = (200, -160)
-    mix = tree.nodes.new("ShaderNodeMixShader")
-    mix.location = (340, 0)
-    tree.links.new(gain.outputs[0], mix.inputs["Fac"])
-    tree.links.new(transparent.outputs[0], mix.inputs[1])
-    tree.links.new(emission.outputs[0], mix.inputs[2])
-    tree.links.new(mix.outputs[0], output.inputs["Surface"])
+    # The gain drives the ALPHA, so throttling one down fades it out rather
+    # than leaving a shape stuck to the hull.
+    transparent = nodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (380, -160)
+    mix = nodes.new("ShaderNodeMixShader")
+    mix.location = (540, 0)
+    links.new(gain.outputs[0], mix.inputs["Fac"])
+    links.new(transparent.outputs[0], mix.inputs[1])
+    links.new(emission.outputs[0], mix.inputs[2])
+    links.new(mix.outputs[0], output.inputs["Surface"])
+
+    material["carbon_booster_shape_color"] = colour
     return material
 
 
-def build_boosters(document, hull, collection):
+def _booster_image(path, resources):
+    """One booster texture as a Blender image, or None.
+
+    These are not in the built document -- it names the shader and leaves every
+    texture path null -- so they are fetched from the RACE record alongside the
+    ship and arrive in the same map as everything else.
+    """
+
+    if not path or not resources:
+        return None
+    found = resources.get(path) or resources.get(str(path).lower())
+    if not found:
+        return None
+    existing = bpy.data.images.get(Path(found).name)
+    if existing is not None:
+        return existing
+    try:
+        image = bpy.data.images.load(str(found))
+    except RuntimeError:
+        return None
+    image["carbon_res_path"] = path
+    return image
+
+
+def _booster_gradient(record, resources, layer: int):
+    return _booster_image((record or {}).get(f"gradient{layer}ResPath"),
+                          resources)
+
+
+def build_boosters(document, hull, collection, record=None, resources=None):
     """The engine flames, one per booster item.
 
-    The set carries what every booster shares -- the glow and halo colours, the
-    light, whether it is always on -- and each item carries its own transform,
-    whether it trails, and which atlas cell its flame uses. Everything without
-    a Blender equivalent is kept on the object so the ship stays exportable.
+    Three sources, because the SOF splits them: the built document has the
+    ITEMS -- where each engine is, how big, which atlas cell -- the race record
+    has what a flame LOOKS like, and the atlas itself has the shape of each
+    exhaust. The document names the shader and leaves all four of its texture
+    paths null, so without the race record there is nothing to draw.
     """
 
     booster = document.get("boosters") or {}
@@ -3243,13 +3414,24 @@ def build_boosters(document, hull, collection):
     if not items:
         return []
 
+    record = record or {}
     armature = ship_armature(hull, collection)
-    mesh = booster_mesh()
     group = attachment_collection(collection, "boosters")
     unit = abs(hull.matrix_world.to_scale().x) if hull is not None else 1.0
-    built, lights = [], []
 
+    atlas = _booster_image(record.get("shapeAtlasResPath"), resources)
+    count = int(record.get("shapeAtlasCount") or 0)
+    shapes = {}
+
+    built, lights = [], []
     for index, item in enumerate(items):
+        cell = int(item.get("atlasIndex0") or 0)
+        if cell not in shapes:
+            profile = (booster_profile(atlas, cell, count)
+                       if atlas is not None and count else None)
+            shapes[cell] = booster_mesh(profile, f"{cell}" if atlas else "")
+        mesh = shapes[cell]
+
         obj = remember_name(bpy.data.objects.new(
             unique_name(f"booster_{index}", collection.name), mesh),
             f"booster_{index}", collection.name)
@@ -3264,10 +3446,11 @@ def build_boosters(document, hull, collection):
 
         if obj.material_slots:
             obj.material_slots[0].link = "OBJECT"
-            obj.material_slots[0].material = booster_material(booster)
+            obj.material_slots[0].material = booster_material(
+                booster, record, resources, 0)
 
-        # Kept as authored: the atlas cells choose which flame the client
-        # draws, and a trail is a motion effect nothing here produces.
+        # Kept as authored: the second atlas cell and the trail belong to
+        # layers this does not draw, and an export needs them.
         obj["carbon_booster_atlas"] = (int(item.get("atlasIndex0") or 0),
                                        int(item.get("atlasIndex1") or 0))
         obj["carbon_booster_has_trail"] = bool(item.get("hasTrail"))
@@ -3299,7 +3482,10 @@ def build_boosters(document, hull, collection):
             lights.append(light)
 
     trails = sum(1 for item in items if item.get("hasTrail"))
-    print(f"  built {len(built)} booster(s) and {len(lights)} booster light(s)"
+    shape = (f"{len(shapes)} exhaust shape(s) from the atlas"
+             if atlas is not None else "NO shape atlas: round fallback")
+    print(f"  built {len(built)} booster(s) and {len(lights)} booster light(s);"
+          f" {shape}"
           + ("; always on" if booster.get("alwaysOn") else "")
           + (f"; {trails} trail(s) authored, not drawn" if trails else ""))
     return built + lights
