@@ -116,6 +116,10 @@ DUST_ALPHA = "DustNoiseAlpha"
 PATTERN_PANELS = ("Pattern Material 1", "Pattern Material 2")
 PATTERN_SHARED_PANEL = "General"
 
+#: The projection group's edge-fade input, and the node that applies it.
+PATTERN_EDGE_SOCKET = "Edge Blend"
+PATTERN_EDGE_NODE = "carbon pattern edge"
+
 #: Object custom properties holding one ship's pattern projections.
 #:
 #: An `EveCustomMask` is per SHIP, not per area -- all four of a Legion's areas
@@ -366,8 +370,22 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
             "which is the only wrap mode that can cover nothing"
         )
 
+    blend = tree.interface.new_socket(
+        name=PATTERN_EDGE_SOCKET, in_out="INPUT", socket_type="NodeSocketFloat")
+    blend.description = (
+        "How far past the projection a clamped mask fades out, in UV. "
+        "The authored wrap mode is untouched; this only softens the edge "
+        "texel a clamp repeats forever"
+    )
+    blend.default_value = reference.PATTERN_EDGE_BLEND
+    blend.min_value = 0.0
+    blend.max_value = 1.0
+
     output = nodes.new("NodeGroupOutput")
     output.location = (900, 0)
+
+    group_in = nodes.new("NodeGroupInput")
+    group_in.location = (-1200, -900)
 
     rest = model_position(nodes, (-1200, 0))
 
@@ -569,14 +587,67 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
             covered.inputs[0].default_value = 1.0
             links.new(lost.outputs[0], covered.inputs[1])
 
+            # A clamped axis repeats ONE row of texels for the rest of the
+            # hull. In the client that row is not visible; here it draws as a
+            # straight line across the plate, because a hard clamp holds the
+            # edge texel at full strength however far outside the projection
+            # the surface goes.
+            #
+            # The wrap mode is authored and is left exactly as authored. This
+            # fades the mask out a little way past the projection instead, so
+            # the edge texel stops rather than running on. At zero it is the
+            # old hard behaviour.
+            def maths(op, a, b, location, label=""):
+                node = nodes.new("ShaderNodeMath")
+                node.operation = op
+                node.location = location
+                node.label = label
+                for slot, operand in enumerate((a, b)):
+                    if isinstance(operand, (int, float)):
+                        node.inputs[slot].default_value = float(operand)
+                    else:
+                        links.new(operand, node.inputs[slot])
+                return node.outputs[0]
+
+            low = maths("SUBTRACT", 0.0, value, (540, row - 620))
+            high = maths("SUBTRACT", value, 1.0, (540, row - 700))
+            outside = maths("MAXIMUM",
+                            maths("MAXIMUM", low, high, (620, row - 660)),
+                            0.0, (680, row - 660), "outside [0,1]")
+
+            fade = nodes.new("ShaderNodeMapRange")
+            fade.location = (760, row - 660)
+            fade.clamp = True
+            fade.interpolation_type = "SMOOTHSTEP"
+            fade.label = PATTERN_EDGE_NODE
+            fade.name = (PATTERN_EDGE_NODE if axis == 1
+                         else f"{PATTERN_EDGE_NODE} v")
+            links.new(outside, fade.inputs["Value"])
+            fade.inputs["From Min"].default_value = 0.0
+            links.new(group_in.outputs[PATTERN_EDGE_SOCKET],
+                      fade.inputs["From Max"])
+            fade.inputs["To Min"].default_value = 1.0
+            fade.inputs["To Max"].default_value = 0.0
+
+            # REPEAT never leaves the projection, so it never fades.
+            keep = nodes.new("ShaderNodeMix")
+            keep.data_type = "FLOAT"
+            keep.location = (840, row - 660)
+            links.new(is_repeat.outputs[0], keep.inputs["Factor"])
+            links.new(fade.outputs["Result"], keep.inputs[2])
+            keep.inputs[3].default_value = 1.0
+
+            softened = maths("MULTIPLY", covered.outputs[0], keep.outputs[0],
+                             (900, row - 140), "edge fade")
+
             if coverage is None:
-                coverage = covered.outputs[0]
+                coverage = softened
             else:
                 both = nodes.new("ShaderNodeMath")
                 both.operation = "MULTIPLY"
                 both.location = (820, row)
                 links.new(coverage, both.inputs[0])
-                links.new(covered.outputs[0], both.inputs[1])
+                links.new(softened, both.inputs[1])
                 coverage = both.outputs[0]
 
         uv = nodes.new("ShaderNodeCombineXYZ")

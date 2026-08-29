@@ -23,8 +23,11 @@ from bpy.props import EnumProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 
 from . import service_access
+import mathutils
+
 from . import ship as ship_module
 from .core import resindex, sof_fetch, weapons
+from .ship import unique_name
 
 
 #: Held because Blender does NOT keep a reference to the strings a dynamic
@@ -376,6 +379,12 @@ def strip_patterns(material):
     return cleared
 
 
+def self_name(name: str) -> str:
+    """A weapon's name as an object name: no spaces, no punctuation."""
+
+    return "".join(ch if ch.isalnum() else "_" for ch in str(name)).strip("_")
+
+
 def fit(context, document, resources, res_path: str, name: str,
         locators=None):
     """Places one turret on every hardpoint. MAIN thread only."""
@@ -398,7 +407,6 @@ def fit(context, document, resources, res_path: str, name: str,
         raise RuntimeError(f"{Path(local).name} imported nothing")
 
     material = _turret_material(document, resources, name)
-    roots = [obj for obj in imported if obj.parent is None] or imported[:1]
 
     fitted = []
     for order, locator in enumerate(locators):
@@ -407,8 +415,7 @@ def fit(context, document, resources, res_path: str, name: str,
         if order == 0:
             copies = imported
         else:
-            copies = []
-            mapping = {}
+            copies, mapping = [], {}
             for obj in imported:
                 clone = obj.copy()
                 if obj.data is not None:
@@ -416,17 +423,47 @@ def fit(context, document, resources, res_path: str, name: str,
                 mapping[obj] = clone
                 copies.append(clone)
             for obj, clone in mapping.items():
-                clone.parent = mapping.get(obj.parent, None)
+                if obj.parent in mapping:
+                    # Keep the model's OWN hierarchy, and its own local
+                    # transform with it.
+                    local = obj.matrix_local.copy()
+                    clone.parent = mapping[obj.parent]
+                    clone.matrix_parent_inverse.identity()
+                    clone.matrix_local = local
             for collection in locator.users_collection:
                 for clone in copies:
                     collection.objects.link(clone)
 
-        tops = [obj for obj in copies if obj.parent is None] or copies[:1]
-        for top in tops:
-            top.parent = locator
-            top.matrix_parent_inverse = locator.matrix_world.inverted()
-            top.matrix_world = locator.matrix_world
+        # A CONTAINER per bay, and the model goes under it untouched.
+        #
+        # Every root used to be slammed onto the locator's own transform, which
+        # is right only if a turret has exactly one root. A real turret has
+        # several -- barrels, a mount, an armature -- laid out relative to each
+        # other, and forcing them all to one transform collapses that layout:
+        # the barrels keep the locator's Z and lose their own X and Y, so half
+        # of them end up above the hull and half below.
+        #
+        # Parenting to an empty AT the locator moves the whole assembly and
+        # changes nothing inside it.
+        holder = bpy.data.objects.new(
+            unique_name(f"{self_name(name)}_{locator.name}", ""), None)
+        holder.empty_display_type = "PLAIN_AXES"
+        holder.empty_display_size = 0.5
+        holder.hide_render = True
+        for collection in locator.users_collection:
+            collection.objects.link(holder)
+        holder.parent = locator
+        holder.matrix_parent_inverse.identity()
+        holder.matrix_local = mathutils.Matrix.Identity(4)
 
+        for obj in copies:
+            if obj.parent is None or obj.parent not in copies:
+                local = obj.matrix_local.copy()
+                obj.parent = holder
+                obj.matrix_parent_inverse.identity()
+                obj.matrix_local = local
+
+        copies = copies + [holder]
         for obj in copies:
             obj[FITTED] = res_path
             obj["carbon_turret_locator"] = locator.name
@@ -447,12 +484,6 @@ def fit(context, document, resources, res_path: str, name: str,
             ship_module.apply_ship_globals(copies, values)
             ship_module.drive_ship_sockets(copies, hull)
         fitted.extend(copies)
-
-    # The first import landed wherever the importer put it; put it with its
-    # locator like every copy.
-    for obj in imported:
-        if obj.parent is None:
-            obj.parent = locators[0]
 
     print(f"  fitted {name} to {len(locators)} hardpoint(s), "
           f"{len(fitted)} object(s)")

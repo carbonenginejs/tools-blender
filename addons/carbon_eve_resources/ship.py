@@ -1013,6 +1013,23 @@ def build_decal_material(decal, resources, obj=None, faction_slots=None,
     if "DecalRoughnessMap" in sampled:
         mlinks.new(sampled["DecalRoughnessMap"].outputs["Color"], principled.inputs["Roughness"])
 
+    # Carbon's fresnel colour IS F0, and Principled expresses a dielectric's F0
+    # as `0.08 * Specular IOR Level * Specular Tint` -- so the map is scaled by
+    # 1/0.08 at full level to land F0 = colour, exactly as the hull's is.
+    #
+    # It was loaded and never connected. A decal whose colour lives in its F0
+    # rather than its albedo then draws BLACK: the Amarr logo is gold metal,
+    # and gold is a fresnel colour.
+    if "DecalFresnelMap" in sampled:
+        principled.inputs["Specular IOR Level"].default_value = 1.0
+        f0 = mnodes.new("ShaderNodeVectorMath")
+        f0.operation = "SCALE"
+        f0.location = (-40, -160)
+        f0.label = "F0 -> Specular Tint"
+        f0.inputs["Scale"].default_value = 1.0 / 0.08
+        mlinks.new(sampled["DecalFresnelMap"].outputs["Color"], f0.inputs[0])
+        mlinks.new(f0.outputs[0], principled.inputs["Specular Tint"])
+
     glow_colour = decal.constants.get("DecalGlowColor")
     intensity = decal.constants.get("DecalIntensityData")
     if glow is not None:

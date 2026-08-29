@@ -78,6 +78,18 @@ NORMAL_BIAS = 0.0020000000949949026
 DUST_TILING = 20.0
 DUST_BIAS = 0.5
 
+#: How far past its projection a CLAMPED pattern mask fades out, in UV.
+#:
+#: A clamp repeats one row of texels for the rest of the hull. The client does
+#: not show that row; we did, as a straight line across the plate, because a
+#: hard clamp holds the edge texel at full strength however far outside the
+#: projection the surface runs.
+#:
+#: This is a SOFTENING, not a mode: the authored wrap mode is untouched, which
+#: it has to be -- the modes are authored per mask and are not ours to choose.
+#: Zero restores the hard edge exactly.
+PATTERN_EDGE_BLEND = 0.05
+
 #: How much the authored glow colours are boosted before they are emitted.
 #:
 #: The authored values are the colour a light IS, not how brightly it burns,
