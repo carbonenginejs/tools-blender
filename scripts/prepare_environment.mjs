@@ -183,16 +183,29 @@ function toEquirectangular(faces, width)
 
     for (let py = 0; py < height; py++)
     {
-        const theta = ((py + 0.5) / height - 0.5) * Math.PI;
-        const up = Math.sin(theta), radius = Math.cos(theta);
+        // First row is the zenith, which is what the Radiance `-Y` header
+        // declares and what Blender then expects.
+        const elevation = (0.5 - (py + 0.5) / height) * Math.PI;
+        const up = Math.sin(elevation), radius = Math.cos(elevation);
 
         for (let px = 0; px < width; px++)
         {
             const phi = ((px + 0.5) / width - 0.5) * 2 * Math.PI;
-            // Blender is Z-up and EVE Y-up, so the sphere's up maps to the
-            // cube's Y. Which way the nebula faces is then a scene decision,
-            // adjustable with a Mapping node rather than baked in here.
-            const [ red, green, blue ] = sampleCube(faces, -radius * Math.cos(phi), up, radius * Math.sin(phi));
+            // Blender is Z-up and EVE Y-up, so a Blender direction is built
+            // first and then rotated into EVE's axes: (x, z, -y), a quarter
+            // turn about X and nothing else.
+            //
+            // That matters. This previously read (-x, up, z), which is the
+            // same turn with a MIRROR in it -- determinant -1 -- so the sky
+            // came out upside down and backwards. A mirrored nebula looks
+            // entirely plausible, which is why it went unnoticed; the
+            // determinant is the only thing that catches it.
+            //
+            // Which way the sky FACES is genuinely a scene decision, and
+            // stays one: it is a turn about the vertical, adjustable with a
+            // Mapping node.
+            const east = radius * Math.cos(phi), north = radius * Math.sin(phi);
+            const [ red, green, blue ] = sampleCube(faces, east, up, -north);
             const offset = (py * width + px) * 3;
             out[offset] = red;
             out[offset + 1] = green;
