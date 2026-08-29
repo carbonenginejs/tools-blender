@@ -20,10 +20,12 @@ ever again.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import bpy
-from bpy.props import EnumProperty, FloatProperty, StringProperty
+from bpy.props import (BoolProperty, EnumProperty, FloatProperty,
+                       StringProperty)
 from bpy.types import Operator, Panel, PropertyGroup
 
 from . import service_access
@@ -53,6 +55,18 @@ def region_items(self, context):
     return _ITEMS
 
 
+def _region_update(self, context):
+    """Picking a region IS the request. There is nothing else to confirm.
+
+    The button stays, for rebuilding after a cache clear, but choosing from
+    the list and then having to press something else was read -- correctly --
+    as the choice not working.
+    """
+
+    if self.region:
+        bpy.ops.carbon.apply_skybox("INVOKE_DEFAULT")
+
+
 def _strength_update(self, context):
     """Live, so the brightness can be dialled without rebuilding the sky.
 
@@ -76,6 +90,7 @@ class CARBON_SkyboxState(PropertyGroup):
         description="Whose sky to put behind the ship. Every system in a "
                     "region shares one nebula",
         items=region_items,
+        update=_region_update,
     )
     strength: FloatProperty(
         name="Strength",
@@ -84,6 +99,13 @@ class CARBON_SkyboxState(PropertyGroup):
                     "own nebulaIntensity on top",
         default=1.0, min=0.0, soft_max=10.0,
         update=_strength_update,
+    )
+    use_sun: BoolProperty(
+        name="Sun",
+        description="Add a sun lamp aimed out of the nebula's brightest "
+                    "point. The nebula names no sun direction, so this is "
+                    "read from the sky itself",
+        default=True,
     )
     status: StringProperty(default="")
 
@@ -133,6 +155,115 @@ def apply_world(scene, image, strength: float):
     return world
 
 
+def build_environment(client, nebula_id: int, cache_root, *, progress=None):
+    """The nebula's cube, fetched and converted. Returns the `.hdr` path.
+
+    Runs on the JOB thread: no `bpy` and no scene changes in here, only the
+    fetch and the child process. What comes back is applied on the main thread
+    by `finish_job`.
+    """
+
+    from .dds import reader as dds_reader, worker
+
+    path = nebula.cube_path(client, nebula_id)
+    if not path:
+        raise RuntimeError("that region names no nebula cube")
+
+    if progress is not None:
+        progress(f"Fetching {Path(path).name}")
+    build = str((client.request_json("GET", "/eve/latest/build")
+                 or {}).get("build") or "")
+    index = resindex.load(cache_root, build) if build else None
+    source = sof_fetch.fetch_resource(path, client, cache_root, build=build,
+                                      index=index)
+
+    # Beside the cube in our cache, addressed by the cube's CONTENT, so the
+    # regions that share a nebula share the conversion too.
+    destination = dds_reader.derived_path(source, ".hdr")
+    if destination.is_file() and destination.stat().st_size > 0:
+        return destination, path
+
+    if not worker.convert_environment(source, destination, progress=progress):
+        # The child could not run. Do it here rather than refuse: this thread
+        # holds the GIL while it works, so the window will stutter, but the
+        # artist gets their sky.
+        from .dds import environment as cube
+
+        cube.convert_file(source, destination)
+    return destination, path
+
+
+#: The sun lamp this add-on owns, so it is replaced rather than duplicated.
+SUN_OBJECT = "CarbonSun"
+
+#: How strong the key light is, in watts per square metre.
+#:
+#: A hull is metres across now that the importer no longer shrinks it by a
+#: hundredth, so this is a real irradiance rather than a number that only
+#: worked at one scale.
+SUN_STRENGTH = 4.0
+
+#: How wide the sun is on the sky, in degrees. EVE's suns are hard-edged;
+#: about a degree gives a shadow with an edge rather than a smear.
+SUN_ANGLE = 1.0
+
+
+def apply_sun(scene, direction, colour):
+    """Points a sun lamp the way the sky says the light comes from.
+
+    `direction` is the direction the light TRAVELS, which is what Blender's
+    sun points along -- its -Z axis. A lamp is created if this add-on has not
+    made one; an artist's own lights are left alone.
+    """
+
+    import mathutils
+
+    lamp = bpy.data.lights.get(SUN_OBJECT)
+    if lamp is None:
+        lamp = bpy.data.lights.new(SUN_OBJECT, "SUN")
+    lamp.color = tuple(colour[:3])
+    lamp.energy = SUN_STRENGTH
+    lamp.angle = math.radians(SUN_ANGLE)
+
+    obj = bpy.data.objects.get(SUN_OBJECT)
+    if obj is None or obj.data is not lamp:
+        obj = bpy.data.objects.new(SUN_OBJECT, lamp)
+    if obj.name not in scene.collection.objects:
+        try:
+            scene.collection.objects.link(obj)
+        except RuntimeError:
+            pass                         # already linked somewhere in the scene
+
+    travel = mathutils.Vector(direction)
+    if travel.length == 0.0:
+        travel = mathutils.Vector((0.0, 0.0, -1.0))
+    # A sun shines down its own -Z, so the rotation is the one that takes -Z
+    # onto the direction of travel.
+    obj.rotation_mode = "QUATERNION"
+    obj.rotation_quaternion = travel.normalized().to_track_quat("-Z", "Y")
+    return obj
+
+
+def finish_job(context, result) -> str:
+    """Applies a finished conversion. MAIN thread only."""
+
+    from .dds import environment as cube
+
+    name, (destination, path) = result
+    state = context.window_manager.carbon_eve_skybox
+    image = bpy.data.images.get(destination.name)
+    if image is None:
+        image = bpy.data.images.load(str(destination))
+    apply_world(context.scene, image, state.strength)
+
+    sun = cube.read_sun(destination)
+    if sun is not None and state.use_sun:
+        apply_sun(context.scene, *sun)
+
+    state.status = f"{name}: {Path(path).name}"
+    return f"Nebula set to {name}"
+
+
 class CARBON_OT_apply_skybox(Operator):
     """Fetch the region's nebula and put it behind the ship"""
 
@@ -141,7 +272,7 @@ class CARBON_OT_apply_skybox(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        from .dds import reader as dds_reader, worker
+        from . import addon
 
         state = context.window_manager.carbon_eve_skybox
         if not state.region:
@@ -154,48 +285,28 @@ class CARBON_OT_apply_skybox(Operator):
             return {"CANCELLED"}
 
         chosen = int(state.region)
-        name = next((row[1] for row in nebula.regions(client)
-                     if row[0] == chosen), str(chosen))
-        nebula_id = next((row[2] for row in nebula.regions(client)
-                          if row[0] == chosen), 0)
-        path = nebula.cube_path(client, nebula_id)
-        if not path:
-            self.report({"ERROR"}, f"{name} has no nebula cube")
+        row = next((row for row in nebula.regions(client) if row[0] == chosen),
+                   None)
+        if row is None:
+            self.report({"ERROR"}, "That region is no longer listed")
             return {"CANCELLED"}
+        name, nebula_id = row[1], row[2]
 
         cache_root = _cache_root(context)
+
+        def work():
+            return name, build_environment(client, nebula_id, cache_root,
+                                           progress=addon._set_progress)
+
         try:
-            build = str((client.request_json("GET", "/eve/latest/build")
-                         or {}).get("build") or "")
-            index = resindex.load(cache_root, build) if build else None
-            source = sof_fetch.fetch_resource(path, client, cache_root,
-                                              build=build, index=index)
+            # The same background job the ships use. A nebula is six faces of
+            # block decoding, over a minute of it, and doing that in front of
+            # the artist is what made picking a region look like it did
+            # nothing at all.
+            addon._launch_job(context, "skybox", work, f"Building {name}'s sky")
         except Exception as exc:
-            self.report({"ERROR"}, f"{path}: {exc}")
+            self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-
-        # Beside the cube in our cache, addressed by the cube's content, so
-        # every region sharing a nebula shares the conversion.
-        destination = dds_reader.derived_path(source, ".hdr")
-        if not (destination.is_file() and destination.stat().st_size > 0):
-            if not worker.convert_environment(source, destination):
-                # The child could not run. Do it here rather than refuse:
-                # slow and rude, but the artist gets their sky.
-                from .dds import environment as cube
-
-                try:
-                    cube.convert_file(source, destination)
-                except Exception as exc:
-                    self.report({"ERROR"}, f"could not convert {path}: {exc}")
-                    return {"CANCELLED"}
-
-        image = bpy.data.images.get(destination.name)
-        if image is None:
-            image = bpy.data.images.load(str(destination))
-        apply_world(context.scene, image, state.strength)
-
-        state.status = f"{name}: {Path(path).name}"
-        self.report({"INFO"}, f"Nebula set to {name}")
         return {"FINISHED"}
 
 
@@ -218,6 +329,7 @@ class CARBON_PT_sidebar_skybox(Panel):
 
         layout.prop(state, "region")
         layout.prop(state, "strength")
+        layout.prop(state, "use_sun")
         layout.operator(CARBON_OT_apply_skybox.bl_idname, icon="WORLD")
         if state.status:
             layout.label(text=state.status, icon="CHECKMARK")

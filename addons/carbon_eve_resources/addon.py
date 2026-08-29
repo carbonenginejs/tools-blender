@@ -1155,6 +1155,10 @@ def _poll_job():
             )
             if _catalog is not None and _context_terms_accepted(context):
                 _populate_results(context)
+        elif job.kind == "skybox":
+            from .skybox import finish_job
+
+            state.status = finish_job(context, job.result)
         elif job.kind == "sof_fetch":
             (document, resources, problems), stats = job.result
             _set_cache_stats(state, stats)

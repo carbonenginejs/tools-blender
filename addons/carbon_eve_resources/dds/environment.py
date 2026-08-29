@@ -20,6 +20,7 @@ the window keeps drawing while it works.
 from __future__ import annotations
 
 import math
+from array import array
 import struct
 
 from . import bc6h
@@ -29,14 +30,20 @@ from . import bc6h
 DDSCAPS2_CUBEMAP = 0x200
 DDSCAPS2_CUBEMAP_FACES = 0xFC00
 
-#: How wide one cube face is rebuilt, in pixels.
+#: How wide one cube face is rebuilt, in pixels. 0 means the cube's own size.
 #:
-#: A face spans 90 degrees, so 256 across is about 1024 pixels for the full
-#: turn -- generous for something that is only ever the backdrop. The cubes
-#: are 2048 square with no mip chain, and decoding all six in full is over a
-#: million blocks of pure Python; this is the difference between a nebula
-#: arriving and a nebula being abandoned.
-FACE_SIZE = 256
+#: Every block is decoded either way -- a face is only whole if all of it is
+#: read -- so this reduces AFTER decoding, by averaging, which costs almost
+#: nothing next to the decode and does not alias. Subsampling blocks instead
+#: was four times cheaper and looked it: the sky came out visibly soft, which
+#: is what "low res" meant.
+FACE_SIZE = 0
+
+#: How wide the equirectangular image is. 0 means twice the face, which is
+#: half the cube's own detail spread over the full turn -- a fair trade for a
+#: file a quarter the size, on something that is always out of focus behind
+#: the ship.
+EQUIRECT_WIDTH = 0
 
 #: DDS cube face order, which is also the order `sample_cube` indexes.
 FACE_ORDER = ("+x", "-x", "+y", "-y", "+z", "-z")
@@ -73,42 +80,77 @@ def inspect(data: bytes) -> dict:
 
 
 def decode_face(data: bytes, info: dict, index: int, size: int = FACE_SIZE):
-    """One cube face as `size` x `size` RGB floats.
+    """One cube face as `size` x `size` RGB floats, row-major.
 
-    Reduced while decoding rather than after. Each 4x4 block averages to one
-    output pixel and only every `step`-th block is touched, so the cost falls
-    with the square of the reduction instead of being paid in full and thrown
-    away. That samples a fraction of the area rather than filtering all of it,
-    which on a nebula -- soft, low-frequency cloud -- is a difference nobody
-    can see, and on a sharp texture would be aliasing.
+    EVERY block is decoded and every texel it carries is kept: a face is only
+    whole if all of it is read, and the 16 texels in a block come out of the
+    same arithmetic whether they are used or thrown away. Reducing afterwards,
+    by averaging, is a proper box filter and costs almost nothing beside the
+    decode.
+
+    Returned as a flat float sequence with its width, so the caller need not
+    know whether numpy was available.
     """
 
-    blocks = max(1, info["width"] // 4)
-    size = min(size, blocks)
-    step = max(1, blocks // size)
-    size = blocks // step
-
+    width = info["width"]
+    blocks = max(1, width // 4)
     signed = info["dxgi"] == bc6h.DXGI_BC6H_SF16
     base = info["offset"] + index * info["face_bytes"]
-    pixels = [0.0] * (size * size * 3)
 
-    for y in range(size):
-        row = (y * step) * blocks
-        for x in range(size):
-            offset = base + (row + x * step) * 16
-            block = bc6h.decode_block(data[offset:offset + 16], signed)
-            red = green = blue = 0.0
-            for texel in range(16):
-                at = texel * 4
-                red += block[at]
-                green += block[at + 1]
-                blue += block[at + 2]
-            out = (y * size + x) * 3
-            pixels[out] = red / 16.0
-            pixels[out + 1] = green / 16.0
-            pixels[out + 2] = blue / 16.0
+    decode = bc6h.decode_block
+    pixels = array("f", bytes(4 * width * width * 3))
+    stride = width * 3
 
-    return pixels, size
+    for by in range(blocks):
+        top = by * 4
+        for bx in range(blocks):
+            offset = base + (by * blocks + bx) * 16
+            block = decode(data[offset:offset + 16], signed)
+            left = bx * 12                       # 4 texels, 3 channels each
+            for y in range(4):
+                at = (top + y) * stride + left
+                source = y * 16
+                pixels[at:at + 3] = array("f", block[source:source + 3])
+                pixels[at + 3:at + 6] = array("f", block[source + 4:source + 7])
+                pixels[at + 6:at + 9] = array("f", block[source + 8:source + 11])
+                pixels[at + 9:at + 12] = array("f", block[source + 12:source + 15])
+
+    if size and size < width:
+        pixels = _box_filter(pixels, width, size)
+        width = size
+    return pixels, width
+
+
+def _box_filter(pixels, width: int, size: int):
+    """Averages a square RGB image down to `size`, by whole pixel blocks."""
+
+    step = max(1, width // size)
+    size = width // step
+    try:
+        import numpy
+
+        grid = numpy.asarray(pixels, dtype=numpy.float32)
+        grid = grid.reshape(width, width, 3)[:size * step, :size * step]
+        grid = grid.reshape(size, step, size, step, 3).mean(axis=(1, 3))
+        return array("f", grid.astype(numpy.float32).ravel().tobytes())
+    except ImportError:                  # pragma: no cover - numpy ships with Blender
+        out = array("f", bytes(4 * size * size * 3))
+        weight = float(step * step)
+        for y in range(size):
+            for x in range(size):
+                red = green = blue = 0.0
+                for sy in range(step):
+                    row = (y * step + sy) * width * 3
+                    for sx in range(step):
+                        at = row + (x * step + sx) * 3
+                        red += pixels[at]
+                        green += pixels[at + 1]
+                        blue += pixels[at + 2]
+                at = (y * size + x) * 3
+                out[at] = red / weight
+                out[at + 1] = green / weight
+                out[at + 2] = blue / weight
+        return out
 
 
 def sample_cube(faces, x: float, y: float, z: float):
@@ -176,8 +218,12 @@ def to_equirectangular(faces, width: int):
     """
 
     height = width // 2
-    out = [0.0] * (width * height * 3)
+    try:
+        return _equirectangular_fast(faces, width, height)
+    except ImportError:                  # pragma: no cover - numpy ships with Blender
+        pass
 
+    out = array("f", bytes(4 * width * height * 3))
     for py in range(height):
         # First row is the zenith, which is what the Radiance `-Y` header
         # declares and what Blender then expects.
@@ -196,6 +242,57 @@ def to_equirectangular(faces, width: int):
     return out, width, height
 
 
+def _equirectangular_fast(faces, width: int, height: int):
+    """The same sphere, done for every pixel at once.
+
+    Four million directions is a minute of scalar Python and a moment of
+    numpy. The face selection is the same rule `sample_cube` states -- largest
+    component wins, and its sign picks the face -- written as masks so the
+    whole image goes through it together.
+    """
+
+    import numpy
+
+    elevation = (0.5 - (numpy.arange(height, dtype=numpy.float64) + 0.5)
+                 / height) * numpy.pi
+    phi = ((numpy.arange(width, dtype=numpy.float64) + 0.5) / width
+           - 0.5) * 2.0 * numpy.pi
+    up = numpy.sin(elevation)[:, None] * numpy.ones(width)
+    radius = numpy.cos(elevation)[:, None]
+    east = radius * numpy.cos(phi)[None, :]
+    north = radius * numpy.sin(phi)[None, :]
+
+    x, y, z = eve_direction(east, north, up)
+    ax, ay, az = numpy.abs(x), numpy.abs(y), numpy.abs(z)
+
+    out = numpy.zeros((height, width, 3), dtype=numpy.float32)
+    on_x = (ax >= ay) & (ax >= az)
+    on_y = ~on_x & (ay >= az)
+    on_z = ~on_x & ~on_y
+
+    # (mask, face, major, u, v) -- exactly the branches sample_cube takes.
+    for mask, index, major, u, v in (
+            (on_x & (x > 0), 0, ax, -z, -y),
+            (on_x & (x <= 0), 1, ax, z, -y),
+            (on_y & (y > 0), 2, ay, x, z),
+            (on_y & (y <= 0), 3, ay, x, -z),
+            (on_z & (z > 0), 4, az, x, -y),
+            (on_z & (z <= 0), 5, az, -x, -y)):
+        if not mask.any():
+            continue
+        pixels, size = faces[index]
+        # asarray, not frombuffer: a caller may hand in a plain list.
+        face = numpy.asarray(pixels, dtype=numpy.float32).reshape(size, size, 3)
+        scale = numpy.where(major[mask] > 0, major[mask], 1.0)
+        fx = numpy.clip(((u[mask] / scale) * 0.5 + 0.5) * size, 0,
+                        size - 1).astype(numpy.int32)
+        fy = numpy.clip(((v[mask] / scale) * 0.5 + 0.5) * size, 0,
+                        size - 1).astype(numpy.int32)
+        out[mask] = face[fy, fx]
+
+    return array("f", out.ravel().tobytes()), width, height
+
+
 def encode_radiance(pixels, width: int, height: int) -> bytes:
     """Float RGB as a Radiance `.hdr`: one shared exponent per pixel.
 
@@ -207,8 +304,13 @@ def encode_radiance(pixels, width: int, height: int) -> bytes:
     header = (b"#?RADIANCE\n"
               b"FORMAT=32-bit_rle_rgbe\n\n"
               + f"-Y {height} +X {width}\n".encode("ascii"))
-    body = bytearray(width * height * 4)
 
+    try:
+        return bytes(header) + _radiance_body(pixels, width, height)
+    except ImportError:                  # pragma: no cover - numpy ships with Blender
+        pass
+
+    body = bytearray(width * height * 4)
     for index in range(width * height):
         at = index * 3
         red, green, blue = pixels[at], pixels[at + 1], pixels[at + 2]
@@ -226,30 +328,147 @@ def encode_radiance(pixels, width: int, height: int) -> bytes:
     return bytes(header) + bytes(body)
 
 
-def convert(data: bytes, face_size: int = FACE_SIZE, width: int = 0) -> bytes:
+def _radiance_body(pixels, width: int, height: int) -> bytes:
+    """The same RGBE, for every pixel at once."""
+
+    import numpy
+
+    grid = numpy.asarray(pixels, dtype=numpy.float32).reshape(-1, 3)
+    grid = grid.astype(numpy.float64)
+    peak = grid.max(axis=1)
+    lit = peak > 1e-32
+
+    body = numpy.zeros((grid.shape[0], 4), dtype=numpy.uint8)
+    if lit.any():
+        exponent = numpy.ceil(numpy.log2(peak[lit]))
+        scale = 256.0 / numpy.power(2.0, exponent)
+        body[lit, :3] = numpy.clip(
+            numpy.floor(grid[lit] * scale[:, None]), 0, 255).astype(numpy.uint8)
+        body[lit, 3] = (exponent + 128).astype(numpy.uint8)
+    return body.tobytes()
+
+
+def convert(data: bytes, face_size: int = FACE_SIZE,
+            width: int = EQUIRECT_WIDTH, progress=None) -> bytes:
     """A cube DDS in, a Radiance `.hdr` out.
 
-    The default output is four times the face width, which is what a 90 degree
-    face is worth spread over the full turn -- more would be interpolation
-    rather than detail.
+    `progress` is called with a line per face, because this is the slow part
+    and a job that says nothing for a minute reads as a job that has hung.
     """
 
+    return _convert(data, face_size, width, progress)[0]
+
+
+def _convert(data: bytes, face_size: int, width: int, progress):
+    """`(hdr bytes, (direction, colour))`, so the sphere is built once."""
+
     info = inspect(data)
-    faces = [decode_face(data, info, index, face_size) for index in range(6)]
-    width = width or faces[0][1] * 4
+    faces = []
+    for index in range(6):
+        if progress is not None:
+            progress(f"Decoding nebula face {index + 1} of 6")
+        faces.append(decode_face(data, info, index, face_size))
+
+    if progress is not None:
+        progress("Wrapping the nebula onto a sphere")
+    width = width or faces[0][1] * 2
     pixels, width, height = to_equirectangular(faces, width)
-    return encode_radiance(pixels, width, height)
+    return (encode_radiance(pixels, width, height),
+            brightest_direction(pixels, width, height))
+
+
+def brightest_direction(pixels, width: int, height: int):
+    """Where the sky is brightest, as a Blender direction, with its colour.
+
+    The nebula file names an intensity and an ambient colour but NO sun
+    direction, so there is nothing to read: EVE's sun is a scene property, not
+    something the nebula carries. What the nebula does carry is a picture of
+    where its light comes from, and the brightest part of it is the obvious
+    answer -- a key light that disagrees with its own background is the one
+    thing everybody notices.
+
+    Returned as `((x, y, z), (r, g, b))`, the direction the light TRAVELS,
+    which is the negation of where the bright part is.
+    """
+
+    try:
+        import numpy
+    except ImportError:                  # pragma: no cover - numpy ships with Blender
+        return (0.0, 0.0, -1.0), (1.0, 1.0, 1.0)
+
+    grid = numpy.asarray(pixels, dtype=numpy.float32).reshape(height, width, 3)
+    # Luminance, not the sum: a bright blue patch and a bright grey one are
+    # not equally the sun.
+    luminance = (grid[:, :, 0] * 0.2126 + grid[:, :, 1] * 0.7152
+                 + grid[:, :, 2] * 0.0722)
+
+    # Softened first, so one hot pixel does not decide where the sun is. The
+    # sun is a REGION of the sky, and on a 4096-wide image a 33-pixel box is
+    # about three degrees.
+    box = max(1, width // 128)
+    if box > 1:
+        trimmed = luminance[:height - height % box, :width - width % box]
+        pooled = trimmed.reshape(trimmed.shape[0] // box, box,
+                                 trimmed.shape[1] // box, box).mean(axis=(1, 3))
+        py, px = numpy.unravel_index(int(pooled.argmax()), pooled.shape)
+        py, px = py * box + box // 2, px * box + box // 2
+    else:
+        py, px = numpy.unravel_index(int(luminance.argmax()), luminance.shape)
+
+    elevation = (0.5 - (py + 0.5) / height) * math.pi
+    phi = ((px + 0.5) / width - 0.5) * 2.0 * math.pi
+    radius = math.cos(elevation)
+    towards = (radius * math.cos(phi), radius * math.sin(phi),
+               math.sin(elevation))
+
+    patch = grid[max(0, py - box):py + box + 1, max(0, px - box):px + box + 1]
+    colour = patch.reshape(-1, 3).mean(axis=0)
+    peak = float(colour.max()) or 1.0
+    return (-towards[0], -towards[1], -towards[2]), tuple(
+        float(channel / peak) for channel in colour)
 
 
 def convert_file(source, destination, face_size: int = FACE_SIZE,
-                 width: int = 0):
-    """Converts one cube on disk, skipping the work when it is already done."""
+                 width: int = EQUIRECT_WIDTH, progress=None):
+    """Converts one cube on disk, skipping the work when it is already done.
+
+    Writes a `.sun` beside the image holding the direction and colour the sky
+    itself implies. It is a sidecar rather than a return value because a cache
+    HIT skips the conversion entirely, and the sun is still needed then.
+    """
 
     from pathlib import Path
 
     source, destination = Path(source), Path(destination)
     if destination.is_file() and destination.stat().st_size > 0:
         return destination
+
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(convert(source.read_bytes(), face_size, width))
+    made, (direction, colour) = _convert(source.read_bytes(), face_size,
+                                         width, progress)
+    destination.write_bytes(made)
+    sun_path(destination).write_text(
+        " ".join(f"{value:.6f}" for value in tuple(direction) + tuple(colour)),
+        "utf-8")
     return destination
+
+
+def sun_path(destination):
+    """Where the sun sidecar for one environment lives."""
+
+    from pathlib import Path
+
+    return Path(destination).with_suffix(".sun")
+
+
+def read_sun(destination):
+    """`(direction, colour)` from the sidecar, or None when there is none."""
+
+    try:
+        parts = [float(value) for value
+                 in sun_path(destination).read_text("utf-8").split()]
+    except (OSError, ValueError):
+        return None
+    if len(parts) != 6:
+        return None
+    return tuple(parts[:3]), tuple(parts[3:])

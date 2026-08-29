@@ -100,8 +100,8 @@ class SampleTests(unittest.TestCase):
         """
 
         pixels, width, height = environment.to_equirectangular(self.faces(), 16)
-        top = pixels[0:3]
-        bottom = pixels[(height - 1) * width * 3:(height - 1) * width * 3 + 3]
+        top = list(pixels[0:3])
+        bottom = list(pixels[(height - 1) * width * 3:(height - 1) * width * 3 + 3])
         self.assertEqual(top, [2.0, 2.0, 2.0])          # +y
         self.assertEqual(bottom, [3.0, 3.0, 3.0])       # -y
 
@@ -174,11 +174,12 @@ class RadianceTests(unittest.TestCase):
 
 
 class ReductionTests(unittest.TestCase):
-    def test_a_face_is_reduced_while_it_decodes_not_after(self):
-        """2048 square blocks over six faces is more than a million.
+    def test_a_face_reduces_by_averaging_after_a_full_decode(self):
+        """Every block is read, then the result is filtered down.
 
-        Asking for a smaller face has to make the DECODE smaller, or the
-        reduction has cost the whole thing and saved nothing.
+        Subsampling blocks instead was four times cheaper and threw away
+        sixteen texels for every one it kept, which is what made the sky look
+        soft.
         """
 
         data = cube_dds(width=64)
@@ -187,11 +188,19 @@ class ReductionTests(unittest.TestCase):
         self.assertEqual(size, 4)
         self.assertEqual(len(pixels), 4 * 4 * 3)
 
-    def test_asking_for_more_than_the_cube_has_gives_what_it_has(self):
+    def test_asking_for_more_than_the_cube_has_gives_the_cube(self):
+        """No invented detail: a request above the source is capped at it."""
+
         data = cube_dds(width=8)
         info = environment.inspect(data)
         _, size = environment.decode_face(data, info, 0, size=512)
-        self.assertEqual(size, 2)                       # 8 pixels is 2 blocks
+        self.assertEqual(size, 8)
+
+    def test_the_default_keeps_every_texel(self):
+        data = cube_dds(width=8)
+        info = environment.inspect(data)
+        _, size = environment.decode_face(data, info, 0)
+        self.assertEqual(size, 8)
 
 
 if __name__ == "__main__":

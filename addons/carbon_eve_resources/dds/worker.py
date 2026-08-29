@@ -59,11 +59,21 @@ sys.exit(0 if made else 2)
 #: The same trick for a nebula. It is a bigger job than a texture -- six cube
 #: faces of BC6H, about twenty seconds -- which is exactly why it belongs in
 #: another process rather than in front of the artist.
+#: It also takes over a minute, so it reports where it has got to. A job that
+#: says nothing for that long is indistinguishable from one that has hung.
 ENVIRONMENT_SCRIPT = """
 import sys
 sys.path.insert(0, sys.argv[1])
+from pathlib import Path
 from carbon_eve_resources.dds import environment
-environment.convert_file(sys.argv[2], sys.argv[3])
+
+
+def say(line):
+    sys.stdout.write("PROGRESS " + line + "\\n")
+    sys.stdout.flush()
+
+
+environment.convert_file(sys.argv[2], sys.argv[3], progress=say)
 """
 
 
@@ -84,28 +94,59 @@ def decode(source, destination, *, timeout: float = TIMEOUT):
     return _run(SCRIPT, source, destination, timeout=timeout)
 
 
-def convert_environment(source, destination, *, timeout: float = TIMEOUT):
+#: A nebula is six faces of block decoding: over a minute, where a texture is
+#: seconds.
+ENVIRONMENT_TIMEOUT = 900.0
+
+
+def convert_environment(source, destination, *, progress=None,
+                        timeout: float = ENVIRONMENT_TIMEOUT):
     """Turns one nebula cube into a Radiance `.hdr`. True when it wrote it."""
 
-    return _run(ENVIRONMENT_SCRIPT, source, destination, timeout=timeout)
+    return _run(ENVIRONMENT_SCRIPT, source, destination, timeout=timeout,
+                progress=progress)
 
 
-def _run(script: str, source, destination, *, timeout: float):
+def _run(script: str, source, destination, *, timeout: float, progress=None):
     """One child, one job. False means fall back rather than fail."""
 
     python = python_executable()
     if python is None:
         return False
+    command = [str(python), "-c", script, str(addons_directory()),
+               str(source), str(destination)]
+    if progress is None:
+        try:
+            done = subprocess.run(command, capture_output=True, timeout=timeout,
+                                  creationflags=NO_WINDOW)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return _finished(done.returncode, done.stderr)
+
+    # Reading the child's output line by line, so a long job can say where it
+    # has got to. The wait is on a PIPE, which releases the GIL -- the whole
+    # reason the work is in a child at all.
     try:
-        done = subprocess.run(
-            [str(python), "-c", script, str(addons_directory()),
-             str(source), str(destination)],
-            capture_output=True, timeout=timeout, creationflags=NO_WINDOW)
+        child = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return False
-    if done.returncode == 0:
+    try:
+        for raw in child.stdout:
+            line = raw.decode("utf-8", "replace").strip()
+            if line.startswith("PROGRESS "):
+                progress(line[9:])
+        child.wait(timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        child.kill()
+        return False
+    return _finished(child.returncode, child.stderr.read())
+
+
+def _finished(code: int, stderr: bytes) -> bool:
+    if code == 0:
         return True
-    if done.returncode != 2 and done.stderr:
+    if code != 2 and stderr:
         print(f"[CarbonEngineJS SOF] worker child: "
-              f"{done.stderr.decode('utf-8', 'replace').strip()[:200]}")
+              f"{stderr.decode('utf-8', 'replace').strip()[:200]}")
     return False
