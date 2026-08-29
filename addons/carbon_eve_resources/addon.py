@@ -175,6 +175,18 @@ def _haze_changed(self, context):
             alpha = float(material.get("carbon_haze_alpha", 0.1) or 0.1)
             density.inputs[1].default_value = alpha * float(self.haze_density)
 
+        # The EMISSION moves with it. A volume glows as well as scatters, so a
+        # dial that only thinned the cloud left it lit: at zero density the
+        # haze was still a glowing shape, which reads as the control being
+        # broken rather than as two controls.
+        base = material.get("carbon_haze_emission")
+        volume = next((node for node in tree.nodes
+                       if node.bl_idname == "ShaderNodeVolumePrincipled"), None)
+        if base is not None and volume is not None \
+                and "Emission Strength" in volume.inputs:
+            volume.inputs["Emission Strength"].default_value = (
+                float(base) * float(self.haze_density))
+
 
 def _view_transform_chosen(self, context):
     """Applied the moment it is chosen, not at the next ship load.

@@ -1752,10 +1752,15 @@ HAZE_DENSITY = 0.12
 #: Higher keeps it near the middle; lower spreads it to the shell.
 HAZE_FALLOFF = 4.0
 
-#: How much a haze glows in the dark, apart from what the scene lights do.
+#: How much a haze glows in the dark, THROUGH the whole cloud.
 #:
 #: Small on purpose. At one the emission carried the whole look and the cloud
 #: read as a lamp rather than as air.
+#:
+#: Through the cloud, not per metre of it -- the material divides by the
+#: radius. Emission accumulates along the ray just as absorption does, so a
+#: flat strength makes a big haze hundreds of times brighter than a small one
+#: for the same authored number.
 #:
 #: Cut by four fifths with the density, on the operator's call. BOTH terms had
 #: to move: a volume scatters by its density and emits by its strength, and
@@ -1814,7 +1819,9 @@ def haze_material(faction_tree, slot, colour, radius=1.0):
     volume.location = (0, 0)
     alpha = float(colour[3]) if len(colour) > 3 else 0.1
     # Per metre of the path through it, not per cloud.
-    alpha /= max(float(radius), 1e-6)
+    span = max(float(radius), 1e-6)
+    alpha /= span
+    emission = HAZE_EMISSION / span
 
     # Density that THINS towards the shell. The distance from the object's own
     # centre is 0 in the middle and 1 at the surface, because the shared mesh
@@ -1855,7 +1862,16 @@ def haze_material(faction_tree, slot, colour, radius=1.0):
     # A little emission so a haze is visible in the dark, but not so much that
     # it reads as a lamp instead of as air.
     if "Emission Strength" in volume.inputs:
-        volume.inputs["Emission Strength"].default_value = HAZE_EMISSION
+        # Per METRE of the path through it, exactly as the density is.
+        #
+        # This is the one that kept the haze bright. A volume's emission
+        # accumulates along the ray, so a flat strength through a cloud 250
+        # metres across arrives 250 times over -- which swamped the density
+        # cut entirely and left a solid glowing blob under the hull. Dividing
+        # by the radius makes the number mean what it should: how much the
+        # whole cloud emits, not how much each metre of it does.
+        volume.inputs["Emission Strength"].default_value = emission
+    material["carbon_haze_emission"] = emission
 
     source = None
     if faction_tree is not None and slot:
