@@ -67,23 +67,6 @@ def _region_update(self, context):
         bpy.ops.carbon.apply_skybox("INVOKE_DEFAULT")
 
 
-def _strength_update(self, context):
-    """Live, so the brightness can be dialled without rebuilding the sky.
-
-    A NAMED function, not a lambda. A lambda written in the class body reports
-    its frame as `<string>` and cannot see this module's globals, so it raises
-    NameError on every change.
-    """
-
-    world = context.scene.world if context and context.scene else None
-    tree = getattr(world, "node_tree", None)
-    if tree is None:
-        return
-    for node in tree.nodes:
-        if node.type == "BACKGROUND":
-            node.inputs["Strength"].default_value = self.strength
-
-
 class CARBON_SkyboxState(PropertyGroup):
     region: EnumProperty(
         name="Region",
@@ -91,14 +74,6 @@ class CARBON_SkyboxState(PropertyGroup):
                     "region shares one nebula",
         items=region_items,
         update=_region_update,
-    )
-    strength: FloatProperty(
-        name="Strength",
-        description="How brightly the nebula lights the scene. The cube is "
-                    "authored below one and the client applies the scene's "
-                    "own nebulaIntensity on top",
-        default=1.0, min=0.0, soft_max=10.0,
-        update=_strength_update,
     )
     use_sun: BoolProperty(
         name="Sun",
@@ -116,7 +91,15 @@ def _cache_root(context):
     return _cache_path(_prefs(context))
 
 
-def apply_world(scene, image, strength: float):
+#: How brightly the nebula lights the scene.
+#:
+#: One, and not a dial. The cubes are authored just below one and anything
+#: past about 1.1 blooms, so the whole useful range was 0 to 1.1 -- which is
+#: not a control, it is a constant with a way to get it wrong.
+NEBULA_STRENGTH = 1.0
+
+
+def apply_world(scene, image, strength: float = NEBULA_STRENGTH):
     """Points the scene's world at one equirectangular image.
 
     Its own world, named for the add-on, so an artist's existing world is left
@@ -200,8 +183,9 @@ SUN_OBJECT = "CarbonSun"
 #:
 #: A hull is metres across now that the importer no longer shrinks it by a
 #: hundredth, so this is a real irradiance rather than a number that only
-#: worked at one scale.
-SUN_STRENGTH = 4.0
+#: worked at one scale. Four read as dim against the nebula; this is a stop
+#: brighter.
+SUN_STRENGTH = 8.0
 
 #: How wide the sun is on the sky, in degrees. EVE's suns are hard-edged;
 #: about a degree gives a shadow with an edge rather than a smear.
@@ -254,7 +238,7 @@ def finish_job(context, result) -> str:
     image = bpy.data.images.get(destination.name)
     if image is None:
         image = bpy.data.images.load(str(destination))
-    apply_world(context.scene, image, state.strength)
+    apply_world(context.scene, image)
 
     sun = cube.read_sun(destination)
     if sun is not None and state.use_sun:
@@ -328,7 +312,6 @@ class CARBON_PT_sidebar_skybox(Panel):
             return
 
         layout.prop(state, "region")
-        layout.prop(state, "strength")
         layout.prop(state, "use_sun")
         layout.operator(CARBON_OT_apply_skybox.bl_idname, icon="WORLD")
         if state.status:
