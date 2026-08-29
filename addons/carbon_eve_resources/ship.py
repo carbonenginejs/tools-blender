@@ -1400,6 +1400,151 @@ def attach_to_bone(obj, armature, bone_index):
     return True
 
 
+#: One sphere, shared by every sprite in the file. A sprite is a glowing DOT
+#: and a sphere reads as one from any direction -- which a flat quad does not,
+#: since EVE's are camera-facing billboards and Blender has no such thing
+#: without a constraint per object or a geometry-node tree over the lot.
+SPRITE_MESH = "CarbonSprite dot"
+
+
+def sprite_mesh():
+    """The shared dot geometry, made once."""
+
+    mesh = bpy.data.meshes.get(SPRITE_MESH)
+    if mesh is not None:
+        return mesh
+
+    import bmesh
+
+    mesh = bpy.data.meshes.new(SPRITE_MESH)
+    working = bmesh.new()
+    # Subdivision 1 is 42 vertices: round enough at the size these are drawn,
+    # and a hull carries two hundred of them.
+    bmesh.ops.create_icosphere(working, subdivisions=1, radius=1.0)
+    working.to_mesh(mesh)
+    working.free()
+    for polygon in mesh.polygons:
+        polygon.use_smooth = True
+    # One empty slot, so each OBJECT can carry its own material over the
+    # shared mesh. Without a slot here there is nothing for an object to
+    # override, and every sprite in the file would wear the last set's colour.
+    mesh.materials.append(None)
+    return mesh
+
+
+def sprite_material(set_index, effect=None, resources=None):
+    """One material for a whole sprite set, tinted PER OBJECT.
+
+    Every sprite in a set is the same glow in a different colour, so the
+    colour comes from each object rather than from the material: an Object
+    Info node reads it, and the set shares one material instead of carrying
+    sixty-seven of them.
+
+    `blinkinglightspool.fx` has no texture at all -- the shader draws the dot
+    -- so there is nothing to sample here. Additive, like every other glow on
+    the ship.
+    """
+
+    material = bpy.data.materials.new(unique_name(f"sprite_{set_index}", ""))
+    material.use_nodes = True
+    tree = material.node_tree
+    tree.nodes.clear()
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    output.location = (400, 0)
+
+    info = tree.nodes.new("ShaderNodeObjectInfo")
+    info.location = (-300, 0)
+    emission = tree.nodes.new("ShaderNodeEmission")
+    emission.location = (0, 0)
+    emission.inputs["Strength"].default_value = 1.0
+    tree.links.new(info.outputs["Color"], emission.inputs["Color"])
+
+    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (0, 180)
+    add = tree.nodes.new("ShaderNodeAddShader")
+    add.location = (200, 60)
+    tree.links.new(transparent.outputs[0], add.inputs[0])
+    tree.links.new(emission.outputs[0], add.inputs[1])
+    tree.links.new(add.outputs[0], output.inputs["Surface"])
+    if hasattr(material, "surface_render_method"):
+        material.surface_render_method = "BLENDED"
+    material["carbon_effect"] = str((effect or {}).get("effectFilePath") or "")
+    return material
+
+
+def build_sprite_sets(document, hull, collection, hull_sets=None):
+    """The blinking lights: a glowing dot at each authored position.
+
+    Every hull has them and they are the most numerous thing on it -- a Legion
+    carries seventy-eight in one set. So they share one mesh and one material
+    per set, and differ by object: position, colour, and the scale the dot is
+    drawn at.
+
+    `minScale` is what the sprite is drawn at up close and `maxScale` how far
+    it grows with distance, which is a screen-space trick Blender has no
+    equivalent for. The dot is built at minScale and maxScale is kept on the
+    object, so nothing is lost and nothing is invented.
+    """
+
+    armature = hull.parent if hull is not None and hull.parent is not None \
+        and hull.parent.type == "ARMATURE" else None
+    mesh = None
+    built, lights = [], []
+    for set_index, sprite_set in enumerate(find_typed(document, "EveSpriteSet")):
+        sprites = sprite_set.get("sprites") or []
+        if not sprites:
+            continue
+        source = (hull_sets or [])[set_index] if set_index < len(hull_sets or []) else {}
+        group = attachment_collection(
+            collection, "spriteSets",
+            str(source.get("visibilityGroupName") or "primary"),
+            source.get("visibilityGroup"))
+        material = sprite_material(set_index, sprite_set.get("effect"))
+        if mesh is None:
+            mesh = sprite_mesh()
+
+        for index, item in enumerate(sprites):
+            obj = remember_name(bpy.data.objects.new(
+                unique_name(f"sprite_{set_index}_{index}", collection.name), mesh),
+                f"sprite_{set_index}_{index}", collection.name)
+            group.objects.link(obj)
+            position = tuple(float(v) for v in (item.get("position") or (0.0, 0.0, 0.0)))
+            obj.location = position[:3]
+            scale = float(item.get("minScale") or 1.0)
+            obj.scale = (scale, scale, scale)
+
+            colour = tuple(float(v) for v in (item.get("color") or (1.0, 1.0, 1.0, 1.0)))
+            # The object's OWN colour, which the set's one material reads
+            # through an Object Info node. Sixty-seven sprites, one material.
+            obj.color = (colour + (1.0, 1.0, 1.0, 1.0))[:4]
+            # The material rides the OBJECT, not the shared mesh.
+            if obj.material_slots:
+                obj.material_slots[0].link = "OBJECT"
+                obj.material_slots[0].material = material
+            obj["carbon_sprite_color"] = colour
+            obj["carbon_sprite_min_scale"] = scale
+            obj["carbon_sprite_max_scale"] = float(item.get("maxScale") or scale)
+            obj["carbon_sprite_blink_rate"] = float(item.get("blinkRate") or 0.0)
+            obj["carbon_sprite_blink_phase"] = float(item.get("blinkPhase") or 0.0)
+            obj["carbon_sprite_falloff"] = float(item.get("falloff") or 0.0)
+            attach_to_bone(obj, armature, item.get("boneIndex"))
+            stamp_identity(obj, f"sprite_{index}", "sprite",
+                           str(source.get("visibilityGroupName") or "primary"))
+            built.append(obj)
+
+        for order, light in enumerate(sprite_set.get("lights") or []):
+            obj = attachment_light(
+                light, unique_name(f"sprite_{set_index}_light_{order}",
+                                   collection.name), hull, armature)
+            group.objects.link(obj)
+            lights.append(obj)
+
+    if built or lights:
+        print(f"  built {len(built)} sprite(s) and {len(lights)} sprite light(s) "
+              f"from {len(find_typed(document, 'EveSpriteSet'))} set(s)")
+    return built + lights
+
+
 def attachment_light(entry, name, hull, armature, owner=None):
     """One attachment's light. The same shape wherever it appears.
 
@@ -2142,6 +2287,8 @@ def build_ship(document_path, resources_directory, *, clear=True,
     plane_objects = build_plane_sets(document, primary, collection,
                                      (hull_record or {}).get("planeSets"),
                                      resources)
+    sprite_objects = build_sprite_sets(document, primary, collection,
+                                       (hull_record or {}).get("spriteSets"))
     banner_objects = build_banner_sets(document, primary, collection,
                                        (hull_record or {}).get("bannerSets"),
                                        owners, cache_directory, resources,
@@ -2150,7 +2297,8 @@ def build_ship(document_path, resources_directory, *, clear=True,
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material
     # sockets are driven from the hull.
-    ship = [primary] + list(decal_objects) + list(plane_objects) + list(banner_objects)
+    ship = ([primary] + list(decal_objects) + list(plane_objects)
+            + list(sprite_objects) + list(banner_objects))
     apply_ship_globals(ship, globals_overrides)
     drive_ship_sockets(ship, primary)
 
