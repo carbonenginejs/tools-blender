@@ -1742,7 +1742,7 @@ HAZE_DENSITY_NODE = "carbon haze density"
 #: alpha mean what it should -- how much is absorbed passing THROUGH -- and
 #: makes the look independent of the importer's scale, which is what broke
 #: when hulls stopped arriving at a hundredth of their real size.
-HAZE_DENSITY = 0.6
+HAZE_DENSITY = 0.12
 
 #: How quickly a haze thins towards its shell, as an exponent on the distance
 #: from its centre.
@@ -1756,7 +1756,12 @@ HAZE_FALLOFF = 4.0
 #:
 #: Small on purpose. At one the emission carried the whole look and the cloud
 #: read as a lamp rather than as air.
-HAZE_EMISSION = 0.05
+#:
+#: Cut by four fifths with the density, on the operator's call. BOTH terms had
+#: to move: a volume scatters by its density and emits by its strength, and
+#: dropping only one leaves the other carrying the brightness it was asked to
+#: give up.
+HAZE_EMISSION = 0.01
 
 
 def haze_mesh():
@@ -2868,11 +2873,11 @@ def build_ship(document_path, resources_directory, *, clear=True,
                                        (hull_record or {}).get("bannerSets"),
                                        owners, cache_directory, resources,
                                        banner_images)
-    # The locators BEFORE the boosters: the boosters sit on them, and so will
-    # the turrets when they arrive.
     locator_objects = build_locators(document, primary, collection)
-    booster_objects = build_boosters(document, primary, collection,
-                                     booster_record, resources)
+    # Boosters are NOT built. `build_boosters` works and is kept, but what it
+    # makes is the wrong thing -- see the note above it. Turning it back on is
+    # one line, and should not happen until the flame is sliced.
+    booster_objects = ()
 
     # Every object of the ship reads the same per-ship values, and a decal is
     # its own object, so the values are written to all of them and the material
@@ -3111,6 +3116,24 @@ def build_locators(document, hull, collection, found=None):
     print(f"  built {len(built)} locator(s): {summary}")
     return built
 
+
+#: Boosters are built by the code below, and the ship does NOT call it.
+#:
+#: What it makes is a lofted tube: the exhaust outline carried aft and tapered.
+#: That is the right SHAPE and the wrong THING. Carbon draws a booster as a
+#: stack of parallel slices through the flame's volume -- `| | | | | |` seen
+#: edge-on -- each one sampling the shape mask, the gradient and the noise, so
+#: the flame reads as glowing gas rather than as a surface. A solid skin cannot
+#: look like that however it is coloured, which is why this one does not.
+#:
+#: Everything else here stands and is worth keeping: the atlas gives each ship
+#: its own exhaust outline, the flame colour is `shape0.color` at HDR and not
+#: the nozzle's tiny `glowColor`, the gradients run bright-to-nothing along the
+#: length, and none of those textures are in the built document -- they come
+#: from the race record. Rebuild the geometry as slices; keep the rest.
+#:
+#: (Operator, on seeing the lofted version: "imagine multiple slices of
+#: geometry | | | | | |". Removed rather than left drawing something wrong.)
 
 #: The flame mesh, one per atlas cell, shared by every booster using it.
 BOOSTER_MESH = "CarbonBooster flame"
