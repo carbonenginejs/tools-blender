@@ -124,7 +124,30 @@ def hardpoints(context):
     return kept or found
 
 
-def fetch_turret(client, res_path: str, cache_root, *, progress=None):
+def ship_faction(context) -> str:
+    """The faction of the ship being fitted, from its own DNA.
+
+    A slot defaults its faction to its parent's, and the parent's is the
+    SECOND field of the hull's DNA -- `hull:faction:race`. Nothing else needs
+    reading, and nothing is guessed: a hull whose DNA names no faction leaves
+    its turrets in the colours they shipped with, which is what the engine
+    does when either faction fails to resolve.
+    """
+
+    for locator in hardpoints(context):
+        node = locator
+        while node is not None:
+            dna = str(getattr(getattr(node, "carbon_sof", None), "dna", "")
+                      or node.get("carbon_sof_dna") or "")
+            if dna:
+                parts = dna.split(":")
+                return parts[1] if len(parts) > 1 else ""
+            node = node.parent
+    return ""
+
+
+def fetch_turret(client, res_path: str, cache_root, *, progress=None,
+                 faction: str = ""):
     """The turret's document and its files. Runs on the JOB thread.
 
     No `bpy` and no scene changes in here: what comes back is handed to the
@@ -165,7 +188,17 @@ def fetch_turret(client, res_path: str, cache_root, *, progress=None):
 
     if geometry not in resources:
         raise RuntimeError(f"could not fetch {geometry}")
-    return document, resources
+
+    # The turret takes the SHIP's faction, as the engine does: a slot defaults
+    # its faction to the parent's, off the hull's own DNA.
+    colours = {}
+    if faction:
+        from .core import sof_materials
+
+        if progress is not None:
+            progress(f"Reading {faction}")
+        colours = faction_colours(sof_materials.faction(faction, client), client)
+    return document, resources, colours
 
 
 def clear_fitted(locators=None):
@@ -288,7 +321,125 @@ def fit(context, document, resources, res_path: str, name: str):
 
     print(f"  fitted {name} to {len(locators)} hardpoint(s), "
           f"{len(fitted)} object(s)")
-    return len(locators)
+    return len(locators), material
+
+
+#: Which area type a turret takes its materials from.
+#:
+#: Zero, which is primary. Carbon asks the faction for `GetAreaType(0)` on both
+#: the hull and the turret and uses that one alone -- a turret has no areas of
+#: its own to match up.
+TURRET_AREA_TYPE = 0
+
+#: What the glow is multiplied by after it is resolved.
+#:
+#: Half. The engine dims a turret's glow relative to the hull's deliberately,
+#: so a hardpoint does not out-shine the ship it sits on.
+GLOW_DIM = 0.5
+
+
+def faction_colours(faction_record, client):
+    """The four materials and the glow a faction gives a turret.
+
+    This is `SetupTurretMaterial`'s rule, and its shape is worth stating
+    because it is not obvious: a turret does not carry the ship's colours, it
+    carries the ship's faction's MATERIAL NAMES, resolved to values.
+
+    The names come from the parent faction's area type 0, through the reroute
+    the faction publishes -- `materialUsageList` says which authored slot each
+    of the shader's four material slots actually reads, and it is not the
+    identity: Gallente base swaps the first two.
+
+    Runs on the JOB thread: it fetches, and touches nothing in the scene.
+    """
+
+    from .core import sof_materials
+
+    if not faction_record:
+        return {}
+
+    names = sof_materials.faction_material_names(faction_record)
+    usage = faction_record.get("materialUsageList") or [0, 1, 2, 3]
+    found = {"materials": {}, "glow": None}
+
+    for slot in range(1, 5):
+        try:
+            source = int(usage[slot - 1]) + 1
+        except (IndexError, TypeError, ValueError):
+            source = slot
+        name = sof_materials.material_name_for(names, TURRET_AREA_TYPE, source)
+        if not name:
+            continue
+        values = sof_materials.material_values(
+            sof_materials.material(name, client))
+        if values:
+            found["materials"][slot] = {"name": name, **values}
+
+    # The glow is named by INDEX into the faction's colour types, and the
+    # colour set answers by NAME -- so the enum is the bridge between them.
+    table = ((faction_record.get("areaMaterials") or {}).get("glowColor")
+             or {})
+    index = table.get(f"{TURRET_AREA_TYPE}:GeneralGlowColor")
+    colours = ((faction_record.get("colorSet") or {}).get("colors") or {})
+    if index is not None:
+        from . import sof_faction_nodes
+
+        types = sof_faction_nodes.COLOUR_TYPES
+        if 0 <= int(index) < len(types):
+            value = colours.get(types[int(index)])
+            if value:
+                found["glow"] = tuple(float(v) for v in value[:3])
+    return found
+
+
+def apply_faction_colours(material, colours):
+    """Puts a faction's materials and glow onto a fitted turret. MAIN thread.
+
+    A turret whose faction does not resolve keeps the colours it shipped with,
+    which is what the engine does too -- `SetupTurretMaterial` returns early
+    unless BOTH the hull's faction and the turret's resolve.
+    """
+
+    if material is None or not colours:
+        return 0
+
+    group = next((node for node in material.node_tree.nodes
+                  if node.type == "GROUP"), None)
+    if group is None:
+        return 0
+
+    written = 0
+    for slot, values in (colours.get("materials") or {}).items():
+        for field, socket in (("diffuse", f"Mtl{slot}DiffuseColor"),
+                              ("fresnel", f"Mtl{slot}FresnelColor"),
+                              ("gloss", f"Mtl{slot}Gloss")):
+            value = values.get(field)
+            target = group.inputs.get(socket)
+            if value is None or target is None:
+                continue
+            if field == "gloss":
+                # Gloss is a vec4 in the SOF and x is the only part read. The
+                # socket may be either -- a float on some members, a vector on
+                # others -- so which one it is decides, not which one it
+                # usually is.
+                if hasattr(target.default_value, "__len__"):
+                    current = list(target.default_value)
+                    current[0] = float(value)
+                    target.default_value = current
+                else:
+                    target.default_value = float(value)
+            else:
+                target.default_value = tuple(value[:3]) + (1.0,)
+            written += 1
+        material[f"carbon_turret_material{slot}"] = values.get("name", "")
+
+    glow = colours.get("glow")
+    target = group.inputs.get("GeneralGlowColor")
+    if glow is not None and target is not None:
+        target.default_value = tuple(channel * GLOW_DIM
+                                     for channel in glow) + (1.0,)
+        written += 1
+    return written
 
 
 class CARBON_OT_fit_turrets(Operator):
@@ -323,9 +474,12 @@ class CARBON_OT_fit_turrets(Operator):
         res_path, name = chosen["resPath"], chosen["name"]
         cache_root = _cache_root(context)
 
+        faction = ship_faction(context)
+
         def work():
             return (name, res_path) + fetch_turret(
-                client, res_path, cache_root, progress=addon._set_progress)
+                client, res_path, cache_root, progress=addon._set_progress,
+                faction=faction)
 
         try:
             addon._launch_job(context, "turrets", work, f"Fetching {name}")
@@ -338,11 +492,13 @@ class CARBON_OT_fit_turrets(Operator):
 def finish_job(context, result) -> str:
     """Applies a fetched turret. MAIN thread only."""
 
-    name, res_path, document, resources = result
+    name, res_path, document, resources, colours = result
     state = context.window_manager.carbon_eve_turrets
     clear_fitted(hardpoints(context))
-    count = fit(context, document, resources, res_path, name)
-    state.status = f"{name} on {count} hardpoint(s)"
+    count, material = fit(context, document, resources, res_path, name)
+    written = apply_faction_colours(material, colours)
+    state.status = (f"{name} on {count} hardpoint(s)"
+                    + (f", {written} faction value(s)" if written else ""))
     return state.status
 
 
