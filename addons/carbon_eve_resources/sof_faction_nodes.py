@@ -21,6 +21,8 @@ factions on Tranquility populate thirty-eight.
 
 from __future__ import annotations
 
+from typing import Mapping
+
 import bpy
 
 
@@ -33,6 +35,48 @@ PREFIX = "SofFaction"
 #: search for something that looks similar. Too generous and a sprite would
 #: bind to a neighbouring slot and follow the wrong colour ever after.
 TOLERANCE = 1e-4
+
+
+#: Colour TYPE by index, from EveSOFDataFactionColorSet.Types in the runtime.
+#:
+#: This is how a child names its colour where it names one at all: a decal
+#: carries `glowColorType`, an index into this list, and the faction supplies
+#: the value. That is better than matching a resolved colour back to a slot,
+#: because it is what the data actually says rather than what two numbers
+#: happen to agree on.
+#:
+#: The service answers with the same names in camelCase, which is the spelling
+#: used here so a lookup needs no translation.
+COLOUR_TYPES = (
+    "primary", "secondary", "tertiary", "black", "white", "yellow",
+    "orange", "red", "blue", "green", "cyan", "fire", "hull", "glass",
+    "reactor", "darkhull", "booster", "killmark",
+    "primaryLight", "secondaryLight", "tertiaryLight", "whiteLight",
+    "primaryHologram", "secondaryHologram", "tertiaryHologram",
+    "state0", "state1", "state2", "state3",
+    "stateVulnerable", "stateInvulnerable",
+    "primaryForcefield", "secondaryForcefield", "primaryBanner",
+    "primaryFX", "secondaryFX",
+    "primarySpotlight", "secondarySpotlight", "tertiarySpotlight",
+    "primaryBillboard", "primaryWarpFx", "primaryAttackFX",
+    "primarySiegeFX", "primaryDockedFX",
+)
+
+
+def slot_named(index):
+    """The slot one colour TYPE index refers to, or None.
+
+    None for an index outside the list rather than a guess: a colour bound to
+    the wrong slot follows the wrong thing forever after, and silently.
+    """
+
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        return None
+    if 0 <= index < len(COLOUR_TYPES):
+        return COLOUR_TYPES[index]
+    return None
 
 
 def group_name(faction: str) -> str:
@@ -87,6 +131,29 @@ def faction_group(faction: str, slots, *, rebuild: bool = False):
 
     tree["carbon_faction"] = str(faction)
     return tree
+
+
+def slot_for(item, key, slots=None, colour=None):
+    """Which faction colour a thing names: by ID if it says, else by value.
+
+    The ID is the real answer. A decal names its glow as `glowColorType` in
+    the hull record -- 11, 12, 15 and 17 on an Abaddon are fire, hull,
+    darkhull and killmark -- and the SOF endpoint is gaining the same ids for
+    the rest, at which point nothing here has to look at a colour at all.
+
+    Until then the value is matched back, which is exact but not unique: on
+    amarrbase `primary` and `secondarySpotlight` hold the same colour, so
+    anything using either binds to the first. It follows the right VALUE and
+    carries the wrong label, and would come apart if somebody edited those two
+    slots away from each other. An id ends that.
+    """
+
+    for name in (key, f"{key}Type", "colorType", "colorId", "colorIndex"):
+        if name and isinstance(item, Mapping) and name in item:
+            slot = slot_named(item.get(name))
+            if slot is not None:
+                return slot
+    return slot_of(slots, colour)
 
 
 def slot_of(slots, colour, tolerance: float = TOLERANCE):

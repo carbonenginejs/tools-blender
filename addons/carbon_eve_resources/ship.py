@@ -750,7 +750,8 @@ def decal_collection(group, visibility_group="", parent=None):
     return child
 
 
-def build_decals(document, hull, resources, family, decal_sets=None, collection=None):
+def build_decals(document, hull, resources, family, decal_sets=None,
+                 collection=None, faction_slots=None, faction_tree=None):
     """Copies each decal's hull triangles into its own mesh and shades it.
 
     A decal is a re-draw of part of the hull, not a surface of its own, so the
@@ -857,7 +858,8 @@ def build_decals(document, hull, resources, family, decal_sets=None, collection=
         # copies of the hull's -- so it needs its own copy of the rest pose
         # before anything deforms it.
         store_rest_position(obj)
-        mesh.materials.append(build_decal_material(decal, resources, obj))
+        mesh.materials.append(build_decal_material(
+            decal, resources, obj, faction_slots, faction_tree))
         built.append(obj)
 
     for reason, count in skipped.items():
@@ -902,7 +904,8 @@ def skin_like_hull(obj, hull, vertex_map):
     modifier.object = armature
 
 
-def build_decal_material(decal, resources, obj=None):
+def build_decal_material(decal, resources, obj=None, faction_slots=None,
+                         faction_tree=None):
     """One decal's material, sampling its maps through the projection."""
 
     material = bpy.data.materials.new(decal.name)
@@ -966,7 +969,15 @@ def build_decal_material(decal, resources, obj=None):
         mlinks.new(strength.outputs[0], principled.inputs["Emission Color"])
         principled.inputs["Emission Strength"].default_value = 1.0
     elif glow_colour:
-        principled.inputs["Emission Color"].default_value = tuple(glow_colour[:3]) + (1.0,)
+        # A decal names its glow by TYPE -- the hull record carries
+        # `glowColorType`, and 11, 12, 15 and 17 on an Abaddon are fire, hull,
+        # darkhull and killmark. The SOF endpoint resolves that before we see
+        # it, so the slot is recovered from the value and the faction drives
+        # it from then on.
+        bind_faction_colour(mnodes, mlinks,
+                            principled.inputs["Emission Color"], glow_colour,
+                            faction_slots, faction_tree, (-200, 320),
+                            decal.constants, "DecalGlowColor")
 
     if decal.shader == "decalholev5.fx":
         wire_hull_breach(decal, principled, sampled, projection, mnodes, mlinks,
@@ -1432,6 +1443,32 @@ def sprite_mesh():
     return mesh
 
 
+def bind_faction_colour(nodes_of, links_of, socket, colour, faction_slots,
+                        faction_tree, location=(0, 0), item=None, key=""):
+    """Points one colour socket at the faction, or sets it as a literal.
+
+    The whole faction idea in one place: if this colour IS one of the
+    faction's slots, the socket reads the faction group and follows it when
+    somebody edits it. If it is not, the value is written in and stands alone.
+
+    Returns the slot it bound to, or None.
+    """
+
+    value = tuple(float(v) for v in (list(colour or ()) + [1.0])[:4])
+    slot = sof_faction_nodes.slot_for(item, key, faction_slots, value)
+    if slot is not None and faction_tree is not None:
+        node = nodes_of.new("ShaderNodeGroup")
+        node.node_tree = faction_tree
+        node.location = location
+        source = node.outputs.get(slot)
+        if source is not None:
+            links_of.new(source, socket)
+            return slot
+        nodes_of.remove(node)
+    socket.default_value = value[:3] + (1.0,)
+    return None
+
+
 def faction_colour_material(faction_tree, slot, fallback=(1.0, 1.0, 1.0, 1.0)):
     """An additive glow that READS one of the faction's colour slots.
 
@@ -1578,7 +1615,8 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
             # Which of the faction's colours this sprite named. Everything
             # naming the same slot shares one material and follows the faction
             # when it is edited; a colour that matches no slot keeps its own.
-            slot = sof_faction_nodes.slot_of(faction_slots, colour)
+            slot = sof_faction_nodes.slot_for(item, "color",
+                                              faction_slots, colour)
             if slot is not None:
                 if slot not in by_slot:
                     by_slot[slot] = faction_colour_material(
@@ -1682,6 +1720,7 @@ def build_plane_sets(document, hull, collection, hull_sets=None,
 
     armature = hull.parent if hull is not None and hull.parent is not None         and hull.parent.type == "ARMATURE" else None
     built, lights = [], []
+    hidden = 0
     for set_index, plane_set in enumerate(find_typed(document, "EvePlaneSet")):
         effect = plane_set.get("effect") or {}
         planes = plane_set.get("planes") or []
@@ -1703,6 +1742,20 @@ def build_plane_sets(document, hull, collection, hull_sets=None,
             obj.matrix_world = item_matrix(item, hull)
 
             colour = tuple(item.get("color") or (1.0, 1.0, 1.0, 1.0))
+            # A ZERO colour means the item is not drawn. Carbon sets
+            # display=false for it once the faction colour is in
+            # (`EveSOFData`: `if (isZeroColor(item.color)) item.display =
+            # false`), which is why an Abaddon's planes are (0,0,0,1): they
+            # are off, not black. Drawing them was what made plane sets look
+            # like solid slabs.
+            #
+            # Hidden rather than skipped: the item is still part of the SOF and
+            # has to survive being exported.
+            if not any(float(v) for v in colour[:3]):
+                obj.hide_viewport = True
+                obj.hide_render = True
+                obj["carbon_display"] = False
+                hidden += 1
             obj["carbon_plane_color"] = colour
             obj["carbon_plane_blink"] = tuple(item.get("blinkData") or (1.0, 0.0, 1.0, 0.0))
             obj["carbon_plane_effect"] = str(effect.get("effectFilePath") or "")
@@ -1743,6 +1796,9 @@ def build_plane_sets(document, hull, collection, hull_sets=None,
     if built or lights:
         print(f"  built {len(built)} plane(s) and {len(lights)} plane light(s) "
               f"from {len(find_typed(document, 'EvePlaneSet'))} set(s)")
+        if hidden:
+            print(f"    {hidden} plane(s) hidden: a zero colour means the "
+                  f"item is not drawn")
     return built + lights
 
 
@@ -2354,11 +2410,6 @@ def build_ship(document_path, resources_directory, *, clear=True,
         if obj not in existing:
             move_to_collection(obj, collection)
 
-    decal_objects = build_decals(document, primary, resources, family, decal_sets,
-                                 collection)
-    plane_objects = build_plane_sets(document, primary, collection,
-                                     (hull_record or {}).get("planeSets"),
-                                     resources)
     # The faction's colours, as one source every child reads. Built before the
     # attachments so they can bind to it as they are made.
     faction_slots = sof_faction_nodes.colour_slots(faction_record)
@@ -2371,6 +2422,11 @@ def build_ship(document_path, resources_directory, *, clear=True,
         faction_tree = sof_faction_nodes.faction_group(faction_name,
                                                        faction_slots)
 
+    decal_objects = build_decals(document, primary, resources, family, decal_sets,
+                                 collection, faction_slots, faction_tree)
+    plane_objects = build_plane_sets(document, primary, collection,
+                                     (hull_record or {}).get("planeSets"),
+                                     resources)
     sprite_objects = build_sprite_sets(document, primary, collection,
                                        (hull_record or {}).get("spriteSets"),
                                        faction_slots, faction_tree)
