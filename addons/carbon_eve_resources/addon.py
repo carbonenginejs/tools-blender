@@ -341,7 +341,7 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
     haze_density: FloatProperty(
         name="Haze density",
         description="How thick a haze cloud is. Zero clears them",
-        default=1.0, min=0.0, soft_max=10.0, step=10, precision=2,
+        default=0.7, min=0.0, soft_max=10.0, step=10, precision=2,
         update=_haze_changed,
     )
     #: How quickly a haze thins towards its shell. LOWER is a longer, gentler
@@ -350,7 +350,7 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         name="Haze falloff",
         description="How quickly a haze thins outwards. Lower is a longer, "
                     "softer gradient; higher pulls it into the centre",
-        default=2.5, min=0.25, soft_max=8.0, step=10, precision=2,
+        default=8.0, min=0.25, soft_max=16.0, step=10, precision=2,
         update=_haze_changed,
     )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
@@ -1070,6 +1070,8 @@ def _build_fetched_ship(document, resources, problems) -> str:
             faction_record=_faction_record(dna),
             booster_record=(_race_record(dna).get("booster") or {}),
             sprite_size=float(getattr(_prefs(bpy.context), "sprite_scale", 0.047)),
+            haze_density=float(getattr(_prefs(bpy.context), "haze_density", 0.7)),
+            haze_falloff=float(getattr(_prefs(bpy.context), "haze_falloff", 8.0)),
         )
 
     if primary is None:

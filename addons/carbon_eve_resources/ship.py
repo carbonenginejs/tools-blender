@@ -1735,6 +1735,11 @@ HAZE_DENSITY_NODE = "carbon haze density"
 
 #: How dense a haze is, per unit of its authored alpha.
 #:
+#: This is the DIAL's default, not a factor it multiplies: the preference
+#: replaces this number outright, and a fresh build reads the preference. They
+#: have to be the same value or the first nudge of the dial jumps the look --
+#: which it did, from a built 4.0 to a dial that read 2.5.
+#:
 #: The density fed to Blender is this over the cloud's own RADIUS, because a
 #: volume's density is per unit of path length: the same number through a
 #: cloud two metres across and one a hundred and twenty metres across are two
@@ -1742,7 +1747,7 @@ HAZE_DENSITY_NODE = "carbon haze density"
 #: alpha mean what it should -- how much is absorbed passing THROUGH -- and
 #: makes the look independent of the importer's scale, which is what broke
 #: when hulls stopped arriving at a hundredth of their real size.
-HAZE_DENSITY = 0.12
+HAZE_DENSITY = 0.7
 
 #: How quickly a haze thins towards its shell, as an exponent on the distance
 #: from its centre.
@@ -1750,7 +1755,7 @@ HAZE_DENSITY = 0.12
 #: Without this the density is UNIFORM inside the ellipsoid, so the cloud stops
 #: dead at the mesh surface -- a hard-edged blob, which is not what haze does.
 #: Higher keeps it near the middle; lower spreads it to the shell.
-HAZE_FALLOFF = 4.0
+HAZE_FALLOFF = 8.0
 
 #: How much a haze glows in the dark, THROUGH the whole cloud.
 #:
@@ -1791,7 +1796,8 @@ def haze_mesh():
     return mesh
 
 
-def haze_material(faction_tree, slot, colour, radius=1.0):
+def haze_material(faction_tree, slot, colour, radius=1.0,
+                  thickness=None, falloff=None):
     """A haze: a VOLUME, not a surface.
 
     `hazespherical.fx` carries no texture and no geometry beyond a sphere --
@@ -1822,6 +1828,14 @@ def haze_material(faction_tree, slot, colour, radius=1.0):
     span = max(float(radius), 1e-6)
     alpha /= span
     emission = HAZE_EMISSION / span
+    # The dials, or the built-in defaults when nothing passes them.
+    #
+    # `thickness`, not `density`: the density NODE is built below under that
+    # name, and a parameter sharing it was rebound to the node before it was
+    # read -- so the multiply became alpha times a node and every haze on the
+    # ship failed to build, silently, with the rest of the hull fine.
+    thickness = HAZE_DENSITY if thickness is None else float(thickness)
+    falloff = HAZE_FALLOFF if falloff is None else float(falloff)
 
     # Density that THINS towards the shell. The distance from the object's own
     # centre is 0 in the middle and 1 at the surface, because the shared mesh
@@ -1847,7 +1861,7 @@ def haze_material(faction_tree, slot, colour, radius=1.0):
     curve.location = (-360, -260)
     curve.label = HAZE_FALLOFF_NODE
     curve.name = HAZE_FALLOFF_NODE
-    curve.inputs[1].default_value = HAZE_FALLOFF
+    curve.inputs[1].default_value = falloff
     tree.links.new(inward.outputs[0], curve.inputs[0])
 
     density = tree.nodes.new("ShaderNodeMath")
@@ -1855,7 +1869,7 @@ def haze_material(faction_tree, slot, colour, radius=1.0):
     density.location = (-180, -260)
     density.label = HAZE_DENSITY_NODE
     density.name = HAZE_DENSITY_NODE
-    density.inputs[1].default_value = alpha * HAZE_DENSITY
+    density.inputs[1].default_value = alpha * thickness
     tree.links.new(curve.outputs[0], density.inputs[0])
     tree.links.new(density.outputs[0], volume.inputs["Density"])
 
@@ -1870,7 +1884,7 @@ def haze_material(faction_tree, slot, colour, radius=1.0):
         # cut entirely and left a solid glowing blob under the hull. Dividing
         # by the radius makes the number mean what it should: how much the
         # whole cloud emits, not how much each metre of it does.
-        volume.inputs["Emission Strength"].default_value = emission
+        volume.inputs["Emission Strength"].default_value = emission * thickness
     material["carbon_haze_emission"] = emission
 
     source = None
@@ -1898,7 +1912,8 @@ def haze_material(faction_tree, slot, colour, radius=1.0):
 
 
 def build_haze_sets(document, hull, collection, hull_sets=None,
-                    faction_slots=None, faction_tree=None):
+                    faction_slots=None, faction_tree=None,
+                    thickness=None, falloff=None):
     """The soft clouds a hull sits in: one ellipsoid per haze.
 
     Rare -- of eight hulls checked only a Dominix had any, and it has five --
@@ -1946,7 +1961,7 @@ def build_haze_sets(document, hull, collection, hull_sets=None,
                 extent = obj.matrix_world.to_scale()
                 radius = (abs(extent.x) + abs(extent.y) + abs(extent.z)) / 3.0
                 obj.material_slots[0].material = haze_material(
-                    faction_tree, slot, colour, radius)
+                    faction_tree, slot, colour, radius, thickness, falloff)
             if slot:
                 obj["carbon_faction_slot"] = slot
 
@@ -2823,7 +2838,8 @@ def item_matrix(item, hull):
 def build_ship(document_path, resources_directory, *, clear=True,
                globals_overrides=None, decal_sets=None, hull_record=None,
                owners=None, cache_directory="", banner_images=None,
-               faction_record=None, booster_record=None, sprite_size=None):
+               faction_record=None, booster_record=None, sprite_size=None,
+               haze_density=None, haze_falloff=None):
     """Builds a whole ship: geometry, areas, decals, and the SOF that drives it.
 
     ONE call, because the panel and the command line must produce the same
@@ -2881,7 +2897,8 @@ def build_ship(document_path, resources_directory, *, clear=True,
                                      resources)
     haze_objects = build_haze_sets(document, primary, collection,
                                    (hull_record or {}).get("hazeSets"),
-                                   faction_slots, faction_tree)
+                                   faction_slots, faction_tree,
+                                   haze_density, haze_falloff)
     sprite_objects = build_sprite_sets(document, primary, collection,
                                        (hull_record or {}).get("spriteSets"),
                                        faction_slots, faction_tree, sprite_size)
