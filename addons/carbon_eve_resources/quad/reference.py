@@ -78,21 +78,6 @@ NORMAL_BIAS = 0.0020000000949949026
 DUST_TILING = 20.0
 DUST_BIAS = 0.5
 
-#: How far past its projection a CLAMPED pattern mask fades out, in UV.
-#:
-#: OFF, and it should stay off. Clamp-to-edge extends the mask's edge colour
-#: across the rest of the hull, and that is not a defect -- it is what the
-#: skin is meant to do, and fading it makes the paint stop dead partway along
-#: the plate instead of carrying on.
-#:
-#: It was added to chase thin repeating lines, which turned out to be a few
-#: stray texels at the CORNERS OF THE TEXT in the mask rather than the whole
-#: edge. A feather wide enough to hide those takes the paint with it, so this
-#: is the wrong instrument for that fault and is left at zero.
-#:
-#: The authored wrap mode is untouched either way; the modes are authored per
-#: mask and are not ours to choose.
-PATTERN_EDGE_BLEND = 0.0
 
 #: How much the authored glow colours are boosted before they are emitted.
 #:

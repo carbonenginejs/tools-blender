@@ -188,29 +188,6 @@ def _haze_changed(self, context):
                 float(base) * float(self.haze_density))
 
 
-def _pattern_edge_changed(self, context):
-    """Re-feathers the pattern projections already in the scene.
-
-    One socket on every material's projection node. The authored wrap mode is
-    not touched: this only decides how far past the projection a CLAMPED mask
-    fades, and at zero the edge is exactly as hard as it was.
-    """
-
-    from .quad.nodes import PATTERN_EDGE_SOCKET, PROJECTION_GROUP
-
-    wanted = float(self.pattern_edge_blend)
-    for material in bpy.data.materials:
-        tree = getattr(material, "node_tree", None)
-        if tree is None:
-            continue
-        for node in tree.nodes:
-            if (node.bl_idname == "ShaderNodeGroup" and node.node_tree
-                    and node.node_tree.name == PROJECTION_GROUP):
-                socket = node.inputs.get(PATTERN_EDGE_SOCKET)
-                if socket is not None:
-                    socket.default_value = wanted
-
-
 def _view_transform_chosen(self, context):
     """Applied the moment it is chosen, not at the next ship load.
 
@@ -376,16 +353,6 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         default=8.0, min=0.25, soft_max=16.0, step=10, precision=2,
         update=_haze_changed,
     )
-    #: How far past its projection a clamped pattern mask fades out.
-    pattern_edge_blend: FloatProperty(
-        name="Pattern edge blend",
-        description="How far past its projection a clamped pattern mask "
-                    "fades, in UV. Off by default: clamp is meant to carry "
-                    "the skin's edge colour across the hull, and fading it "
-                    "makes the paint stop partway along the plate",
-        default=0.0, min=0.0, max=1.0, step=1, precision=3,
-        update=_pattern_edge_changed,
-    )
     creator_terms_revision: StringProperty(default="", options={"HIDDEN"})
     creator_terms_accepted_at: StringProperty(default="", options={"HIDDEN"})
 
@@ -415,7 +382,6 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         layout.prop(self, "sprite_glow")
         layout.prop(self, "haze_density")
         layout.prop(self, "haze_falloff")
-        layout.prop(self, "pattern_edge_blend")
 
         banners = layout.box()
         banners.label(text="Banners")
