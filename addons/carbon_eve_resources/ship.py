@@ -1422,6 +1422,15 @@ def attach_to_bone(obj, armature, bone_index):
     return True
 
 
+#: How much of its authored size a sprite dot is drawn at.
+#:
+#: EVE's sprites are camera-facing billboards that grow with distance, so
+#: `minScale` is a screen-space number rather than a radius in the world.
+#: Taken literally it makes beach balls. A tenth reads as a light on a hull,
+#: which is what the thing IS -- and the authored scales stay on the object,
+#: so nothing is lost by drawing it smaller.
+SPRITE_SIZE = 0.1
+
 #: One sphere, shared by every sprite in the file. A sprite is a glowing DOT
 #: and a sphere reads as one from any direction -- which a flat quad does not,
 #: since EVE's are camera-facing billboards and Blender has no such thing
@@ -1501,7 +1510,12 @@ def faction_colour_material(faction_tree, slot, fallback=(1.0, 1.0, 1.0, 1.0)):
 
     emission = tree.nodes.new("ShaderNodeEmission")
     emission.location = (0, 0)
-    emission.inputs["Strength"].default_value = 1.0
+    # Strength from the OBJECT's alpha times a soft falloff, so a blink drives
+    # one sprite without touching the others that share this material.
+    info = tree.nodes.new("ShaderNodeObjectInfo")
+    info.location = (-300, -220)
+    tree.links.new(sprite_falloff(tree, info.outputs["Alpha"]),
+                   emission.inputs["Strength"])
 
     source = None
     if faction_tree is not None and slot in {s.name for s in faction_tree.interface.items_tree if getattr(s, "in_out", "") == "OUTPUT"}:
@@ -1525,6 +1539,68 @@ def faction_colour_material(faction_tree, slot, fallback=(1.0, 1.0, 1.0, 1.0)):
     if hasattr(material, "surface_render_method"):
         material.surface_render_method = "BLENDED"
     return material
+
+
+def sprite_falloff(tree, strength_socket):
+    """Fades a sprite out towards its rim, so a ball reads as a light.
+
+    `blinkinglightspool.fx` carries no texture: the shader draws the dot, and
+    what it draws is bright in the middle and gone at the edge. A sphere lit
+    flat is a solid ball, which is what made these look like beads on a hull.
+
+    Facing is 1 looking straight at the surface and 0 at the silhouette, so
+    squaring it gives a soft round glow from EVERY angle -- no image to
+    invent, and no camera-facing constraint per object, which is the other way
+    to get a billboard and costs one constraint on every one of two hundred
+    sprites.
+    """
+
+    weight = tree.nodes.new("ShaderNodeLayerWeight")
+    weight.location = (-520, 180)
+    weight.inputs["Blend"].default_value = 0.5
+
+    squared = tree.nodes.new("ShaderNodeMath")
+    squared.operation = "MULTIPLY"
+    squared.location = (-340, 180)
+    squared.label = "soft dot"
+    tree.links.new(weight.outputs["Facing"], squared.inputs[0])
+    tree.links.new(weight.outputs["Facing"], squared.inputs[1])
+
+    lit = tree.nodes.new("ShaderNodeMath")
+    lit.operation = "MULTIPLY"
+    lit.location = (-160, 180)
+    lit.label = "x blink"
+    tree.links.new(squared.outputs[0], lit.inputs[0])
+    tree.links.new(strength_socket, lit.inputs[1])
+    return lit.outputs[0]
+
+
+def drive_blink(obj, rate, phase):
+    """Makes one sprite blink, on the object rather than in its material.
+
+    Every sprite naming the same faction colour SHARES a material, so the
+    blink cannot live there -- it would blink all of them together. The
+    object's own colour alpha is free and the material reads it, so each
+    sprite carries its own rhythm and they still share one material.
+
+    `blinkRate` is in cycles per second and `blinkPhase` offsets the cycle,
+    which is what stops a row of lights pulsing in unison. A rate of zero is a
+    light that is simply on, and gets no driver at all.
+    """
+
+    if rate <= 0.0:
+        return False
+    fps = float(getattr(bpy.context.scene.render, "fps", 24) or 24)
+    obj.driver_remove("color", 3)
+    driver = obj.driver_add("color", 3).driver
+    driver.type = "SCRIPTED"
+    # A square wave: EVE's blinking lights are on or off, not a sine fade.
+    # Off is 0.15 rather than 0 so an unlit sprite is still findable in the
+    # viewport instead of vanishing.
+    driver.expression = (
+        f"1.0 if ((frame / {fps:g} * {rate:g} + {phase:g}) % 1.0) < 0.5 "
+        f"else 0.15")
+    return True
 
 
 def sprite_material(set_index, effect=None, resources=None):
@@ -1551,8 +1627,11 @@ def sprite_material(set_index, effect=None, resources=None):
     info.location = (-300, 0)
     emission = tree.nodes.new("ShaderNodeEmission")
     emission.location = (0, 0)
-    emission.inputs["Strength"].default_value = 1.0
     tree.links.new(info.outputs["Color"], emission.inputs["Color"])
+    # Strength from the object's ALPHA, which is what the blink drives, faded
+    # towards the rim so the sphere reads as a glow rather than a bead.
+    tree.links.new(sprite_falloff(tree, info.outputs["Alpha"]),
+                   emission.inputs["Strength"])
 
     transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
     transparent.location = (0, 180)
@@ -1586,6 +1665,7 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
         and hull.parent.type == "ARMATURE" else None
     mesh = None
     built, lights = [], []
+    blinking = 0
     # One material per faction colour SLOT, shared across every set: a hull
     # names four or five of them between all its sprites, so this is a handful
     # of materials rather than one per set or one per sprite.
@@ -1613,7 +1693,7 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
             # importer scales a hull by 0.01 -- so they sat a hundred times too
             # far out at a hundred times the size, which reads as "the lights
             # are wrong" rather than "the sprites missed a transform".
-            scale = float(item.get("minScale") or 1.0)
+            scale = float(item.get("minScale") or 1.0) * SPRITE_SIZE
             local = mathutils.Matrix.LocRotScale(
                 mathutils.Vector(tuple(float(v) for v in
                                        (item.get("position") or (0.0, 0.0, 0.0)))[:3]),
@@ -1652,8 +1732,12 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
             obj["carbon_sprite_color"] = colour
             obj["carbon_sprite_min_scale"] = scale
             obj["carbon_sprite_max_scale"] = float(item.get("maxScale") or scale)
-            obj["carbon_sprite_blink_rate"] = float(item.get("blinkRate") or 0.0)
-            obj["carbon_sprite_blink_phase"] = float(item.get("blinkPhase") or 0.0)
+            rate = float(item.get("blinkRate") or 0.0)
+            phase = float(item.get("blinkPhase") or 0.0)
+            obj["carbon_sprite_blink_rate"] = rate
+            obj["carbon_sprite_blink_phase"] = phase
+            if drive_blink(obj, rate, phase):
+                blinking += 1
             obj["carbon_sprite_falloff"] = float(item.get("falloff") or 0.0)
             attach_to_bone(obj, armature, item.get("boneIndex"))
             stamp_identity(obj, f"sprite_{index}", "sprite",
@@ -1669,7 +1753,8 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
 
     if built or lights:
         print(f"  built {len(built)} sprite(s) and {len(lights)} sprite light(s) "
-              f"from {len(find_typed(document, 'EveSpriteSet'))} set(s)")
+              f"from {len(find_typed(document, 'EveSpriteSet'))} set(s)"
+              + (f"; {blinking} blink" if blinking else ""))
     return built + lights
 
 
