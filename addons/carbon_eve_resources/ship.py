@@ -1608,10 +1608,18 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
                 unique_name(f"sprite_{set_index}_{index}", collection.name), mesh),
                 f"sprite_{set_index}_{index}", collection.name)
             group.objects.link(obj)
-            position = tuple(float(v) for v in (item.get("position") or (0.0, 0.0, 0.0)))
-            obj.location = position[:3]
+            # THROUGH THE HULL, like every other attachment. Placing a sprite
+            # at its authored position directly puts it in SOF units, and the
+            # importer scales a hull by 0.01 -- so they sat a hundred times too
+            # far out at a hundred times the size, which reads as "the lights
+            # are wrong" rather than "the sprites missed a transform".
             scale = float(item.get("minScale") or 1.0)
-            obj.scale = (scale, scale, scale)
+            local = mathutils.Matrix.LocRotScale(
+                mathutils.Vector(tuple(float(v) for v in
+                                       (item.get("position") or (0.0, 0.0, 0.0)))[:3]),
+                mathutils.Quaternion((1.0, 0.0, 0.0, 0.0)),
+                mathutils.Vector((scale, scale, scale)))
+            obj.matrix_world = (hull.matrix_world @ local) if hull is not None else local
 
             # The colour is the FACTION's, not the hull's. It arrives already
             # resolved from the faction's colour set, which is checkable: the
@@ -1687,7 +1695,13 @@ def attachment_light(entry, name, hull, armature, owner=None):
     lamp = bpy.data.lights.new(name, "POINT")
     # radius is the reach, innerRadius the falloff start; Blender has one
     # size, so the inner radius is what the lamp's own radius becomes.
-    lamp.shadow_soft_size = float(data.get("innerRadius") or 0.0) * 0.01
+    #
+    # In the HULL'S units, not a hardcoded hundredth. The importer scales a
+    # hull by 0.01 by default, and writing that number here meant a radius
+    # that was only right while nobody changed the setting -- and silently
+    # wrong afterwards, in a way that reads as "the lights are too big".
+    unit = hull.matrix_world.to_scale().x if hull is not None else 1.0
+    lamp.shadow_soft_size = float(data.get("innerRadius") or 0.0) * abs(unit)
     colour = tuple(data.get("color") or (0.0, 0.0, 0.0, 0.0))
     lamp.color = tuple(colour[:3]) or (1.0, 1.0, 1.0)
     lamp.energy = float(data.get("brightness") or 1.0)
