@@ -5,9 +5,9 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "addons" / "carbon_eve_resources" / "gr2_importer"))
+sys.path.insert(0, str(ROOT / "packages" / "carbon-granny" / "src"))
 
-from gr2 import read_raw  # noqa: E402
+from carbon_granny import read_raw  # noqa: E402
 
 
 MAGIC_32 = bytes.fromhex("29de6cc0baa4532b25f5b7a5f666e2ee")

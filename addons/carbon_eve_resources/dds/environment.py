@@ -1,8 +1,7 @@
 """Turns an EVE nebula cube into a world environment Blender can load.
 
-Ported from `scripts/prepare_environment.mjs`, which did the same job through
-Node and the runtime's DDS reader. This add-on is standalone, so it does it
-here instead.
+The conversion is implemented entirely in Python so the Blender add-on stays
+standalone.
 
 Three things have to happen to a nebula before Blender will take it:
 

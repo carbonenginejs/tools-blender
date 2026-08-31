@@ -814,6 +814,68 @@ def _compute_rest_matrices(bones: List[Dict[str, Any]]) -> Tuple[List[Matrix], L
     return rest_local, rest_world
 
 
+def _select_import_skeleton(graph: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Select a GR2 model skeleton or the CMF skeleton used by the first mesh."""
+
+    models = graph.get("models", [])
+    if isinstance(models, list) and models:
+        skeleton = models[0].get("skeleton") if isinstance(models[0], dict) else None
+        if isinstance(skeleton, dict):
+            return skeleton
+
+    skeletons = graph.get("skeletons", [])
+    if not isinstance(skeletons, list) or not skeletons:
+        return None
+    for mesh in graph.get("meshes", []) or []:
+        if not isinstance(mesh, dict):
+            continue
+        index = mesh.get("skeleton")
+        if isinstance(index, int) and 0 <= index < len(skeletons):
+            skeleton = skeletons[index]
+            if isinstance(skeleton, dict):
+                return skeleton
+    return skeletons[0] if isinstance(skeletons[0], dict) else None
+
+
+def _bones_for_import(skeleton: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Expose GR2 and CMF skeleton layouts through the existing armature path."""
+
+    bones = skeleton.get("bones", [])
+    if not isinstance(bones, list) or not bones:
+        return []
+    if all(isinstance(bone, dict) for bone in bones):
+        return bones
+
+    parents = skeleton.get("parents", [])
+    transforms = skeleton.get("restTransforms", [])
+    inverse_bind = skeleton.get("invBindTransforms", [])
+    output = []
+    for index, bone_name in enumerate(bones):
+        transform = transforms[index] if index < len(transforms) and isinstance(transforms[index], dict) else {}
+        position = transform.get("position") or [0.0, 0.0, 0.0]
+        orientation = transform.get("rotation") or [0.0, 0.0, 0.0, 1.0]
+        scale = transform.get("scale") or [1.0, 1.0, 1.0]
+        if not isinstance(scale, list) or len(scale) != 3:
+            scale = [1.0, 1.0, 1.0]
+        parent = parents[index] if index < len(parents) else -1
+        parent = -1 if parent in (-1, 0xFFFFFFFF) else int(parent)
+        bone = {
+            "name": bone_name if isinstance(bone_name, str) and bone_name else f"Bone_{index}",
+            "parentIndex": parent,
+            "position": list(position),
+            "orientation": list(orientation),
+            "scaleShear": [
+                float(scale[0]), 0.0, 0.0,
+                0.0, float(scale[1]), 0.0,
+                0.0, 0.0, float(scale[2]),
+            ],
+        }
+        if index < len(inverse_bind):
+            bone["inverseWorldTransform"] = inverse_bind[index]
+        output.append(bone)
+    return output
+
+
 # =============================================================================
 # Armature import
 # =============================================================================
@@ -826,16 +888,12 @@ def import_armature(
     rot_x_deg: float,
     bone_tail_mode: str,
 ) -> Tuple[Optional[bpy.types.Object], Dict[str, Any]]:
-    models = gr2.get("models", [])
-    if not isinstance(models, list) or not models:
+    skel = _select_import_skeleton(gr2)
+    if skel is None:
         return None, {}
 
-    skel = models[0].get("skeleton", None)
-    if not isinstance(skel, dict):
-        return None, {}
-
-    bones = skel.get("bones", [])
-    if not isinstance(bones, list) or not bones:
+    bones = _bones_for_import(skel)
+    if not bones:
         return None, {}
 
     arm_name = f"{instance_name}_Armature"
@@ -1644,9 +1702,10 @@ def import_gr2_json(
     clamp_keys_to_duration: bool,
     action_end_padding_frames: int,
     bone_tail_mode: str,
+    collection_prefix: str = "GR2",
 ) -> Dict[str, Any]:
     instance_name = _make_unique_instance_name(base_name)
-    col = _ensure_collection(f"GR2_{instance_name}")
+    col = _ensure_collection(f"{collection_prefix}_{instance_name}")
 
     mesh_pairs = import_meshes(
         gr2, col,
@@ -1918,6 +1977,95 @@ class IMPORT_SCENE_OT_carbon_gr2(Operator, ImportHelper):
         return {"FINISHED"}
 
 
+class IMPORT_SCENE_OT_carbon_cmf(Operator, ImportHelper):
+    """Load CMF through the same geometry and armature builders as GR2."""
+
+    bl_idname = "import_scene.carbon_cmf"
+    bl_label = "Import Carbon CMF"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filename_ext = ".cmf"
+    filter_glob: StringProperty(default="*.cmf;*.CMF", options={"HIDDEN"})
+
+    def execute(self, context):
+        path = bpy.path.abspath(self.filepath)
+        if not os.path.isfile(path):
+            self.report({"ERROR"}, "CMF file not found.")
+            return {"CANCELLED"}
+
+        try:
+            from carbon_cmf import CmfError, build_shared_from_cmf, read_cmf
+        except ImportError as error:
+            self.report({"ERROR"}, f"The carbon-cmf package is not installed: {error}")
+            return {"CANCELLED"}
+
+        prefs = _prefs(context)
+        try:
+            document = read_cmf(
+                path,
+                unpack_tangents=bool(prefs.try_unpack_tangents_default),
+            )
+            unsupported_topologies = sorted(
+                {
+                    mesh.get("topology")
+                    for mesh in document.get("meshes", [])
+                    if mesh.get("topology") not in (None, "TriangleList")
+                }
+            )
+            if unsupported_topologies:
+                self.report(
+                    {"ERROR"},
+                    f"CMF topology is not supported by Blender import: {', '.join(unsupported_topologies)}",
+                )
+                return {"CANCELLED"}
+            referenced_skeletons = {
+                mesh.get("skeleton")
+                for mesh in document.get("meshes", [])
+                if isinstance(mesh.get("skeleton"), int)
+            }
+            if len(referenced_skeletons) > 1:
+                self.report({"ERROR"}, "CMFs whose meshes reference multiple skeletons are not supported yet.")
+                return {"CANCELLED"}
+            graph = build_shared_from_cmf(document, flatten_lods=True)
+        except (CmfError, OSError) as error:
+            self.report({"ERROR"}, f"Could not read CMF: {error}")
+            return {"CANCELLED"}
+
+        base_name = os.path.basename(os.path.splitext(path)[0])
+        result = import_gr2_json(
+            graph,
+            base_name,
+            apply_skinning_flag=bool(prefs.apply_skinning_default),
+            # CMF curves are read in full, but their typed channels do not yet
+            # map to the Granny transform-track shape consumed below.
+            import_anims_flag=False,
+            scale=float(prefs.import_scale),
+            rot_x_deg=float(prefs.import_rot_x_deg),
+            flip_uv_v=bool(prefs.flip_uv_v_default),
+            use_smoothing_groups=bool(prefs.use_smoothing_groups_default),
+            smoothing_angle_deg=float(prefs.smoothing_angle_default),
+            skip_lods=bool(prefs.skip_lods_default),
+            try_unpack_tangents=bool(prefs.try_unpack_tangents_default),
+            resample_anims=bool(prefs.resample_anims),
+            max_keys_per_bone=int(prefs.max_keys_per_bone),
+            action_length_mode=str(prefs.action_length_mode),
+            clamp_keys_to_duration=bool(prefs.clamp_keys_to_duration),
+            action_end_padding_frames=int(prefs.action_end_padding_frames),
+            bone_tail_mode=str(prefs.bone_tail_mode),
+            collection_prefix="CMF",
+        )
+        warnings = []
+        if document.get("animations"):
+            warnings.append("animation action import is pending")
+        if len(document.get("skeletons", [])) > 1:
+            warnings.append("only the selected or first skeleton was imported")
+        if warnings:
+            self.report({"WARNING"}, f"CMF imported; {'; '.join(warnings)}.")
+        else:
+            self.report({"INFO"}, f"Imported: {result.get('instance_name')}")
+        return {"FINISHED"}
+
+
 class IMPORT_OT_gr2_json(Operator, ImportHelper):
     bl_idname = "import_scene.gr2_json"
     bl_label = "Import GR2 JSON"
@@ -2024,9 +2172,11 @@ class IMPORT_OT_gr2_json(Operator, ImportHelper):
 
 def menu_func_import(self, context):
     self.layout.operator(IMPORT_SCENE_OT_carbon_gr2.bl_idname, text="Granny GR2 (.gr2)")
+    self.layout.operator(IMPORT_SCENE_OT_carbon_cmf.bl_idname, text="Carbon Mesh Format (.cmf)")
 
 classes = (
     IMPORT_SCENE_OT_carbon_gr2,
+    IMPORT_SCENE_OT_carbon_cmf,
     IMPORT_OT_gr2_json,
 )
 

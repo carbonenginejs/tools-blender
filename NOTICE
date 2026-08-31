@@ -35,23 +35,23 @@ Games.
 Third-party algorithm provenance
 --------------------------------
 
-Oodle1 / Oodle0 section decompressor (addons/io_scene_carbon_gr2/gr2/codecs.py)
+Oodle1 / Oodle0 section decompressor (packages/carbon-granny/src/carbon_granny/codecs.py)
   Ported from the open Granny2 decompressors:
     - nwn2mdk  "gr2_decompress"        (Boost Software License 1.0)
     - arves100/opengr2  "oodle1.c"     (MPL-2.0)   https://github.com/arves100/opengr2
   This is Granny's own legacy codec, not RAD's modern Oodle (Kraken/BitKnit families).
 
-BitKnit / BitKnit2 section decompressor (addons/io_scene_carbon_gr2/gr2/codecs.py)
+BitKnit / BitKnit2 section decompressor (packages/carbon-granny/src/carbon_granny/codecs.py)
   MIT-licensed Python port of the CarbonEngineJS clean-room decoder in
   @carbonenginejs/format-gr2, following that package's published BitKnit2
   format specification and validated byte-exact against the available GR2
   codec corpus. The implementation contains no code from Knit, pybg3, ooz, or
   the former EUPL-derived Python translation.
 
-Granny curve decompression (addons/io_scene_carbon_gr2/gr2/curves.py)
+Granny curve decompression (packages/carbon-gr2/src/carbon_gr2/curves.py)
   Adapted from cppctamber's granny extension for ccpwgl2 (src/core/reader/granny/curves).
 
-Container / relocation / type-tree reflection (addons/io_scene_carbon_gr2/gr2/reader.py)
+Container / relocation / type-tree reflection (packages/carbon-granny/src/carbon_granny/reader.py)
   Original to this project, derived from the on-disk Granny GRN format layout
   (cross-referenced with the Granny SDK headers and the above projects' docs).
 

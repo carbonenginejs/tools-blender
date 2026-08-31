@@ -5,9 +5,9 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "addons" / "carbon_eve_resources" / "gr2_importer"))
+sys.path.insert(0, str(ROOT / "packages" / "carbon-granny" / "src"))
 
-from gr2.codecs import BITKNIT2_MAGIC, decompress_bitknit2  # noqa: E402
+from carbon_granny.codecs import BITKNIT2_MAGIC, decompress_bitknit2  # noqa: E402
 
 
 def raw_bitknit2(*quanta: bytes) -> bytes:

@@ -31,7 +31,8 @@ from .quad import decals as decal_module
 from .quad import interface as quad_interface
 from .quad import materials as quad_materials
 from .quad import nodes
-from .quad.materials import (build_area_material, ensure_projection,
+from .quad.materials import (build_area_material,
+                             ensure_projection,
                              fill_unbound_textures)
 
 #: The area lists an `EveShip2` keeps, in the order they are drawn.
@@ -199,20 +200,26 @@ def strip_storage_name(objects, path):
     return objects
 
 
-def import_geometry(path, label=""):
+def import_geometry(path, label="", logical_path=""):
     # The importer ships inside this add-on now, so it is a sibling import
     # rather than a separate add-on someone had to install. Registering it here
-    # as well keeps the script paths working, which run the builder without
-    # enabling anything.
+    # when absent keeps script paths working, which may run the builder without
+    # enabling anything. Re-registering an enabled importer appends its File >
+    # Import callback a second time even though Blender rejects the duplicate
+    # classes, which is how one CMF operator appeared twice in the menu.
     from . import gr2_importer
 
-    try:
+    operators = bpy.ops.import_scene
+    if (not hasattr(operators, "carbon_gr2")
+            or not hasattr(operators, "carbon_cmf")):
         gr2_importer.register()
-    except Exception:
-        pass  # already registered
     before = set(bpy.data.objects)
     known_actions = set(bpy.data.actions)
-    bpy.ops.import_scene.carbon_gr2(filepath=path)
+    format_hint = str(logical_path or path).replace("\\", "/").lower()
+    if format_hint.endswith(".cmf"):
+        bpy.ops.import_scene.carbon_cmf(filepath=str(path))
+    else:
+        bpy.ops.import_scene.carbon_gr2(filepath=str(path))
     created = [o for o in bpy.data.objects if o not in before and o.type == "MESH"]
     keep_actions([action for action in bpy.data.actions if action not in known_actions],
                  [o for o in bpy.data.objects if o not in before and o.type == "ARMATURE"])
@@ -457,7 +464,7 @@ def assemble(document_path, resources_directory, *, clear=True,
             warnings.append(f"geometry not downloaded: {path}")
             continue
 
-        objects = import_geometry(local, label)
+        objects = import_geometry(local, label, path)
         if not objects:
             warnings.append(f"{path}: importer created no mesh")
             continue
@@ -1139,9 +1146,9 @@ def wire_kill_counter(decal, principled, transparency, projection, mnodes, mlink
 
 #: An interior cube, unwrapped so Blender can sample it by direction. The
 #: bundle flattens a cube to a single face, which throws five sixths of the
-#: interior away, so the equirect is built beside it by
-#: `scripts/prepare_cube_texture.mjs` and carries a `.source.json` recording
-#: what it came from -- a converted file otherwise goes stale in silence.
+#: interior away, so a prepared equirectangular image may sit beside it and
+#: carry a `.source.json` recording what it came from -- a converted file
+#: otherwise goes stale in silence.
 EQUIRECT_SUFFIX = "_equirect.png"
 
 

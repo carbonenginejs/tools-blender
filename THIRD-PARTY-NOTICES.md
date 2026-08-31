@@ -13,7 +13,7 @@ reference-only.
 
 ---
 
-## Oodle1 / Oodle0 decompressor - `addons/io_scene_carbon_gr2/gr2/codecs.py`
+## Oodle1 / Oodle0 decompressor - `packages/carbon-granny/src/carbon_granny/codecs.py`
 
 **Boost Software License 1.0.** Ported from the Granny `gr2_decompress` implementation
 shipped in [Arbos/nwn2mdk](https://github.com/Arbos/nwn2mdk) (the decompressor is
@@ -49,7 +49,7 @@ DEALINGS IN THE SOFTWARE.
 
 ---
 
-## BitKnit / BitKnit2 decompressor - `addons/io_scene_carbon_gr2/gr2/codecs.py`
+## BitKnit / BitKnit2 decompressor - `packages/carbon-granny/src/carbon_granny/codecs.py`
 
 **CarbonEngineJS code (MIT).** On 2026-07-24 the previous EUPL-derived Python
 translation was replaced with a Python port of the MIT clean-room decoder in
@@ -66,29 +66,34 @@ replacement.
 
 ---
 
-## Granny animation-curve decompression - `addons/io_scene_carbon_gr2/gr2/curves.py`
+## Granny animation-curve decompression - `packages/carbon-gr2/src/carbon_gr2/curves.py`
 
 Authored by **cppctamber** as part of ccpwgl2 (`src/core/reader/granny/curves`), the
 same author/owner as this library; included here under this project's MIT
 license.
 
-## Tangent-frame shader math - `addons/io_scene_carbon_gr2/gr2/tangents.py`
+## Tangent-frame math - `packages/carbon-cmf/src/carbon_cmf/tangents.py`
 
-The packed tangent-frame decode/encode math is derived from Fenris Creations
-(formerly CCP / CCP Games) EVE/Carbon shader behavior for packed tangent frames.
-The canonical JavaScript implementation is maintained by CarbonEngineJS in
-`@carbonenginejs/runtime-utils` (`src/tangent.js`), and `format-gr2` delegates to
-that implementation. This Blender package contains a pure-Python port of its
-packed-frame decode math in `addons/io_scene_carbon_gr2/gr2/tangents.py`. It
-does not include copied shader source.
+The packed tangent-frame math follows Fenris Creations (formerly CCP / CCP
+Games) EVE/Carbon behavior. The shared pure-Python implementation handles both
+CMF's quaternion `PackedTangent` and angle-based `PackedTangentLegacy`; the GR2
+adapter delegates its legacy tangent expansion to the same utility. It does
+not include copied shader source.
 
 If shader source is later copied, ported, or translated directly, update this
 notice with the exact upstream repository, file path, revision, copyright
 holders, license text or required notice location, and redistribution
 obligations before committing that work.
 
-## Container, relocation, type-tree reflection, emitter
+## Container, relocation, and type-tree reflection
 
 Original to this project (cppctamber / carbonenginejs). Included here under
 this project's MIT license. Derived from the public on-disk Granny GRN format
 layout and the Granny SDK header type definitions.
+
+## meshoptimizer reference decoder - `packages/carbon-cmf/src/carbon_cmf/meshopt.py`
+
+**MIT License.** Pure-Python port of meshoptimizer's reference vertex and
+index decoder. Copyright (C) 2016-2026 Arseny Kapoulkine. The reference
+implementation is by Jasper St. Pierre. The full required MIT notice ships in
+`packages/carbon-cmf/THIRD-PARTY-NOTICES.md`.

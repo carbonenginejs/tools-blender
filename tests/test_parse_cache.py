@@ -23,7 +23,7 @@ class ChildScriptTests(unittest.TestCase):
         # A child that reached for read_gr2 there died on the import, fell
         # back to parsing in-process, and looked exactly like the feature
         # never existing.
-        self.assertIn("gr2_importer.gr2 import read_gr2", parse_cache.SCRIPT)
+        self.assertIn("from carbon_gr2 import read_gr2", parse_cache.SCRIPT)
         self.assertNotIn("gr2_importer.addon", parse_cache.SCRIPT)
         self.assertNotIn("bpy", parse_cache.SCRIPT)
 

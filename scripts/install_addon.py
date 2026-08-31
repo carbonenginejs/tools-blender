@@ -24,7 +24,13 @@ import sys
 
 import bpy
 
-PACKAGES = ("carbon_eve_resources",)
+PACKAGES = {
+    "carbon_eve_resources": ("addons", "carbon_eve_resources"),
+    "carbon_cmf": ("packages", "carbon-cmf", "src", "carbon_cmf"),
+    "carbon_granny": ("packages", "carbon-granny", "src", "carbon_granny"),
+    "carbon_gr2": ("packages", "carbon-gr2", "src", "carbon_gr2"),
+    "carbon_gsf": ("packages", "carbon-gsf", "src", "carbon_gsf"),
+}
 
 
 def repository_addons() -> str:
@@ -32,19 +38,24 @@ def repository_addons() -> str:
     return os.path.join(os.path.dirname(here), "addons")
 
 
+def repository_root() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(here)
+
+
 def blender_addons() -> str:
     return os.path.join(bpy.utils.user_resource("SCRIPTS", path="addons", create=True))
 
 
 def install(dry_run: bool = False) -> int:
-    source_root = repository_addons()
+    source_root = repository_root()
     target_root = blender_addons()
     print(f"  from {source_root}")
     print(f"  to   {target_root}")
 
     installed = 0
-    for package in PACKAGES:
-        source = os.path.join(source_root, package)
+    for package, relative_source in PACKAGES.items():
+        source = os.path.join(source_root, *relative_source)
         target = os.path.join(target_root, package)
         if not os.path.isdir(source):
             print(f"  ! {package} is not in the repository")

@@ -4,9 +4,12 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "addons" / "carbon_eve_resources" / "gr2_importer"))
+sys.path.insert(0, str(ROOT / "packages" / "carbon-cmf" / "src"))
+sys.path.insert(0, str(ROOT / "packages" / "carbon-granny" / "src"))
+sys.path.insert(0, str(ROOT / "packages" / "carbon-gr2" / "src"))
 
-from gr2 import decode_curve, sample_curve  # noqa: E402
+from carbon_gr2 import decode_curve, sample_curve  # noqa: E402
+from carbon_gr2.tangents import unpack_mesh_tangents  # noqa: E402
 
 
 T1 = 0x3F80
@@ -76,8 +79,23 @@ class CurveTests(unittest.TestCase):
 
     def test_identity_and_invalid_dimension(self):
         self.assertEqual(decode_curve({"format": 2, "degree": 0}, 4)["controls"], [0, 0, 0, 1])
+        self.assertEqual(decode_curve({"format": 2, "degree": 0}, 2)["controls"], [0, 0])
         with self.assertRaisesRegex(ValueError, "does not match track dimension"):
             decode_curve({"format": 4, "controls": [1, 2, 3]}, 4)
+
+    def test_gr2_legacy_null_tangent_uses_shared_decoder(self):
+        mesh = {
+            "vertex": {
+                "position": [0.0, 0.0, 0.0],
+                "normal": [],
+                "tangent": [0.0, 1.0, 0.0, 1.0],
+                "binormal": [],
+            }
+        }
+        self.assertTrue(unpack_mesh_tangents(mesh))
+        self.assertEqual(mesh["vertex"]["normal"], [0.0, 0.0, 0.0])
+        self.assertEqual(mesh["vertex"]["tangent"], [0.0, 0.0, 0.0])
+        self.assertEqual(mesh["vertex"]["binormal"], [0.0, 0.0, 0.0])
 
 
 if __name__ == "__main__":

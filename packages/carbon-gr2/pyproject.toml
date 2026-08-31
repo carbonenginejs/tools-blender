@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "carbon-gr2"
+version = "0.1.0"
+description = "Pure-Python GR2 semantic reader and CMF projection"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md"]
+authors = [{ name = "CarbonEngineJS contributors" }]
+dependencies = [
+    "carbon-granny>=0.1.0,<0.2.0",
+    "carbon-cmf>=0.1.0,<0.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/carbonenginejs/tools-blender"
+Repository = "https://github.com/carbonenginejs/tools-blender"
+Issues = "https://github.com/carbonenginejs/tools-blender/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,10 +1,7 @@
 """One tools-core client for the panels to share.
 
 The hosted service, so an installed add-on needs nothing but the zip -- no
-checkout, no Node, no bundle. `core/tools_service.py` still holds a client for
-a local sidecar, against the day one ships with the tool; nothing reaches it
-today, and nothing should reach it through a preference an artist has to fill
-in.
+checkout, child process, or bundle.
 """
 
 from __future__ import annotations

@@ -3,11 +3,11 @@
 bl_info = {
     "name": "CarbonEngineJS",
     "author": "CarbonengineJS",
-    "version": (0, 6, 0),
+    "version": (0, 7, 0),
     "blender": (4, 0, 0),
     "location": "3D View > Sidebar > CarbonEngineJS",
     "description": "Build EVE ships from a SOF DNA: geometry, materials, decals "
-                   "and attachments, with the GR2 importer included",
+                   "and attachments, with GR2 and CMF importers included",
     "doc_url": "https://github.com/orgs/carbonenginejs/",
     "tracker_url": "https://github.com/carbonenginejs/tools-blender/issues",
     "category": "System",
@@ -15,9 +15,8 @@ bl_info = {
 
 
 def register():
-    # The GR2 importer FIRST: every geometry import here goes through
-    # `import_scene.carbon_gr2`, and a panel that loads ships without it is a
-    # panel that reports an error instead of working.
+    # Geometry importers first: ship assembly calls the GR2 operator, while CMF
+    # files share its mesh and armature construction path.
     from . import addon, animation, export, gr2_importer, skybox, turrets
 
     gr2_importer.register()

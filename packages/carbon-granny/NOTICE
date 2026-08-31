@@ -1,0 +1,12 @@
+carbon-granny
+==============
+
+Copyright (c) 2026 cppctamber / CarbonEngineJS contributors.
+
+This package is an interoperability reader for the Granny container and
+reflected object graph. It contains no RAD Game Tools proprietary code and
+does not link granny2.dll. CarbonEngine and Fenris Creations (CCP Games)
+materials remain the property of their respective owners. This project is not
+affiliated with or endorsed by RAD Game Tools or CCP Games.
+
+Licensed under MIT. See LICENSE and THIRD-PARTY-NOTICES.md.

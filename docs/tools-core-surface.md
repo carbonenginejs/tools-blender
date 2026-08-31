@@ -1,11 +1,11 @@
 # What tools-core can already answer
 
-Surveyed against `@carbonenginejs/tools-core` 0.7.0. This is what the four tools
-are built on, and what is genuinely missing.
+Surveyed against the hosted service backed by `@carbonenginejs/tools-core`
+0.7.0. This records the HTTP surface the Blender add-on consumes and what is
+genuinely missing.
 
-The service is loopback-only and unauthenticated: SOF, types, skins, skinr, dna,
-icons and the rest are published data. ESI credentials matter only for the
-authenticated routes and the SKINR harvest.
+SOF, types, skins, skinr, DNA, icons, and the rest are published data. ESI
+credentials matter only for authenticated routes and the SKINR harvest.
 
 ## The trap that costs the most: two build facets
 
@@ -100,52 +100,23 @@ player-design marketplace and answers 501 until the harvest has been run.
 persisted through the service; they live in the blend and go out through the
 SOF the tools write.
 
-## Bundles
+## Existing bundles
 
-    cjs-sof-bundle --dna <dna> --out <directory> [--target eve] [--build latest]
-                   [--cache <directory>] [--raw-textures]
+The add-on still accepts `bundle.json` plus a GPU-free `carbon.document`,
+unchanged geometry, and decoded textures mirroring the `res:/` layout. New DNA
+builds use the hosted service and do not require local build scripts.
 
-Writes `bundle.json`, `document.json` (a GPU-free `carbon.document`), geometry
-unchanged, and textures decoded to PNG mirroring the `res:/` layout. It names
-the Blender add-ons as its intended consumer.
+## The add-on cache
 
-## Running the service
-
-    cjs-tools-service [--host 127.0.0.1] [--port 5510] [--cache <dir>] [--sof-full]
-
-**Discover the port; do not assume it.** The first stdout line is a JSON
-bootstrap record with the host, port, pid, cache and data directories and a
-`capabilities` map -- read that map before routing to a family, because it
-reports which services were actually constructed. `--port 0` takes any free
-port.
-
-## The cache
-
-Two roots, and conflating them is the trap:
-
-| Root | Resolution order | Losing it costs |
-| --- | --- | --- |
-| cache | `--cache` -> `CJS_TOOL_CACHE` -> **a cwd-relative default** | a download |
-| data | explicit -> `CJS_TOOL_DATA` -> package-relative | the fact itself |
-
-The cache default FOLLOWS THE SHELL, which has already produced two separate
-payload stores on one machine holding overlapping copies. **Set
-`CJS_TOOL_CACHE` and pass `--cache` explicitly.**
-
-Indexes are keyed by target (not game plus provider -- that changed on
-2026-08-15); payloads are content-addressed, so every target shares them and a
-second root is pure duplication. In-process, only the four most recent SOF
-catalogs are retained, so a tool switching between more than four builds will
-re-decode.
+The add-on owns one configured cache. Resource indexes record exact builds and
+payloads are content-addressed, so downloaded files can be validated and reused
+without relying on a local service checkout.
 
 ## Smaller things that bite
 
-- `cjs-tool-index` takes colon-style arguments (`--target:eve`); every other
-  entry point takes spaces.
 - SDE and audio libraries are prepared on FIRST REQUEST, so the first
   SDE-facet call can be very slow. When a newer SDE cannot be acquired the
   service answers from the newest prepared one instead of failing -- the
   response headers report which build actually answered, so read them rather
   than assuming.
-- Target ids are `eve`, `frontier`, `serenity`, `infinity`. The `/ccp/` routes
-  and the game/provider route pair were removed.
+- The add-on addresses the `eve` target only.

@@ -76,14 +76,15 @@ exported files are retained.
   `carbon_sof_geometry`.
 - Problems are counted and reported, never fatal: a hull with one bad area still
   assembles.
-- A DNA is normalised before anything else uses it, and a bundle build reports
-  whether it was BUILT or REUSED.
+- A DNA is normalised before anything else uses it, then resolved by the hosted
+  service and stored through the validated resource cache.
 
 ## Dependencies
 
-Three operations hard-fail with a clear message when the GR2 importer add-on is
-absent, rather than half-working: importing a GR2, assembling a bundle, building
-a DNA. Building a DNA additionally requires a tools-core directory.
+The GR2 and CMF importers ship in the same add-on as the EVE loader. Importing
+geometry, assembling an existing bundle, and building DNA therefore share one
+installed reader boundary; DNA resolution additionally requires the hosted
+service.
 
 ## Interaction
 

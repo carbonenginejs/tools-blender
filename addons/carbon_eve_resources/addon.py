@@ -556,13 +556,13 @@ class EVE_RESOURCE_State(PropertyGroup):
 
 
 class EVE_RESOURCE_OT_build_sof_dna(Operator):
-    """Builds a DNA into a bundle with tools-core, then assembles it."""
+    """Fetches a composed DNA document and assembles its EVE resources."""
 
     bl_idname = "carbon.eve_resource_build_sof_dna"
     bl_label = "Build DNA"
     bl_description = (
-        "Run tools-core to compose this SOF DNA into a bundle, then import its "
-        "geometry, mesh areas, and textures"
+        "Compose this SOF DNA through the CarbonEngineJS service, then import "
+        "its geometry, mesh areas, and textures"
     )
 
     #: The DNA to build, when the caller has one in hand.
@@ -574,7 +574,7 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
     dna: StringProperty(default="", options={"HIDDEN"})
     refresh: BoolProperty(
         name="Rebuild",
-        description="Rebuild the bundle even when one already exists for this DNA",
+        description="Request and download this DNA again instead of reusing cached files",
         default=False,
         options={"HIDDEN"},
     )

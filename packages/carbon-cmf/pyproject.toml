@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "carbon-cmf"
+version = "0.1.0"
+description = "Pure-Python Carbon Mesh Format v1 reader"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md"]
+authors = [{ name = "CarbonEngineJS contributors" }]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/carbonenginejs/tools-blender"
+Repository = "https://github.com/carbonenginejs/tools-blender"
+Issues = "https://github.com/carbonenginejs/tools-blender/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -88,10 +88,8 @@ def parse_args(argv):
 def sof_effect(path, member_name):
     """Finds the Tr2Effect for one family member in a SOF document.
 
-    Blender never composes SOF itself -- `tools-core` does that and emits the
-    document, which this only reads. Fetch one with::
-
-        curl "http://127.0.0.1:5510/eve/<build>/sof/dna/<dna>" -o ship.json
+    Blender never composes SOF itself. This preview reads a `carbon.document`
+    obtained from the same hosted service as the installed add-on.
 
     The constants live under `constParameters`, not `parameters`; the latter
     exists and is empty, which reads as "this ship has no material values".
@@ -394,11 +392,9 @@ def apply_sun(manifest):
 def read_environment(path):
     """Resolves --environment to an image and the system's sun, if given a dir.
 
-    `prepare_environment.mjs` writes an `environment.hdr` next to an
-    `environment.json` holding the star's colour and intensity, both of which
-    tools-core derives -- colour from the blackbody temperature, intensity from
-    the luminosity curve. Accepting either the directory or the image keeps the
-    common case one argument.
+    An environment directory may contain an `environment.hdr` beside an
+    `environment.json` holding the star's colour and intensity. Accepting
+    either the directory or the image keeps the common case one argument.
     """
 
     import json

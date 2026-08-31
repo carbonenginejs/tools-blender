@@ -4,16 +4,17 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "addons" / "carbon_eve_resources" / "gr2_importer"))
+sys.path.insert(0, str(ROOT / "packages" / "carbon-granny" / "src"))
+sys.path.insert(0, str(ROOT / "packages" / "carbon-gsf" / "src"))
 
-from gr2.gsf import is_gsf_raw, project_gsf  # noqa: E402
-from gr2.reader import RawGr2  # noqa: E402
+from carbon_gsf import is_gsf_raw, project_gsf  # noqa: E402
+from carbon_granny import RawGr2  # noqa: E402
 
 
 class GsfTests(unittest.TestCase):
     def test_projects_state_machine_and_ordered_unique_references(self):
         root = {
-            "ModelNameHint": "Character",
+            "ModelNameHint": "character.gr2",
             "StateMachine": {"Name": "Main"},
             "AnimationSlots": [{"Name": "Idle"}],
             "AnimationSets": [
@@ -32,6 +33,15 @@ class GsfTests(unittest.TestCase):
         self.assertEqual(
             result["animationSets"][0]["sourceFileReferences"],
             ["idle.gr2", "walk.gr2;clip"],
+        )
+        self.assertEqual(result["modelReferences"], ["character.gr2"])
+        self.assertEqual(
+            result["dependencies"],
+            [
+                {"kind": "model", "reference": "character.gr2"},
+                {"kind": "animation", "reference": "idle.gr2"},
+                {"kind": "animation", "reference": "walk.gr2;clip"},
+            ],
         )
 
     def test_rejects_plain_gr2_roots(self):

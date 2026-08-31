@@ -31,7 +31,7 @@ SUFFIX = ".parsed"
 
 #: Bumped when the parser's output changes shape. An old file is then ignored
 #: rather than fed to a newer importer that expects something else.
-VERSION = 1
+VERSION = 2
 
 #: What the child runs. It imports the PARSER package, which is free of
 #: Blender. The add-on module next to it is Blender's side of the importer and
@@ -42,7 +42,7 @@ VERSION = 1
 SCRIPT = """
 import pickle, sys
 sys.path.insert(0, sys.argv[1])
-from carbon_eve_resources.gr2_importer.gr2 import read_gr2
+from carbon_gr2 import read_gr2
 
 parsed = read_gr2(sys.argv[2], decompress_curves=True,
                   unpack_tangents=sys.argv[4] == "1",

@@ -10,20 +10,14 @@ objects, driven by the SOF that describes it.
 
 ## Why the tree mirrors EveShip2
 
-What gets exported is the **SOF hull and faction**, never the built `EveShip2`.
-`EveShip2` is the hydrated result -- one ship, already resolved. The hull and
-the faction are the authored, reusable inputs, and they are what a consumer
-edits and ships.
+`EveShip2` is the hydrated result of a SOF hull, faction, race, and DNA. The
+imported scene mirrors that result so the hierarchy, naming, grouping, and
+material ownership stay recognizable to tools and artists.
 
-So a scene that does not map back to a hull and a faction cannot be exported at
-all. The structure is the feature, not a convenience: the hierarchy, the naming
-and the grouping follow the engine so that walking the tree is enough to write a
-SOF back out.
-
-The same reasoning puts SOF-shaped parameters on **every object** rather than in
-a side table. An object carries what its engine counterpart owns, so the tree is
-self-describing, an exporter needs no index, and there is one place to look when
-something renders wrong.
+SOF-shaped parameters live on **every object** rather than in a side table. An
+object carries what its engine counterpart owns, so the tree is self-describing
+and there is one place to look when something renders wrong. Writing SOF or
+geometry formats is outside the current reader-only tool boundary.
 
 ## Values are driven, and local edits lose
 
@@ -62,8 +56,8 @@ designed:
   per-ship values and the SOF that drives them. The panel and the command line
   MUST build the same ship. When they did not, decals came through on one path
   and not the other, and two hulls in one scene looked like different games.
-- **the readers** -- `sof_document` (bundle and document), `sof_builder`
-  (tools-core DNA), `tools_service` (the sidecar), `resource_index`.
+- **the readers** -- `sof_document` (bundle and document), `sof_builder` (DNA
+  validation), `tools_remote`/`sof_fetch` (hosted service), `resource_index`.
 
 ## Names come from Carbon
 

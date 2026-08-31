@@ -9,9 +9,7 @@ second column IS the stored address, so the union of those columns over the
 builds worth keeping is exactly the set to keep. No hashing, no downloads, and
 no question put to anybody.
 
-This used to shell out to `cjs-tools-cache-prune.js` in a tools-core checkout.
-It does not any more: an artist installs a zip, and a feature that needs Node
-and a git clone is a feature they do not have.
+The implementation is pure Python so it works from the installed add-on.
 """
 
 from __future__ import annotations

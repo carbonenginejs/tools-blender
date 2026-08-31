@@ -6,17 +6,12 @@ the containers and read here as data: which textures each family member binds,
 which constants it declares, and what Carbon's own default value for each one
 is.
 
-`family.json` is generated, not authored. Regenerate it with the runtime tool:
-
-    node runtime/scripts/resource/formats/dumpEffectInterface.js \\
-        <dir-of-sm_depth-containers> \\
-        --option SPACE_OBJECT_PPT_ENABLED=SOPPT_ENABLED --json
-
-then reduce each record to the fields below. The tier and permutation are not
-incidental: the production body is ``.sm_depth`` with ``SOPPT_ENABLED``, and
-the default body of ``.sm_hi`` silently omits dirt, dust, patterns, local
-lights and the spherical-harmonic term while remaining a complete, valid,
-warning-free shader.
+`family.json` is generated from the runtime's effect-interface data, not
+authored by hand. The tier and permutation are not incidental: the production
+body is ``.sm_depth`` with ``SOPPT_ENABLED``, and the default body of
+``.sm_hi`` silently omits dirt, dust, patterns, local lights and the
+spherical-harmonic term while remaining a complete, valid, warning-free
+shader.
 
 This module has no ``bpy`` dependency so it can be tested with the standard
 library alone.

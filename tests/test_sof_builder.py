@@ -1,8 +1,5 @@
-import json
 from pathlib import Path
-import subprocess
 import sys
-import tempfile
 import unittest
 
 
@@ -36,7 +33,7 @@ class NormalizeDnaTests(unittest.TestCase):
             normalize_dna("mde3_t3:legion_minmatar")
 
     def test_rejects_characters_that_could_reach_the_shell(self):
-        # It is handed to a subprocess and used in a path.
+        # The service accepts SOF grammar, not arbitrary command text or paths.
         for bad in ("mde3_t3:a:b; rm -rf /", "../../etc/passwd:a:b", "a:b:c|whoami"):
             with self.assertRaises(SofBuilderError):
                 normalize_dna(bad)

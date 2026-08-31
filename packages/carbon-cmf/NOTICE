@@ -1,0 +1,11 @@
+carbon-cmf
+==========
+
+Copyright (c) 2026 cppctamber / CarbonEngineJS contributors.
+
+This package provides a clean-room interoperability reader for Carbon Mesh
+Format data. CarbonEngine and Fenris Creations (CCP Games) names, formats, and
+assets remain the property of their respective owners. This project is not
+affiliated with or endorsed by CCP Games.
+
+Licensed under MIT. See LICENSE and THIRD-PARTY-NOTICES.md.
