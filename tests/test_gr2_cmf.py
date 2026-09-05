@@ -1,4 +1,3 @@
-import struct
 import sys
 from pathlib import Path
 import unittest
@@ -52,7 +51,7 @@ class Gr2CmfTests(unittest.TestCase):
         self.assertEqual(vector["name"], "Smile")
         self.assertEqual(vector["dimension"], 1)
 
-    def test_projects_meshless_skeleton_and_all_vector_dimensions(self):
+    def test_projects_meshless_skeleton_but_drops_non_morph_vector_metadata(self):
         skeleton = {
             "name": "rig",
             "bones": [
@@ -94,13 +93,7 @@ class Gr2CmfTests(unittest.TestCase):
         self.assertEqual(result["meshes"], [])
         self.assertEqual(len(result["skeletons"]), 1)
         self.assertEqual(result["skeletons"][0]["parents"], [0xFFFFFFFF])
-        self.assertEqual(
-            [channel["targetType"] for channel in result["animations"][0]["channels"]],
-            ["MorphTarget", "Other"],
-        )
-        second = result["animations"][0]["curves"][1]
-        self.assertEqual(second["valueDimension"], 2)
-        self.assertEqual(struct.unpack("<4f", bytes(second["values"])), (0, 1, 2, 3))
+        self.assertEqual(result["animations"], [])
 
 
 if __name__ == "__main__":

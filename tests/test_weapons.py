@@ -1,9 +1,8 @@
-"""The weapons library, and what a turret's model path is.
+"""The weapons library, its mount compatibility, and each model path.
 
-Nothing here derives a weapon's identity. The service names each one's
-`resPath` and its `slot`, and both are read rather than recomputed -- another
-consumer worked the slot out from the path and got the extra-large turrets
-wrong, 147 against the library's 72.
+The service names each weapon's `resPath`, natural `slot`, and compatible bays.
+Legacy libraries need one fallback for launcher sizes because their types omit
+`chargeSize`; that fallback must never rewrite the natural slot.
 """
 
 from pathlib import Path
@@ -28,13 +27,19 @@ class FakeClient:
         return self.turret
 
 
-def library(*rows):
-    return {"types": {str(row["typeID"]): row for row in rows}}
+def library(*rows, groups=None):
+    return {"types": {str(row["typeID"]): row for row in rows},
+            "groups": {str(key): value for key, value in (groups or {}).items()}}
 
 
-def weapon(type_id, name, path, slot="turrets", tech=1):
+def weapon(type_id, name, path, slot="turrets", tech=1, *, group_id=1,
+           charge_size=None, compatible_slots=None, size=None):
     return {"typeID": type_id, "name": {"en": name, "de": name + " DE"},
             "resPath": path, "slot": slot, "techLevel": tech,
+            "groupID": group_id, "chargeSize": charge_size,
+            **({"compatibleSlots": compatible_slots}
+               if compatible_slots is not None else {}),
+            **({"size": size} if size is not None else {}),
             "metaLevel": 0, "published": True}
 
 
@@ -58,15 +63,71 @@ class CatalogueTests(unittest.TestCase):
                    slot="xlTurrets")))
         self.assertEqual(weapons.catalogue(client)[0]["slot"], "xlTurrets")
 
-    def test_only_turret_slots_come_back_by_default(self):
+    def test_all_weapon_slots_come_back_by_default(self):
         client = FakeClient(library(
             weapon(1, "Gun", "res:/dx9/model/turret/energy/a.black"),
             weapon(2, "Launcher", "res:/dx9/model/turret/launcher/a.black",
                    slot="launchers"),
-            weapon(3, "Big", "res:/dx9/model/turret/energy/b.black",
+            weapon(3, "Bomb", "res:/dx9/model/turret/launcher/bomb/a.black",
+                   slot="bombs"),
+            weapon(4, "Atomic", "res:/dx9/model/turret/atomic/a.black",
+                   slot="atomics"),
+            weapon(5, "Chain", "res:/dx9/model/turret/chain/a.black",
+                   slot="chains"),
+            weapon(6, "Big", "res:/dx9/model/turret/energy/b.black",
                    slot="xlTurrets")))
         self.assertEqual([row["name"] for row in weapons.catalogue(client)],
-                         ["Big", "Gun"])
+                         ["Atomic", "Big", "Bomb", "Chain", "Gun", "Launcher"])
+
+    def test_xl_hardpoints_take_every_xl_weapon(self):
+        groups = {
+            10: {"name": {"en": "Missile Launcher XL Torpedo"}},
+            11: {"name": {"en": "Missile Launcher Torpedo"}},
+            12: {"name": {"en": "Precursor Weapon"}},
+        }
+        client = FakeClient(library(
+            weapon(1, "XL launcher", "res:/dx9/model/turret/launcher/xl.black",
+                   slot="launchers", group_id=10),
+            weapon(2, "Large launcher", "res:/dx9/model/turret/launcher/l.black",
+                   slot="launchers", group_id=11),
+            weapon(3, "XL atomic", "res:/dx9/model/turret/atomic/xl.black",
+                   slot="atomics", group_id=12, charge_size=4),
+            weapon(4, "XL gun", "res:/dx9/model/turret/energy/xl.black",
+                   slot="xlTurrets", group_id=12, charge_size=4),
+            groups=groups))
+
+        rows = weapons.catalogue(client, slots=("xlTurrets",))
+        self.assertEqual([row["name"] for row in rows],
+                         ["XL atomic", "XL gun", "XL launcher"])
+        self.assertEqual(rows[-1]["size"], "XL")
+
+    def test_shared_compatibility_is_used_without_rederiving_size(self):
+        client = FakeClient(library(
+            weapon(1, "Future XL weapon", "res:/weapon/future.black",
+                   slot="launchers",
+                   compatible_slots=["launchers", "xlTurrets"])))
+
+        rows = weapons.catalogue(client, slots="xlTurrets")
+        self.assertEqual([row["name"] for row in rows], ["Future XL weapon"])
+        self.assertEqual(rows[0]["compatibleSlots"],
+                         ["launchers", "xlTurrets"])
+
+    def test_weapon_kind_mapping_covers_every_natural_slot_once(self):
+        self.assertEqual(tuple(row[1] for row in weapons.WEAPON_KINDS),
+                         weapons.WEAPON_SLOTS)
+        self.assertEqual(len(set(weapons.WEAPON_SLOTS)), 6)
+        self.assertEqual(weapons.WEAPON_KINDS[1],
+                         ("xl", "xlTurrets", "XL Turrets"))
+
+    def test_natural_slot_filter_still_accepts_ordinary_launchers(self):
+        client = FakeClient(library(
+            weapon(1, "Launcher", "res:/dx9/model/turret/launcher/a.black",
+                   slot="launchers"),
+            weapon(2, "Gun", "res:/dx9/model/turret/energy/a.black")))
+        self.assertEqual(
+            [row["name"] for row in weapons.catalogue(client, slots="launchers")],
+            ["Launcher"],
+        )
 
     def test_a_weapon_with_no_model_is_dropped(self):
         """There is nothing to fit, so it cannot be offered."""

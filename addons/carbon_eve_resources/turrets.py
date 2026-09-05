@@ -1,4 +1,4 @@
-"""Fitting turrets to a hull's turret locators.
+"""Fitting weapons to a hull's authored weapon locators.
 
 A hull carries named hardpoints -- `locator_turret_1a` and its siblings, twelve
 on a Celestis -- and a turret is a separate model that mounts on one. Both
@@ -6,11 +6,9 @@ halves already exist here: the locators are built with the ship, and a turret's
 own `.black` names its geometry and its effect, which is a `quadv5` from the
 same family the hull's own areas use.
 
-So this is mostly plumbing, and deliberately so. Nothing about a weapon is
-derived: the service's library names each one's `resPath`, and the `slot` says
-what it mounts to. Another consumer tried working the slot out from the path
-and got the extra-large turrets wrong -- 147 against the library's 72 -- which
-is why neither is recomputed here.
+So this is mostly plumbing, and deliberately so. The service's library names
+each weapon's `resPath` and natural `slot`; the shared catalogue also applies
+the engine rule that an XL hardpoint accepts every XL weapon.
 """
 
 from __future__ import annotations
@@ -40,19 +38,10 @@ FITTED = "carbon_turret"
 
 
 
-#: What a locator's NAME says it takes, and which weapons fit it.
-#:
-#: The prefixes are `EveLocator2.Type` -- the engine reads a hardpoint's kind
-#: off its own name and nothing else, so `locator_xl_3a` takes an extra-large
-#: turret because of what it is CALLED. The slot on the right is the weapons
-#: library's own field, which is why a hull only offers what it actually has.
-KINDS = (
-    ("turret", "turrets", "Turrets"),
-    ("xl", "xlTurrets", "XL Turrets"),
-    ("launcher", "launchers", "Missiles"),
-    ("atomic", "atomics", "Atomics"),
-    ("chain", "chains", "Chains"),
-)
+#: What a locator's authored NAME says it takes. Runtime locators have no type
+#: enum: the name is the category signal. The shared catalogue owns both this
+#: prefix mapping and the compatibility rule used by filtering.
+KINDS = weapons.WEAPON_KINDS
 
 KIND_SLOT = {kind: slot for kind, slot, _label in KINDS}
 
@@ -71,10 +60,6 @@ def bay_of(locator) -> str:
     found = BAY.match(str(locator.get("carbon_locator_name")
                           or locator.name.split("___")[0] or ""))
     return found.group(1) if found else ""
-
-
-def _catalogue(context):
-    return weapons.catalogue(service_access.client(context))
 
 
 def _items_for(slot):
@@ -665,7 +650,7 @@ def apply_faction_colours(material, colours):
 
 
 class CARBON_OT_fit_turrets(Operator):
-    """Mount the chosen turret on every hardpoint of the selected ship"""
+    """Mount the chosen weapon on every matching hardpoint of the ship"""
 
     bl_idname = "carbon.fit_turrets"
     bl_label = "Fit"
@@ -702,7 +687,7 @@ class CARBON_OT_fit_turrets(Operator):
                            client, slots=(KIND_SLOT.get(self.kind),))
                        if str(row["typeID"]) == chosen_id), None)
         if chosen is None:
-            self.report({"ERROR"}, "That turret is no longer listed")
+            self.report({"ERROR"}, "That weapon is no longer listed")
             return {"CANCELLED"}
         res_path, name = chosen["resPath"], chosen["name"]
         cache_root = _cache_root(context)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import struct
 import zlib
 
@@ -151,7 +152,7 @@ def _read_header(reader: BinaryReader) -> dict:
     with reader.spans_within(0, header_size):
         sections = _read_array(
             reader,
-            _read_span(reader, 16, STRUCT_SIZE["Section"]),
+            _read_span(reader, 16, STRUCT_SIZE["Section"], 4),
             _read_section,
         )
     return {
@@ -184,6 +185,12 @@ def _validate_header(reader: BinaryReader, header: dict, *, validate_crc: bool) 
         if section["offset"] < previous_end:
             raise CmfError(f"CMF section {index} overlaps the header or preceding section")
         previous_end = section["offset"] + section["compressedSize"]
+        if section["type"] in ("Data", "Metadata"):
+            minimum = 48 if section["type"] == "Data" else 16
+            if section["offset"] % 8 or section["compressedSize"] < minimum:
+                raise CmfError(f"CMF {section['type']} section has invalid alignment or root size")
+        if section["gpuAlignment"] and section["uncompressedSize"] % section["gpuAlignment"]:
+            raise CmfError(f"CMF section {index} size disagrees with GPU alignment")
         if section["type"] == "Data":
             data_count += 1
         if section["type"] == "Metadata" and index != len(sections) - 1:
@@ -208,7 +215,7 @@ def _validate_header(reader: BinaryReader, header: dict, *, validate_crc: bool) 
                     raise CmfError(f"CMF meshoptimizer index section {index} is not triangles")
     if data_count != 1:
         raise CmfError("CMF must contain exactly one Data section")
-    if validate_crc and header["crc32"]:
+    if validate_crc:
         actual = zlib.crc32(reader.bytes[16:]) & 0xFFFFFFFF
         if actual != header["crc32"]:
             raise CmfError(
@@ -353,7 +360,7 @@ def _read_mesh_lod(reader: BinaryReader, offset: int) -> dict:
         ),
         "morphTargets": _read_array(
             reader,
-            _read_span(reader, offset + 48, STRUCT_SIZE["LodMorphTarget"]),
+            _read_span(reader, offset + 48, STRUCT_SIZE["LodMorphTarget"], 4),
             _read_lod_morph_target,
         ),
         "threshold": reader.u32(offset + 64),
@@ -379,11 +386,11 @@ def _read_skeleton(reader: BinaryReader, offset: int) -> dict:
         "parents": _read_uint32_array(reader, _read_span(reader, offset + 32, 4)),
         "restTransforms": _read_array(
             reader,
-            _read_span(reader, offset + 48, STRUCT_SIZE["Transform"]),
+            _read_span(reader, offset + 48, STRUCT_SIZE["Transform"], 4),
             _read_transform,
         ),
         "invBindTransforms": _read_array(
-            reader, _read_span(reader, offset + 64, 64), read_matrix
+            reader, _read_span(reader, offset + 64, 64, 4), read_matrix
         ),
         "boneMasks": _read_array(
             reader,
@@ -468,7 +475,7 @@ def _read_buffer_view(reader: BinaryReader, offset: int) -> dict:
     }
 
 
-def _read_span(reader: BinaryReader, offset: int, element_size: int) -> dict:
+def _read_span(reader: BinaryReader, offset: int, element_size: int, alignment=None) -> dict:
     raw_offset = reader.i64(offset)
     byte_size = reader.u64(offset + 8)
     is_relative = bool(raw_offset & 1)
@@ -480,6 +487,10 @@ def _read_span(reader: BinaryReader, offset: int, element_size: int) -> dict:
             f"CMF span byteSize {byte_size} is not a multiple of element size {element_size}"
         )
     if data_offset is not None:
+        if alignment is None:
+            alignment = 4 if element_size in (8, 12) else min(element_size, 8)
+        if data_offset % alignment:
+            raise CmfError("CMF span has misaligned element data")
         reader.require(data_offset, byte_size, "span")
         if reader.span_region is not None:
             start, end = reader.span_region
@@ -579,6 +590,8 @@ def _validate_graph_structure(result: dict) -> None:
     sections = result["sections"]
 
     def validate_decl(decl: list, label: str) -> None:
+        if not decl or not any(item["usage"] == "Position" and item["usageIndex"] == 0 for item in decl):
+            raise CmfError(f"CMF {label} has no Position[0] element")
         keys = {(element["usage"], element["usageIndex"]) for element in decl}
         if len(keys) != len(decl):
             raise CmfError(f"CMF {label} repeats a vertex usage and index")
@@ -590,6 +603,8 @@ def _validate_graph_structure(result: dict) -> None:
                 raise CmfError(f"CMF {label} has a misaligned vertex element")
             usage = element["usage"]
             usage_index = element["usageIndex"]
+            if usage == "BoneIndices" and (usage_index != 0 or element["type"] not in ("UInt8", "UInt16")):
+                raise CmfError(f"CMF {label} has invalid BoneIndices storage")
             if usage not in ("PackedTangent", "PackedTangentLegacy"):
                 continue
             if any(
@@ -606,6 +621,28 @@ def _validate_graph_structure(result: dict) -> None:
             )
             if element["type"] not in expected or element["elementCount"] != 4:
                 raise CmfError(f"CMF {label} has an invalid {usage} declaration")
+        intervals = sorted((item["offset"], item["offset"] + item["elementCount"] * ELEMENT_TYPE_SIZE[item["type"]]) for item in decl)
+        if any(right[0] < left[1] for left, right in zip(intervals, intervals[1:])):
+            raise CmfError(f"CMF {label} has overlapping vertex elements")
+
+    def unique_names(values, label):
+        if any(not value for value in values) or len(set(values)) != len(values):
+            raise CmfError(f"CMF {label} names must be nonempty and unique")
+
+    def finite(values, label):
+        if not all(math.isfinite(value) for value in values):
+            raise CmfError(f"CMF {label} contains non-finite values")
+
+    def validate_stride(decl, view):
+        if any(item["offset"] + item["elementCount"] * ELEMENT_TYPE_SIZE[item["type"]] > view["stride"] for item in decl):
+            raise CmfError("CMF vertex declaration exceeds its buffer stride")
+
+    def bounds(value):
+        maximum = 3.4028234663852886e38
+        if value["min"] == [maximum] * 3 and value["max"] == [-maximum] * 3:
+            return
+        if any(high < low for low, high in zip(value["min"], value["max"])):
+            raise CmfError("CMF bounds have max below min")
 
     def validate_view(view: dict, label: str, *, index: bool = False) -> None:
         if view["size"] == 0:
@@ -631,13 +668,59 @@ def _validate_graph_structure(result: dict) -> None:
         if skeleton is not None and not 0 <= skeleton < len(result["skeletons"]):
             raise CmfError(f"CMF mesh {mesh_index} references missing skeleton {skeleton}")
         validate_decl(mesh["decl"], f"mesh {mesh_index} declaration")
-        validate_decl(
-            mesh["morphTargets"]["decl"],
-            f"mesh {mesh_index} morph declaration",
-        )
+        morph = mesh["morphTargets"]
+        if morph["targets"]:
+            validate_decl(morph["decl"], f"mesh {mesh_index} morph declaration")
+            keys = {(item["usage"], item["usageIndex"]) for item in mesh["decl"]}
+            if any((item["usage"], item["usageIndex"]) not in keys for item in morph["decl"]):
+                raise CmfError("CMF morph declaration is not a subset of the base")
+        unique_names([item["name"] for item in morph["targets"]], "morph target")
+        if any(item["maxDisplacement"] < 0 for item in morph["targets"]):
+            raise CmfError("CMF morph displacement is negative")
+        if not mesh["lods"] or mesh["lods"][0]["threshold"] != 0xFFFFFFFF:
+            raise CmfError("CMF first LOD threshold must be 0xffffffff")
+        thresholds = [lod["threshold"] for lod in mesh["lods"]]
+        if any(right >= left for left, right in zip(thresholds, thresholds[1:])):
+            raise CmfError("CMF LOD thresholds must strictly descend")
+        if len({lod["vb"]["stride"] for lod in mesh["lods"]}) > 1:
+            raise CmfError("CMF LOD vertex strides differ")
+        bindings = mesh["boneBindings"]
+        unique_names([item["name"] for item in bindings], "bone binding")
+        bone_indices = next((item for item in mesh["decl"] if item["usage"] == "BoneIndices"), None)
+        if bool(bone_indices) != bool(bindings):
+            raise CmfError("CMF BoneIndices and bone bindings must both be present or absent")
+        if len(bindings) > (255 if bone_indices and bone_indices["type"] == "UInt8" else 65535):
+            raise CmfError("CMF bone bindings exceed index capacity")
+        if skeleton is not None and any(item["name"] not in result["skeletons"][skeleton]["bones"] for item in bindings):
+            raise CmfError("CMF bone binding is absent from its skeleton")
+        uv_count = max((item["usageIndex"] + 1 for item in mesh["decl"] if item["usage"] == "TexCoord"), default=0)
+        if len(mesh["uvDensities"]) != uv_count:
+            raise CmfError("CMF uvDensities count does not match UV channel count")
+        bounds(mesh["bounds"])
+        for area in mesh["areas"]:
+            bounds(area["bounds"])
+            if any(bone >= len(bindings) for bone in area["bones"]):
+                raise CmfError("CMF area bone index is out of range")
+        audio = mesh["audioOcclusionMesh"]
+        bounds(audio["bounds"])
+        if bool(audio["vertices"]) != bool(audio["indices"]) or len(audio["indices"]) % 3:
+            raise CmfError("CMF audio geometry must contain vertices and complete triangles")
+        if any(index >= len(audio["vertices"]) for index in audio["indices"]):
+            raise CmfError("CMF audio index is out of range")
         for lod_index, lod in enumerate(mesh["lods"]):
             validate_view(lod["vb"], f"mesh {mesh_index} LOD {lod_index} vertex view")
             validate_view(lod["ib"], f"mesh {mesh_index} LOD {lod_index} index view", index=True)
+            if not lod["vb"]["size"]:
+                raise CmfError("CMF LOD has no vertex buffer")
+            validate_stride(mesh["decl"], lod["vb"])
+            point_list = mesh["topology"] == "PointList"
+            if bool(lod["ib"]["size"]) == point_list:
+                raise CmfError("CMF LOD index buffer disagrees with its topology")
+            if len(lod["areas"]) != len(mesh["areas"]):
+                raise CmfError("CMF LOD area count differs from mesh")
+            limit = lod["vb"]["size"] // lod["vb"]["stride"] if point_list else lod["ib"]["size"] // lod["ib"]["stride"]
+            if any((area["firstElement"] + area["elementCount"]) * (1 if point_list else 3) > limit for area in lod["areas"]):
+                raise CmfError("CMF LOD area exceeds vertex/index range")
             if lod["ib"]["size"] and lod["ib"]["size"] // lod["ib"]["stride"] % 3:
                 raise CmfError(f"CMF mesh {mesh_index} LOD {lod_index} index count is not triangles")
             for morph_index, target in enumerate(lod["morphTargets"]):
@@ -645,11 +728,32 @@ def _validate_graph_structure(result: dict) -> None:
                     target["vb"],
                     f"mesh {mesh_index} LOD {lod_index} morph {morph_index} vertex view",
                 )
+                view = target["vb"]
+                if view["size"]:
+                    validate_stride(morph["decl"], view)
+                    if view["size"] // view["stride"] != lod["vb"]["size"] // lod["vb"]["stride"]:
+                        raise CmfError("CMF morph vertex count differs from LOD")
+            if len({target["vb"]["stride"] for target in lod["morphTargets"] if target["vb"]["size"]}) > 1:
+                raise CmfError("CMF morph vertex strides differ")
+            if len(lod["morphTargets"]) != len(morph["targets"]):
+                raise CmfError("CMF LOD morph target descriptions and buffers differ")
         if mesh["lods"] and len(mesh["lods"][0]["morphTargets"]) != len(mesh["morphTargets"]["targets"]):
             raise CmfError(f"CMF mesh {mesh_index} morph target descriptions and buffers differ")
 
     for skeleton_index, skeleton in enumerate(result["skeletons"]):
         count = len(skeleton["bones"])
+        if not count:
+            raise CmfError("CMF skeleton has no bones")
+        unique_names(skeleton["bones"], "skeleton bone")
+        for rest in skeleton["restTransforms"]:
+            finite([*rest["position"], *rest["rotation"], *rest["scale"]], "rest transform")
+        for matrix in skeleton["invBindTransforms"]:
+            finite(matrix, "inverse bind transform")
+        unique_names([mask["name"] for mask in skeleton["boneMasks"]], "bone mask")
+        for mask in skeleton["boneMasks"]:
+            for weight in mask["weights"]:
+                if weight["index"] >= count or not math.isfinite(weight["weight"]) or not 0 <= weight["weight"] <= 1:
+                    raise CmfError("CMF bone mask has invalid index or weight")
         if not (
             len(skeleton["parents"])
             == len(skeleton["restTransforms"])
@@ -664,11 +768,20 @@ def _validate_graph_structure(result: dict) -> None:
                 )
 
     for animation_index, animation in enumerate(result["animations"]):
+        if animation["duration"] <= 0:
+            raise CmfError("CMF animation has non-positive duration")
+        if not animation["channels"]:
+            raise CmfError("CMF animation has no channels")
         for channel_index, channel in enumerate(animation["channels"]):
+            if not channel["target"]:
+                raise CmfError("CMF animation channel target is empty")
             if not 0 <= channel["curveIndex"] < len(animation["curves"]):
                 raise CmfError(
                     f"CMF animation {animation_index} channel {channel_index} references missing curve"
                 )
+            expected = {"BonePosition": 3, "BoneScale": 3, "BoneRotation": 4, "MorphTarget": 1}.get(channel["targetType"])
+            if expected and animation["curves"][channel["curveIndex"]]["valueDimension"] != expected:
+                raise CmfError("CMF animation channel has incompatible curve dimension")
         for curve_index, curve in enumerate(animation["curves"]):
             knot_size = ELEMENT_TYPE_SIZE[curve["knotType"]]
             value_size = ELEMENT_TYPE_SIZE[curve["valueType"]]
@@ -678,6 +791,16 @@ def _validate_graph_structure(result: dict) -> None:
                 raise CmfError(f"CMF animation {animation_index} curve {curve_index} knot bytes differ")
             if len(curve["values"]) != curve["knotCount"] * curve["valueDimension"] * value_size:
                 raise CmfError(f"CMF animation {animation_index} curve {curve_index} value bytes differ")
+            if not curve["knotCount"]:
+                raise CmfError("CMF animation curve has no keyframes")
+            knot_bytes, value_bytes = bytes(curve["knots"]), bytes(curve["values"])
+            knots = [_read_element(knot_bytes, offset, curve["knotType"]) for offset in range(0, len(knot_bytes), knot_size)]
+            values = [_read_element(value_bytes, offset, curve["valueType"]) for offset in range(0, len(value_bytes), value_size)]
+            finite(knots, "curve knots")
+            finite(values, "curve values")
+            if any(right < left for left, right in zip(knots, knots[1:])):
+                raise CmfError("CMF curve knots are not ascending")
+    unique_names([item["key"] for item in (result["metadata"] or {}).get("entries", [])], "metadata key")
 
 
 def _decode_section(section: dict, index: int, source: memoryview):
@@ -739,7 +862,10 @@ def _read_vertex_channels(
         for vertex in range(vertex_count):
             base = vertex * view["stride"] + element["offset"]
             for component in range(element["elementCount"]):
-                channels[name].append(_read_element(data, base + component * size, element["type"]))
+                value = _read_element(data, base + component * size, element["type"])
+                if not math.isfinite(value):
+                    raise CmfError(f"CMF vertex channel {name} contains non-finite values")
+                channels[name].append(value)
     if unpack_tangents:
         _unpack_vertex_tangent_channels(channels, decl)
     return channels

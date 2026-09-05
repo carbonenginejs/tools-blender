@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import math
+import re
 
 from .binary import CmfError
-from .constants import ELEMENT_TYPE_SIZE
+from .constants import ELEMENT_TYPE_SIZE, USAGE
+from .uvdensity import calculate_uv_densities
 
 
 VERTEX_CHANNELS = (
@@ -63,7 +65,14 @@ def build_shared_from_cmf(source: dict, *, flatten_lods: bool = False) -> dict:
         for lod_index, lod in selected:
             if not isinstance(lod, dict):
                 raise CmfError("CMF graph mesh LOD entries must be dictionaries")
-            shared_meshes.append(_shared_mesh(mesh, lod, lod_index, flatten_lods))
+            shared = _shared_mesh(mesh, lod, lod_index, flatten_lods)
+            if not flatten_lods:
+                shared["lods"] = [
+                    {**_shared_mesh(mesh, item, index, False), "lods": [],
+                     "threshold": item.get("threshold", 0xFFFFFFFF)}
+                    for index, item in enumerate(lods)
+                ]
+            shared_meshes.append(shared)
 
     return {
         "cmfVersion": source.get("version"),
@@ -91,7 +100,7 @@ def _shared_mesh(mesh: dict, lod: dict, lod_index: int, flatten_lods: bool) -> d
                 "maxDisplacement": target.get(
                     "maxDisplacement", description.get("maxDisplacement", 0.0)
                 ),
-                "dataIsDeltas": True,
+                "dataIsDeltas": False,
                 "vertex": target.get("vertex") or {},
             }
         )
@@ -112,9 +121,10 @@ def _shared_mesh(mesh: dict, lod: dict, lod_index: int, flatten_lods: bool) -> d
         ],
         "vertex": lod.get("vertex") or mesh.get("vertex") or {},
         "indices": lod.get("indices") or mesh.get("indices") or [],
-        "lods": [lod] if lod else [],
+        "lods": [],
         "topology": mesh.get("topology") or "TriangleList",
         "skeleton": mesh.get("skeleton"),
+        "uvDensities": mesh.get("uvDensities"),
     }
 
 
@@ -145,11 +155,65 @@ def build_cmf_from_shared(source: dict) -> dict:
 
 
 def _build_mesh(mesh: dict) -> dict:
+    source_lods = mesh.get("lods") or [mesh]
+    built = []
+    for index, lod in enumerate(source_lods):
+        threshold = lod.get("threshold", 0xFFFFFFFF if index == 0 else None)
+        if type(threshold) is not int or not 0 <= threshold <= 0xFFFFFFFF:
+            raise CmfError("CMF each LOD requires a uint32 threshold")
+        source = {**mesh, **lod}
+        source["skeleton"] = mesh.get("skeleton")
+        source["boneBindings"] = mesh.get("boneBindings") or []
+        if index:
+            source["morphTargets"] = lod.get("morphTargets") or []
+        base_targets = mesh.get("morphTargets") or []
+        if isinstance(base_targets, list) and isinstance(source.get("morphTargets"), list):
+            source["morphTargets"] = [
+                {**(base_targets[target_index] if target_index < len(base_targets) else {}), **target}
+                for target_index, target in enumerate(source["morphTargets"])
+            ]
+        source["threshold"] = threshold
+        built.append(_build_lod_mesh(source))
+    result = built[0]
+    for index, other in enumerate(built[1:], 1):
+        if other["decl"] != result["decl"] or other["topology"] != result["topology"]:
+            raise CmfError(f"CMF LOD {index} must use the base declaration and topology")
+        if len(other["areas"]) != len(result["areas"]):
+            raise CmfError(f"CMF LOD {index} must use the base areas")
+        if (other["morphTargets"]["decl"] != result["morphTargets"]["decl"] or
+                [target["name"] for target in other["morphTargets"]["targets"]] !=
+                [target["name"] for target in result["morphTargets"]["targets"]]):
+            raise CmfError(f"CMF LOD {index} must use the base morph declaration and names")
+        threshold = other["lods"][0]["threshold"]
+        if not 0 <= threshold < built[index - 1]["lods"][0]["threshold"]:
+            raise CmfError("CMF LOD thresholds must strictly descend")
+    result["lods"] = [item["lods"][0] for item in built]
+    if result["lods"][0]["threshold"] != 0xFFFFFFFF:
+        raise CmfError("CMF first LOD threshold must be 0xffffffff")
+    for index, target in enumerate(result["morphTargets"]["targets"]):
+        target["maxDisplacement"] = max(item["lods"][0]["morphTargets"][index]["maxDisplacement"] for item in built)
+    for index, area in enumerate(result["areas"]):
+        area["affectedByMorphTargets"] = any(item["areas"][index]["affectedByMorphTargets"] for item in built)
+    return result
+
+
+def _build_lod_mesh(mesh: dict) -> dict:
     vertex = _normalize_vertex(mesh.get("vertex") or {})
+    if len(vertex.get("position") or []) % 3:
+        raise CmfError("CMF position channel must contain complete vec3 values")
     position_count = len(vertex.get("position") or []) // 3
     decl = _build_decl(vertex)
     stride = _stride(decl)
     indices = list(mesh.get("indices") or [])
+    topology = mesh.get("topology") or "TriangleList"
+    if topology not in ("TriangleList", "PointList"):
+        raise CmfError(f"CMF unsupported shared topology {topology!r}")
+    for group in indices:
+        faces = group.get("faces") or []
+        if topology == "PointList" and faces:
+            raise CmfError("CMF PointList cannot contain an index buffer")
+        if any(type(index) is not int or not 0 <= index < position_count for index in faces):
+            raise CmfError("CMF index is outside the vertex range")
     index_stride = _index_stride(indices)
     index_count = sum(len(group.get("faces") or []) for group in indices)
     bounds = _bounds(mesh)
@@ -196,7 +260,7 @@ def _build_mesh(mesh: dict) -> dict:
                 "ib": {"index": 0, "offset": 0, "size": index_count * index_stride, "stride": index_stride},
                 "areas": lod_areas,
                 "morphTargets": lod_morphs,
-                "threshold": 0xFFFFFFFF,
+                "threshold": mesh.get("threshold", 0xFFFFFFFF),
                 "vertex": vertex,
                 "indices": indices,
             }
@@ -213,7 +277,8 @@ def _build_mesh(mesh: dict) -> dict:
             for binding in mesh.get("boneBindings") or []
         ],
         "morphTargets": {"decl": morph["decl"], "targets": morph["targets"]},
-        "uvDensities": list(mesh.get("uvDensities") or []),
+        "uvDensities": list(mesh["uvDensities"]) if mesh.get("uvDensities") is not None else
+            calculate_uv_densities(vertex, indices, decl),
         "bounds": bounds,
         "audioOcclusionMesh": {
             "vertices": [],
@@ -233,6 +298,15 @@ def _normalize_vertex(vertex: dict) -> dict:
     bone_indices = output.get("blendIndice") or []
     if count and len(bone_indices) == count * 4 and not output.get("blendWeight"):
         output["blendWeight"] = [value for _ in range(count) for value in (1.0, 0.0, 0.0, 0.0)]
+    if count and len(output.get("tangent") or []) == count * 4 and not output.get("normal") and not output.get("binormal"):
+        output["packedTangentLegacy"] = output.pop("tangent")
+    # Decoded CMF convenience channels can accompany the original packed data.
+    # Keep the source frame's declaration instead of emitting both layouts.
+    for name in list(output):
+        match = re.fullmatch(r"packedTangent(?:Legacy)?([0-9]*)", name)
+        if match and output[name]:
+            for base in ("normal", "tangent", "binormal"):
+                output.pop(base + match[1], None)
     return output
 
 
@@ -240,15 +314,31 @@ def _build_decl(vertex: dict) -> list[dict]:
     declaration = []
     offset = 0
     vertex_count = len(vertex.get("position") or []) // 3
-    for name, usage, default_count, usage_index, element_type in VERTEX_CHANNELS:
+    specs = list(VERTEX_CHANNELS)
+    known = {spec[0] for spec in specs}
+    for name in vertex:
+        if name in known:
+            continue
+        match = re.fullmatch(r"(normal|tangent|binormal|texcoord|color|packedTangentLegacy|packedTangent)([0-9]+)", name)
+        if not match:
+            if vertex[name]:
+                raise CmfError(f"CMF unsupported vertex channel {name!r}")
+            continue
+        base, index = match[1], int(match[2])
+        if index > 255:
+            raise CmfError(f"CMF vertex usage index outside 0..255: {name}")
+        usage = {"texcoord": "TexCoord", "color": "Color", "packedTangent": "PackedTangent",
+                 "packedTangentLegacy": "PackedTangentLegacy"}.get(base, base.capitalize())
+        element_type = {"packedTangent": "Int16Norm", "packedTangentLegacy": "UInt16Norm"}.get(base, "Float32")
+        specs.append((name, usage, 2 if base == "texcoord" else 4 if base in ("color", "packedTangent", "packedTangentLegacy") else 3, index, element_type))
+    specs.sort(key=lambda spec: (USAGE.index(spec[1]), spec[3]))
+    for name, usage, default_count, usage_index, element_type in specs:
         values = vertex.get(name) or []
         if not values:
             continue
-        element_count = (
-            4
-            if name in ("tangent", "binormal") and vertex_count and len(values) == vertex_count * 4
-            else default_count
-        )
+        element_count = len(values) // vertex_count if vertex_count else default_count
+        if not 1 <= element_count <= 4:
+            raise CmfError(f"CMF vertex channel {name!r} has invalid width {element_count}")
         if vertex_count and len(values) != vertex_count * element_count:
             raise CmfError(
                 f"CMF vertex channel {name!r} contains {len(values)} values for {vertex_count} vertices"
@@ -300,43 +390,67 @@ def _build_morph_targets(mesh: dict, base_vertex: dict) -> dict:
         source_targets = source_targets.get("targets") or []
     if not source_targets:
         return {"decl": [], "targets": [], "lods": [], "stride": 0}
-    channel_names = [
-        name
-        for name, *_ in VERTEX_CHANNELS
-        if any((target.get("vertex") or {}).get(name) for target in source_targets)
-    ]
-    prototype = {name: [0] for name in channel_names}
+    if not base_vertex.get("position"):
+        raise CmfError("CMF morph targets require a base position channel")
+    names = [target.get("name") or "" for target in source_targets]
+    if len(set(names)) != len(names):
+        raise CmfError("CMF morph target names must be unique within a mesh")
+    channel_names = {"position"}
+    for target in source_targets:
+        channel_names.update(name for name, values in (target.get("vertex") or {}).items() if values)
+    if any(not base_vertex.get(name) for name in channel_names):
+        raise CmfError("CMF morph channel is absent from the base vertex declaration")
+    vertex_count = len(base_vertex["position"]) // 3
+    widths = {name: len(base_vertex[name]) // vertex_count for name in channel_names}
+    for name in channel_names:
+        if re.fullmatch(r"(?:tangent|binormal)(?:[1-9][0-9]*)?", name):
+            for target in source_targets:
+                values = (target.get("vertex") or {}).get(name) or []
+                count = _morph_source_count(target, vertex_count)
+                if values and count and len(values) % count == 0 and len(values) // count in (3, 4):
+                    widths[name] = len(values) // count
+                    break
+    # Only one prototype vertex is needed to describe the morph layout.
+    prototype = {name: [0] * widths[name] for name in channel_names}
     declaration = _build_decl(prototype)
     stride = _stride(declaration)
     targets = []
     lods = []
     for source in source_targets:
         vertex = {}
+        indices = source.get("vertexIndices")
+        source_count = _morph_source_count(source, vertex_count)
         for name in channel_names:
             values = list((source.get("vertex") or {}).get(name) or [])
-            base = base_vertex.get(name) or []
-            if values and not source.get("dataIsDeltas", True) and len(values) == len(base):
-                values = [value - base[index] for index, value in enumerate(values)]
-            vertex[name] = values
+            base = base_vertex[name]
+            width = widths[name]
+            base_width = len(base) // vertex_count
+            absolute = [base[row * base_width + component] if component < base_width else 0
+                        for row in range(vertex_count) for component in range(width)]
+            if values and len(values) != source_count * width:
+                raise CmfError(f"CMF morph {name} length does not match its vertex count")
+            for row in range(source_count if values else 0):
+                index = indices[row] if indices is not None else row
+                if not isinstance(index, int) or not 0 <= index < vertex_count:
+                    raise CmfError(f"CMF morph {name} vertex index is outside the base vertex range")
+                for component in range(width):
+                    offset = index * width + component
+                    value = values[row * width + component]
+                    base_value = base[index * base_width + component] if component < base_width else 0
+                    absolute[offset] = value + base_value if source.get("dataIsDeltas", True) else value
+            vertex[name] = absolute
         position = vertex.get("position") or []
         maximum = max(
             (
-                math.sqrt(sum(position[index + component] ** 2 for component in range(3)))
+                math.sqrt(sum((position[index + component] - base_vertex["position"][index + component]) ** 2 for component in range(3)))
                 for index in range(0, len(position) - 2, 3)
             ),
             default=0.0,
         )
         name = source.get("name") or ""
         displacement = float(source.get("maxDisplacement", maximum))
-        vertex_count = max(
-            (
-                len(vertex.get(channel) or []) // next(
-                    spec[2] for spec in VERTEX_CHANNELS if spec[0] == channel
-                )
-                for channel in channel_names
-            ),
-            default=0,
-        )
+        if not math.isfinite(displacement) or displacement < 0:
+            raise CmfError("CMF morph maxDisplacement must be finite and non-negative")
         targets.append({"name": name, "maxDisplacement": displacement})
         lods.append(
             {
@@ -347,6 +461,16 @@ def _build_morph_targets(mesh: dict, base_vertex: dict) -> dict:
             }
         )
     return {"decl": declaration, "targets": targets, "lods": lods, "stride": stride}
+
+
+def _morph_source_count(target, fallback):
+    if target.get("vertexIndices") is not None:
+        return len(target["vertexIndices"])
+    vertex = target.get("vertex") or {}
+    for name, _, width, _, _ in VERTEX_CHANNELS:
+        if vertex.get(name):
+            return len(vertex[name]) // width or fallback
+    return fallback
 
 
 def _metadata(value):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import struct
 
 from carbon_cmf import build_cmf_from_shared
@@ -26,6 +27,9 @@ def project_cmf(root: dict, *, sample_rate: float = 30.0) -> dict:
     if not math.isfinite(sample_rate) or sample_rate <= 0:
         raise _error("sample_rate must be a positive finite number")
 
+    root = _reassemble_lods(root)
+    projected = isinstance(root.get("grannyFileFormatRevision"), int)
+
     source_skeletons = list(root.get("skeletons") or [])
     skeleton_index_by_identity = {
         id(skeleton): index
@@ -48,6 +52,10 @@ def project_cmf(root: dict, *, sample_rate: float = 30.0) -> dict:
     source_meshes = list(root.get("meshes") or [])
     assignments: list[int | None] = [None] * len(source_meshes)
     assignment_models: list[int | None] = [None] * len(source_meshes)
+    def compatible(mesh, skeleton):
+        names = {bone.get("name") or "" for bone in skeleton.get("bones") or []}
+        return all(binding.get("name") in names for binding in mesh.get("boneBindings") or [])
+
     for model_index, model in enumerate(models):
         skeleton_index = model_skeletons[model_index]
         if skeleton_index is None:
@@ -60,6 +68,8 @@ def project_cmf(root: dict, *, sample_rate: float = 30.0) -> dict:
                     f"model {model_index} mesh binding {binding_index} references mesh {mesh_index} "
                     f"outside 0..{len(source_meshes) - 1}"
                 )
+            if not compatible(source_meshes[mesh_index], source_skeletons[skeleton_index]):
+                continue
             if assignments[mesh_index] not in (None, skeleton_index):
                 raise _error(
                     f"mesh {mesh_index} is bound to skeleton {assignments[mesh_index]} by model "
@@ -73,9 +83,12 @@ def project_cmf(root: dict, *, sample_rate: float = 30.0) -> dict:
         mesh = dict(source_mesh or {})
         authored = mesh.get("skeleton")
         assigned = assignments[mesh_index]
+        matches = [index for index, skeleton in enumerate(source_skeletons) if compatible(mesh, skeleton)]
         if authored is not None:
             if not isinstance(authored, int) or not 0 <= authored < len(source_skeletons):
                 raise _error(f"mesh {mesh_index} has invalid skeleton index {authored}")
+            if authored not in matches:
+                raise _error(f"mesh {mesh_index} skeleton does not contain its bone palette")
             if assigned is not None and assigned != authored:
                 raise _error(
                     f"mesh {mesh_index} declares skeleton {authored} but its model binds {assigned}"
@@ -83,17 +96,36 @@ def project_cmf(root: dict, *, sample_rate: float = 30.0) -> dict:
         elif assigned is not None:
             mesh["skeleton"] = assigned
         elif mesh.get("boneBindings"):
-            if len(source_skeletons) == 1:
-                mesh["skeleton"] = 0
-            elif len(source_skeletons) > 1:
-                raise _error(f"mesh {mesh_index} has bone bindings but no unambiguous skeleton")
+            if len(matches) == 1:
+                mesh["skeleton"] = matches[0]
+            elif source_skeletons:
+                raise _error(f"mesh {mesh_index} has bone bindings but no unambiguous compatible skeleton")
+        if projected and mesh.get("boneBindings") and not any(
+            (lod.get("vertex") or {}).get("blendIndice") for lod in [mesh, *(mesh.get("lods") or [])]
+        ):
+            mesh["boneBindings"] = []
+            mesh["lods"] = [{**lod, "boneBindings": []} for lod in mesh.get("lods") or []]
         meshes.append(mesh)
 
     skeletons = [_convert_skeleton(skeleton) for skeleton in source_skeletons]
-    animations = [
-        _convert_animation(animation, sample_rate=sample_rate)
-        for animation in root.get("animations") or []
-    ]
+    morph_names = {
+        name[:-5] if len(name) > 5 and name.endswith("Shape") else name
+        for mesh in source_meshes for target in mesh.get("morphTargets") or []
+        for name in [target.get("name") or ""]
+    }
+    animations = [converted for animation in root.get("animations") or []
+                  if (converted := _convert_animation(
+                      animation, sample_rate=sample_rate, morph_names=morph_names,
+                      preserve_identity=projected, drop_empty=projected,
+                  )) is not None]
+    bone_counts = {}
+    for skeleton in skeletons:
+        for name in skeleton["bones"]:
+            bone_counts[name] = bone_counts.get(name, 0) + 1
+    for animation in animations:
+        for channel in animation["channels"]:
+            if channel["targetType"] != "MorphTarget" and bone_counts.get(channel["target"], 0) > 1:
+                raise _error(f"bone animation target {channel['target']!r} is ambiguous across skeletons")
     metadata = {
         "entries": [
             {"key": "sourceFormat", "value": "gr2"},
@@ -123,6 +155,52 @@ def _is_gr2_skeleton(value) -> bool:
     )
 
 
+def _reassemble_lods(root):
+    """Group exact Granny in-file LOD siblings and preserve model mesh references."""
+    meshes = root.get("meshes") or []
+    bases, siblings = {}, {}
+    for index, mesh in enumerate(meshes):
+        name = mesh.get("name") or ""
+        match = re.fullmatch(r"(.*?) LOD ([0-9]+)", name)
+        if match:
+            siblings.setdefault(match[1], []).append((index, int(match[2]), mesh))
+        else:
+            bases.setdefault(name, []).append(index)
+    groups = {name: values for name, values in siblings.items()
+              if len(bases.get(name, [])) == 1 and len({value[1] for value in values}) == len(values)}
+    child_indices = {value[0] for values in groups.values() for value in values}
+    output, mapping = [], {}
+    for index, mesh in enumerate(meshes):
+        if index in child_indices:
+            continue
+        mapping[index] = len(output)
+        group = groups.get(mesh.get("name") or "")
+        if group:
+            group = sorted(group, key=lambda value: value[1], reverse=True)
+            output.append({**mesh, "lods": [{**mesh, "threshold": 0xFFFFFFFF},
+                *[{**item, "threshold": threshold} for _, threshold, item in group]]})
+            for child, _, _ in group:
+                mapping[child] = mapping[index]
+        else:
+            output.append(mesh)
+    models = []
+    for model in root.get("models") or []:
+        bindings = []
+        for old in model.get("meshBindings") or []:
+            if type(old) is not int or (old != -1 and old not in mapping):
+                raise _error(f"model mesh binding references invalid mesh {old}")
+            new = -1 if old == -1 else mapping[old]
+            if new not in bindings:
+                bindings.append(new)
+        models.append({**model, "meshBindings": bindings})
+    return {**root, "meshes": output, "models": models}
+
+
+def _has_shear(values):
+    tolerance = 4 * 2**-23 * max(1.0, *(abs(value) for value in values))
+    return any(abs(values[index]) > tolerance for index in (1, 2, 3, 5, 6, 7))
+
+
 def _convert_skeleton(skeleton: dict) -> dict:
     bones = list(skeleton.get("bones") or [])
     names = [bone.get("name") or "" for bone in bones]
@@ -141,9 +219,10 @@ def _convert_skeleton(skeleton: dict) -> dict:
             bone.get("scaleShear")
             or [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
         )
-        for component in (1, 2, 3, 5, 6, 7):
-            if abs(scale_shear[component]) > 1e-7:
-                raise _error(f"bone {bone.get('name')!r} rest transform contains shear")
+        if len(scale_shear) != 9 or not all(math.isfinite(value) for value in scale_shear):
+            raise _error(f"bone {bone.get('name')!r} has invalid scaleShear")
+        if _has_shear(scale_shear):
+            raise _error(f"bone {bone.get('name')!r} rest transform contains shear")
         rest = {
             "position": list(bone.get("position") or [0.0, 0.0, 0.0])[:3],
             "rotation": _normalize_quaternion(
@@ -159,27 +238,48 @@ def _convert_skeleton(skeleton: dict) -> dict:
         world_transforms.append(
             local if parent == 0xFFFFFFFF else _multiply_matrix(local, world_transforms[parent])
         )
+    authored_binds = skeleton.get("invBindTransforms")
+    if authored_binds is not None and len(authored_binds) != len(bones):
+        raise _error("inverse bind transform count differs from bone count")
+    inverse_binds = []
+    for index, world in enumerate(world_transforms):
+        authored = authored_binds[index] if authored_binds is not None else None
+        if authored is not None:
+            if len(authored) != 16 or not all(math.isfinite(value) for value in authored):
+                raise _error(f"bone {index} has invalid inverse bind transform")
+            inverse_binds.append(list(authored))
+        else:
+            inverse_binds.append(_invert_matrix(world))
     return {
         "name": skeleton.get("name") or "",
         "bones": names,
         "parents": parents,
         "restTransforms": rest_transforms,
-        "invBindTransforms": [_invert_matrix(matrix) for matrix in world_transforms],
+        "invBindTransforms": inverse_binds,
         "boneMasks": [],
     }
 
 
-def _convert_animation(animation: dict, *, sample_rate: float) -> dict:
+def _convert_animation(animation: dict, *, sample_rate: float, morph_names: set,
+                       preserve_identity: bool, drop_empty: bool) -> dict | None:
     duration = float(animation.get("duration", 0.0))
-    if not math.isfinite(duration) or duration < 0:
-        raise _error(f"animation {animation.get('name')!r} duration must be finite and non-negative")
+    if not math.isfinite(duration) or duration <= 0:
+        raise _error(f"animation {animation.get('name')!r} duration must be positive and finite")
     channels = []
     curves = []
+    channel_keys = set()
 
     def add_channel(target, target_type, source_curve, dimension, group_name):
         decoded = _decoded_curve(source_curve, dimension, target, target_type)
         if decoded is None:
             return
+        key = (target_type, target)
+        if key in channel_keys:
+            if target_type == "MorphTarget":
+                return
+            raise _error(f"duplicate {target_type} target {target!r}")
+        if not decoded.get("keyframed") and not 0 <= decoded["knots"][0] <= duration:
+            raise _error(f"track {target!r} starts outside its animation duration")
         if target_type == "BoneScale":
             _validate_scale_shear(decoded, target)
         curve = _convert_curve(
@@ -189,6 +289,12 @@ def _convert_animation(animation: dict, *, sample_rate: float) -> dict:
             sample_rate=sample_rate,
             quaternion=target_type == "BoneRotation",
         )
+        if not preserve_identity and not source_curve.get("preserveIdentity") and curve["knotCount"] == 1:
+            values = struct.unpack(f"<{curve['valueDimension']}f", bytes(curve["values"]))
+            identity = (0, 0, 0, 1) if target_type == "BoneRotation" else (1, 1, 1)
+            if target_type in ("BoneRotation", "BoneScale") and all(abs(a - b) < 1e-7 for a, b in zip(values, identity)):
+                return
+        channel_keys.add(key)
         channels.append(
             {
                 "target": target or "",
@@ -207,16 +313,22 @@ def _convert_animation(animation: dict, *, sample_rate: float) -> dict:
             add_channel(name, "BoneRotation", track.get("orientation"), 4, group_name)
             add_channel(name, "BoneScale", track.get("scaleShear"), 9, group_name)
         for track in group.get("vectorTracks") or []:
+            if (track.get("name") or "") not in morph_names:
+                continue
             dimension = int(track.get("dimension") or (track.get("valueCurve") or {}).get("dimension") or 0)
-            if dimension <= 0:
-                raise _error(f"vector track {track.get('name')!r} has invalid dimension {dimension}")
+            if dimension != 1:
+                raise _error(f"vector track {track.get('name')!r} has unsupported dimension {dimension}")
             add_channel(
                 track.get("name") or "",
-                "MorphTarget" if dimension == 1 else "Other",
+                "MorphTarget",
                 track.get("valueCurve"),
                 dimension,
                 group_name,
             )
+    if not channels:
+        if drop_empty:
+            return None
+        raise _error(f"animation {animation.get('name')!r} contains no non-identity channels")
     return {
         "name": animation.get("name") or "",
         "channels": channels,
@@ -255,6 +367,8 @@ def _decoded_curve(curve, dimension: int, track: str, kind: str):
         raise _error(f"track {track!r} {kind} curve control count is invalid")
     if not all(math.isfinite(float(value)) for value in (*decoded["knots"], *decoded["controls"])):
         raise _error(f"track {track!r} {kind} curve contains non-finite values")
+    if any(right < left for left, right in zip(decoded["knots"], decoded["knots"][1:])):
+        raise _error(f"track {track!r} {kind} curve knots are not ascending")
     return {
         **decoded,
         "keyframed": curve.get("format") == FORMAT_DA_KEYFRAMES_32F,
@@ -263,9 +377,8 @@ def _decoded_curve(curve, dimension: int, track: str, kind: str):
 
 def _validate_scale_shear(curve: dict, track: str) -> None:
     for offset in range(0, len(curve["controls"]), 9):
-        for component in (1, 2, 3, 5, 6, 7):
-            if abs(curve["controls"][offset + component]) > 1e-7:
-                raise _error(f"track {track!r} scaleShear curve contains shear")
+        if _has_shear(curve["controls"][offset:offset + 9]):
+            raise _error(f"track {track!r} scaleShear curve contains shear")
 
 
 def _convert_curve(

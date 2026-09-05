@@ -36,7 +36,7 @@ exactly in Blender, so generated materials are a deliberate approximation.
 
 Current download:
 
-- [CarbonEngineJS Blender Tools 0.7.0](https://github.com/carbonenginejs/tools-blender/releases/download/v0.7.0/carbon_eve_resources-0.7.0.zip)
+- [CarbonEngineJS Blender Tools 0.7.1](https://github.com/carbonenginejs/tools-blender/releases/download/v0.7.1/carbon_eve_resources-0.7.1.zip)
   — EVE resource browsing and ship loading, with GR2 and CMF importers.
 
 The readers can also be installed without Blender:
@@ -225,3 +225,7 @@ MIT. The BitKnit2 decoder is a Python port of CarbonEngineJS's MIT clean-room
 implementation and has been validated byte-exact against the available GR2
 codec corpus. See `LICENSE`, `NOTICE`, and `THIRD-PARTY-NOTICES.md`. EVE content
 remains subject to CCP Games' separate terms in `EVE-CREATOR-LICENSE.md`.
+
+CarbonEngine and Fenris Creations (CCP Games) formats and behavior are used for
+interoperability; source and algorithm provenance is recorded in `NOTICE`.
+This project is not affiliated with or endorsed by Fenris Creations (CCP Games).

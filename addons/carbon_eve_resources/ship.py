@@ -26,7 +26,7 @@ import bpy
 import mathutils
 
 from . import logos, placeholders, sof_enums, sof_faction_nodes
-from .core import resfile
+from .core import resfile, weapons
 from .quad import decals as decal_module
 from .quad import interface as quad_interface
 from .quad import materials as quad_materials
@@ -3301,7 +3301,10 @@ LOCATOR_SIZE = 0.012
 #: The kinds drawn by default. The rest are built but hidden: a cruiser has 271
 #: locators and 122 of them are `vds_ambient`, which would bury the outliner in
 #: points nobody asked for.
-LOCATOR_SHOWN = ("turret", "booster", "cargobay", "camera")
+LOCATOR_SHOWN = (
+    *(kind for kind, _slot, _label in weapons.WEAPON_KINDS),
+    "booster", "cargobay", "camera",
+)
 
 
 def locator_matrix(locator, hull):
