@@ -23,6 +23,7 @@ from array import array
 import struct
 
 from . import bc6h
+from ..core.writing import ensure_parent
 
 
 #: DDSCAPS2_CUBEMAP and the six face flags.
@@ -442,7 +443,7 @@ def convert_file(source, destination, face_size: int = FACE_SIZE,
     if destination.is_file() and destination.stat().st_size > 0:
         return destination
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    ensure_parent(destination)
     made, (direction, colour) = _convert(source.read_bytes(), face_size,
                                          width, progress)
     destination.write_bytes(made)

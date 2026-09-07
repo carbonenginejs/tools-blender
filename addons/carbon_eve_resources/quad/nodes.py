@@ -185,6 +185,28 @@ def _socket(tree, name, kind, *, description="", default=None, panel=None,
 
 
 
+def _has_driver(tree, path: str, index: int) -> bool:
+    """Whether a driver already sits on one socket channel.
+
+    Asked so the remove below can be SKIPPED on a freshly built material, where
+    there is nothing to remove. A skinned hull drives 36 channels per material -
+    five vector sockets and three scalars, twice - and a blind remove made half
+    of those operations do nothing but tag the depsgraph. The removes that do
+    find something are still needed: re-driving a material has to replace what
+    is there, not stack a second driver on it.
+    """
+
+    animation = getattr(tree, "animation_data", None)
+    if animation is None:
+        return False
+    try:
+        return animation.drivers.find(path, index=index) is not None
+    except (TypeError, RuntimeError):
+        # An older signature, or a path Blender will not parse. Removing
+        # unconditionally is the previous behaviour and always safe.
+        return True
+
+
 def drive_ship_values(group_node, obj):
     """Drives a material's per-ship sockets from an object's properties.
 
@@ -208,7 +230,9 @@ def drive_ship_values(group_node, obj):
         if socket is None:
             continue
         index = list(group_node.inputs).index(socket)
-        group_node.id_data.driver_remove(f'nodes["{group_node.name}"].inputs[{index}].default_value')
+        path = f'nodes["{group_node.name}"].inputs[{index}].default_value'
+        if _has_driver(group_node.id_data, path, 0):
+            group_node.id_data.driver_remove(path)
         driver = group_node.id_data.driver_add(
             f'nodes["{group_node.name}"].inputs[{index}].default_value').driver
         driver.type = "SCRIPTED"
@@ -288,9 +312,10 @@ def drive_mask_values(group_node, obj):
             path = f'nodes["{group_node.name}"].inputs[{position}].default_value'
             channels = 3 if socket.type == "VECTOR" else 1
             for channel in range(channels):
-                group_node.id_data.driver_remove(path, channel if channels > 1 else -1)
-                driver = group_node.id_data.driver_add(
-                    path, channel if channels > 1 else -1).driver
+                slot = channel if channels > 1 else -1
+                if _has_driver(group_node.id_data, path, max(channel, 0)):
+                    group_node.id_data.driver_remove(path, slot)
+                driver = group_node.id_data.driver_add(path, slot).driver
                 driver.type = "SCRIPTED"
                 variable = driver.variables.new()
                 variable.name = "v"

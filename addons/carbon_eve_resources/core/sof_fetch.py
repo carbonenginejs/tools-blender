@@ -26,6 +26,7 @@ from urllib.request import Request, urlopen
 
 from . import resfile, resindex
 from .tools_remote import USER_AGENT
+from .writing import ensure_parent
 
 
 #: How many files to fetch at once. Bounded: the work is somebody else's
@@ -366,7 +367,7 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
         destination = resfile.readable_path(cache_root, logical_path)
         if destination is None:
             raise FetchError(f"{logical_path}: nowhere to store it")
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    ensure_parent(destination)
     partial = destination.with_name(destination.name + ".part")
     partial.write_bytes(payload)
     partial.replace(destination)
@@ -394,7 +395,7 @@ def download(source_url: str, destination: Path, *, opener=urlopen,
 
     if destination.is_file() and destination.stat().st_size > 0:
         return destination
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    ensure_parent(destination)
     request = Request(source_url, headers={"User-Agent": USER_AGENT})
     try:
         with opener(request, timeout=timeout) as response:
@@ -450,6 +451,15 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
     sources = {}
 
     def one(path):
+        # Announced when it STARTS, not when it finishes. `as_completed` yields
+        # in completion order, so reporting there named whichever file happened
+        # to finish - typically a small one - while the slow file it was
+        # actually waiting on went unnamed. A 3KB gradient sat on screen for
+        # seventeen seconds while a hull's geometry parsed behind it, which
+        # sent us hunting the wrong file entirely.
+        if progress is not None:
+            progress(f"{len(done)}/{len(paths)} reading "
+                     f"{path.rsplit('/', 1)[-1]}")
         found = fetch_resource(path, client, cache_root, build=exact,
                                target=target, opener=opener, index=index,
                                local_root=local_root,
@@ -472,20 +482,20 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
     # In parallel. A ship is fifty files, each a resolve and a download, and
     # serially that is over two minutes of a person watching nothing happen.
     # Bounded because the work is somebody else's server.
-    done = 0
+    # A list rather than an int: the worker threads read the count when they
+    # announce themselves, and a closure cannot rebind an outer name.
+    done = []
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         running = {pool.submit(one, path): path for path in paths}
         for finished in as_completed(running):
             path = running[finished]
-            done += 1
+            done.append(path)
             if progress is not None:
-                # Say which, not just which file. "12/50 gb2_t1_a.dds" reads as
-                # downloading whatever it did, so a ship already on disk looked
-                # identical to one arriving over the wire.
-                verb = {"local": "reading", "cache": "cached",
-                        "download": "downloading"}.get(sources.get(path), "")
-                progress(f"{done}/{len(paths)} {verb} "
-                         f"{path.rsplit('/', 1)[-1]}".replace("  ", " "))
+                # Cleared: a file that has been read is no longer what is being
+                # read, and leaving its name up is how the last resource gets
+                # mistaken for the current one. The count is the only thing a
+                # completion knows for certain.
+                progress(f"{len(done)}/{len(paths)}")
             if cancelled is not None and cancelled():
                 for pending in running:
                     pending.cancel()
@@ -517,6 +527,6 @@ def write_document(document, destination: Path) -> Path:
     a smaller change than reworking its signature.
     """
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    ensure_parent(destination)
     destination.write_text(json.dumps(document), encoding="utf-8")
     return destination

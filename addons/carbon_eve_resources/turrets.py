@@ -17,10 +17,10 @@ from pathlib import Path
 import re
 
 import bpy
-from bpy.props import EnumProperty, StringProperty
+from bpy.props import StringProperty
 from bpy.types import Operator, Panel, PropertyGroup
 
-from . import service_access
+from . import service_access, sof_panels
 import mathutils
 
 from . import ship as ship_module
@@ -31,7 +31,6 @@ from .ship import unique_name
 #: Held because Blender does NOT keep a reference to the strings a dynamic
 #: `items` callback returns -- letting them be collected shows up as mangled
 #: labels, or a crash.
-_ITEMS: dict = {}
 
 #: What a fitted turret is marked with, so it can be found and cleared.
 FITTED = "carbon_turret"
@@ -62,35 +61,44 @@ def bay_of(locator) -> str:
     return found.group(1) if found else ""
 
 
-def _items_for(slot):
-    """An items callback for one weapon slot, holding its own strings."""
+def _weapon_names(slot):
+    """Every weapon name for one slot, for the search field."""
 
-    def items(self, context):
-        rows = [row for row in weapons.catalogue(
-            service_access.client(context), slots=(slot,))]
-        if not rows:
-            _ITEMS[slot] = [("", "None available", "")]
-            return _ITEMS[slot]
-        # Keyed by TYPE ID. 602 turrets share just 57 models, so keying by the
-        # model path gives sixteen entries the same identifier -- and Blender
-        # answers every one of them with the first, so picking a weapon showed
-        # a different weapon's name.
-        _ITEMS[slot] = [(str(row["typeID"]), row["name"],
-                         f"{row['resPath'].rsplit('/', 1)[-1]}")
-                        for row in rows]
-        return _ITEMS[slot]
+    def names(context=None):
+        rows = weapons.catalogue(service_access.client(context), slots=(slot,))
+        return [row["name"] for row in rows]
 
-    return items
+    return names
+
+
+def _search_for(slot):
+    """A `search=` callback over one slot's weapon names."""
+
+    return sof_panels.name_search(_weapon_names(slot))
 
 
 class CARBON_TurretState(PropertyGroup):
     # One chooser per kind rather than one with a filter: the panels are shown
     # side by side, so a single shared chooser would make picking a missile
     # change what the turret panel says it will fit.
+    #
+    # SEARCHED, not enumerated. An EnumProperty draws every item at once, and
+    # there are 784 weapons - the turret list alone is unusable as a dropdown.
+    # A search field asks for what was typed and offers matches, which is the
+    # only workable shape at this size.
+    #
+    # It holds the weapon's NAME. Names are unique across the catalogue (784
+    # types, no duplicates), so a name resolves to exactly one typeID - and
+    # typeID stays what gets fitted, because 602 turrets share 57 models and
+    # keying by model path made picking one weapon fit another. Several names
+    # sharing a model is fine and expected; they are different weapons.
     __annotations__ = {
-        kind: EnumProperty(name=label, items=_items_for(slot),
-                           description=f"Which weapon to mount on a "
-                                       f"{label.lower()} hardpoint")
+        kind: StringProperty(name=label, default="",
+                             search=_search_for(slot),
+                             description=f"Which weapon to mount on a "
+                                         f"{label.lower()} hardpoint; type "
+                                         f"{sof_panels.SEARCH_AFTER} letters "
+                                         f"to search")
         for kind, slot, label in KINDS
     }
     __annotations__["status"] = StringProperty(default="")
@@ -664,8 +672,8 @@ class CARBON_OT_fit_turrets(Operator):
         from . import addon
 
         state = context.window_manager.carbon_eve_turrets
-        chosen_id = getattr(state, self.kind, "")
-        if not chosen_id:
+        chosen_name = str(getattr(state, self.kind, "") or "").strip()
+        if not chosen_name:
             self.report({"ERROR"}, "Choose a weapon first")
             return {"CANCELLED"}
 
@@ -683,11 +691,16 @@ class CARBON_OT_fit_turrets(Operator):
         locators = [locator for _kind, _bay, group in wanted
                     for locator in group]
 
+        # Matched by NAME, because that is what the search field stores, and
+        # names are unique across the catalogue. typeID is still what gets
+        # fitted - it is read off the row below.
+        wanted_name = chosen_name.casefold()
         chosen = next((row for row in weapons.catalogue(
                            client, slots=(KIND_SLOT.get(self.kind),))
-                       if str(row["typeID"]) == chosen_id), None)
+                       if str(row["name"]).casefold() == wanted_name), None)
         if chosen is None:
-            self.report({"ERROR"}, "That weapon is no longer listed")
+            self.report({"ERROR"},
+                        f"No weapon named \"{chosen_name}\" for this hardpoint")
             return {"CANCELLED"}
         res_path, name = chosen["resPath"], chosen["name"]
         cache_root = _cache_root(context)

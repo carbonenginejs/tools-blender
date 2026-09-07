@@ -267,46 +267,21 @@ def to_rgba(data: bytes):
 #: Our own cache root, and the local folders we may READ from. Set by
 #: `service_access` when the client is built.
 #:
-#: A translation is written to the cache and nowhere else. The local folders
-#: are somebody's source material -- an authored tree, or a copy of ResFiles --
-#: and writing a decoded PNG into either would put our output in their input.
-ROOTS = {"cache": None, "local": None, "resfiles": None}
+#: The shared roots. Imported, not owned: `core.writing` decides where anything
+#: we generate may be written, so the texture path and the geometry path cannot
+#: disagree about it again. Same dict object, so `reader.ROOTS[...] = x` still
+#: reaches every user of it.
+from ..core.writing import ROOTS, derived as _derived        # noqa: E402
 
 
 def derived_path(source: Path, suffix: str = ".png") -> Path:
     """Where one decoded texture is kept. Always inside our cache.
 
-    Beside its source when the source is already ours: same folder, same name,
-    `suffix` -- `.png` for a texture, `.hdr` for a nebula turned into an
-    environment. The source is addressed by its CONTENT, so the decode inherits
-    that -- shared by every hull using that texture, and pruned with the build
-    it belongs to.
-
-    A source read from a local folder is mirrored into the cache at the same
-    relative position, so the decode still lands somewhere stable and the
-    folder it came from is left exactly as it was found.
+    See `core.writing.derived`, which is the single rule for this and is shared
+    with the geometry parse cache.
     """
 
-    source = Path(source)
-    cache = ROOTS.get("cache")
-    if not cache:
-        # Nothing configured to write to. Beside the source is the old
-        # behaviour and only ever applies to our own cache in practice, but
-        # the caller handles a decode it cannot store.
-        return source.with_suffix(suffix)
-
-    cache = Path(cache)
-    for root in (cache, ROOTS.get("resfiles"), ROOTS.get("local")):
-        if not root:
-            continue
-        try:
-            relative = source.relative_to(Path(root))
-        except ValueError:
-            continue
-        return (cache / relative).with_suffix(suffix)
-
-    # Somewhere else entirely: keep it by name rather than refusing to decode.
-    return cache / "translated" / (source.name + suffix)
+    return _derived(source, suffix)
 
 
 def decode_to_png(source, destination=None):

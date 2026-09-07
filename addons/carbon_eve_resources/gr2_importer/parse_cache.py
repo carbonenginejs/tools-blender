@@ -23,6 +23,8 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 
+from ..core.writing import ensure_parent
+
 
 #: The parsed form is a translated file, and translated files carry an
 #: extension. `.parsed` rather than `.pickle` because what matters is what it
@@ -56,10 +58,20 @@ os.replace(sys.argv[3] + ".part", sys.argv[3])
 
 
 def cache_path(source) -> Path:
-    """Where one file's parsed form lives: beside it, with the extension."""
+    """Where one file's parsed form lives. ALWAYS inside our own cache.
 
-    source = Path(source)
-    return source.with_name(source.name + SUFFIX)
+    NEVER beside the source: a local folder may be a live EVE install, and no
+    tool of ours may put files in one. See `core.writing.derived`, which is the
+    single rule and is shared with the texture decoder - the decoder always had
+    it right, and this path simply never used it.
+
+    The suffix is APPENDED rather than replacing an extension, so `<hash>`
+    becomes `<hash>.parsed` and nothing already derived is stranded.
+    """
+
+    from ..core.writing import derived
+
+    return derived(source, SUFFIX, append=True)
 
 
 def read(source):
@@ -97,6 +109,14 @@ def prepare(source, *, unpack_tangents: bool = True,
     destination = cache_path(source)
     if destination.is_file() and destination.stat().st_size > 0:
         return True
+
+    # The destination is now MIRRORED into our cache rather than sitting beside
+    # the source, so its folder is not guaranteed to exist -- and a child that
+    # cannot write leaves no parse, which re-parses on every single load.
+    try:
+        ensure_parent(destination)
+    except OSError:
+        return False
 
     python = worker.python_executable()
     if python is None:

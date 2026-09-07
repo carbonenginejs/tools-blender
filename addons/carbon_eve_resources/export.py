@@ -21,6 +21,7 @@ from bpy.props import StringProperty
 from bpy.types import Operator
 
 from .core import resfile
+from .core.writing import ensure_folder, ensure_parent
 
 
 def eve_images():
@@ -57,7 +58,7 @@ def export_images(folder, *, repoint: bool = True):
             continue
         try:
             if not destination.is_file() or destination.stat().st_size == 0:
-                destination.parent.mkdir(parents=True, exist_ok=True)
+                ensure_parent(destination)
                 shutil.copyfile(source, destination)
             if repoint:
                 image.filepath = str(destination)
@@ -147,7 +148,7 @@ class CARBON_OT_save_standalone(Operator):
         target = folder / name
 
         try:
-            folder.mkdir(parents=True, exist_ok=True)
+            ensure_folder(folder)
         except OSError as exc:
             self.report({"ERROR"}, f"Could not use {folder}: {exc}")
             return {"CANCELLED"}

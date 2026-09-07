@@ -195,9 +195,10 @@ class CARBON_PT_sidebar_dna(Panel):
 
         # Name, then the ids it resolves to, then the DNA. Each fills the
         # ones below, and any can be filled in directly.
-        sof_panels.draw_name_search(layout, settings, "ship_name",
-                                    kind="ships", text="Ship",
-                                    icon="OUTLINER_OB_MESH")
+        # A plain prop: the property carries `search=`, so Blender draws the
+        # search field itself. It does not hold 24,000 names to do it.
+        layout.prop(settings, "ship_name", text="Ship",
+                    icon="OUTLINER_OB_MESH")
         ids = layout.row(align=True)
         ids.prop(settings, "type_id", text="Type")
         ids.prop(settings, "skin_id", text="Skin")

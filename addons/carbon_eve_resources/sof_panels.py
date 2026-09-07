@@ -305,6 +305,105 @@ def catalog_items(kind="materials", context=None):
     return count
 
 
+#: Plain lists a `search=` callback filters, by kind. Not CollectionProperties:
+#: see `name_search`.
+_NAMES = {}
+
+
+def _fill_names(kind):
+    """Fills one plain name list. Runs from a TIMER, never from a search.
+
+    The 6.4MB name index has to be fetched the first time, and doing that
+    inside a search callback would freeze Blender on the third keystroke. So a
+    search asks for what is cached, and asks for the rest to happen after.
+    """
+
+    from . import service_access
+    from .core import sof_lookup, sof_materials
+
+    try:
+        client = service_access.client()
+        if kind == "ships":
+            found = [name for name, entries in sof_lookup.names(client).items()
+                     if any(entry.get("graphicID") or entry.get("kind") == "skin"
+                            for entry in entries)]
+        else:
+            found = list(sof_materials.catalog(client, kind=kind))
+        _NAMES[kind] = sorted(found)
+    except Exception as exc:
+        print(f"[CarbonEngineJS SOF] {kind} names unavailable: {exc}")
+        _ATTEMPTS[kind] = _ATTEMPTS.get(kind, 0) + 1
+        if _ATTEMPTS[kind] < MAX_ATTEMPTS:
+            _REQUESTED.discard(f"names:{kind}")
+    return None                       # a one-shot timer
+
+
+def names_for(kind):
+    """The cached names of one kind, fetching them in the background if new."""
+
+    def names(context=None):
+        found = _NAMES.get(kind)
+        if found is not None:
+            return found
+        token = f"names:{kind}"
+        if token not in _REQUESTED:
+            _REQUESTED.add(token)
+            bpy.app.timers.register(lambda kind=kind: _fill_names(kind),
+                                    first_interval=0.0)
+        return ()
+
+    return names
+
+
+#: How much has to be typed before a search offers anything.
+#:
+#: One or two letters match nearly everything in a list this size, so the
+#: dropdown arrives full and useless and Blender spends the keystroke building
+#: it. Three is where a query starts to mean something.
+SEARCH_AFTER = 3
+
+#: How many matches one dropdown will show.
+SEARCH_LIMIT = 100
+
+
+def name_search(names):
+    """A `search=` callback for a StringProperty, over a plain list of names.
+
+    Blender hands a search callback WHAT HAS BEEN TYPED, which a
+    `CollectionProperty` plus `prop_search` cannot see - that pairing has to
+    hold every candidate up front and filters them itself. At this size that is
+    the whole problem: the ship index alone carries tens of thousands of names,
+    and adding them one at a time to a collection stalls Blender before the
+    field is usable at all.
+
+    So nothing is held. `names(context)` returns whatever list is already
+    cached, this filters it, and until SEARCH_AFTER characters are typed it
+    offers nothing and does no work.
+
+    Names that START with what was typed come first - looking for "rifter"
+    should not begin with everything that merely contains it.
+
+    @param names: callable taking the context and returning a list of strings
+    """
+
+    def search(self, context, edit_text):
+        typed = str(edit_text or "").strip().lower()
+        if len(typed) < SEARCH_AFTER:
+            return ()
+
+        try:
+            candidates = names(context) or ()
+        except Exception as exc:                       # a search must not raise
+            print(f"[CarbonEngineJS] search unavailable: {exc}")
+            return ()
+
+        found = [name for name in candidates if typed in name.lower()]
+        found.sort(key=lambda name: (not name.lower().startswith(typed), name))
+        return found[:SEARCH_LIMIT]
+
+    return search
+
+
 def draw_name_search(layout, owner, field, *, kind="materials", text="",
                      icon="NONE"):
     """A field that only accepts a name the catalog actually has.
@@ -326,6 +425,7 @@ def forget_catalogs():
 
     _REQUESTED.clear()
     _ATTEMPTS.clear()
+    _NAMES.clear()                     # the search lists are per-build too
     for kind in ("materials", "patterns", "hulls", "factions", "races", "ships"):
         items = getattr(bpy.context.window_manager, f"carbon_sof_{kind}", None)
         if items is not None:
@@ -601,7 +701,9 @@ class CARBON_SOF_Settings(PropertyGroup):
     #: faction is tools-core's job; this holds the input and the answer.
     ship_name: StringProperty(
         name="Ship", default="", update=_identity_typed,
-        description="A ship or SKIN by name; the ids and the DNA follow")
+        search=name_search(names_for("ships")),
+        description="A ship or SKIN by name; the ids and the DNA follow. "
+                    f"Type {SEARCH_AFTER} letters to search")
     type_id: IntProperty(
         name="Type ID", default=0, min=0, update=_identity_typed,
         description="The type's graphic is what carries its hull, faction and "

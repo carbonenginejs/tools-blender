@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from .writing import ensure_parent
 
 
 #: Held per (target, build): the library is 1.5MB and changes only when EVE
@@ -176,7 +177,7 @@ def catalogue(client, *, build: str = "latest", target: str = "eve",
         path = _stored(target, build)
         if path is not None:
             try:
-                path.parent.mkdir(parents=True, exist_ok=True)
+                ensure_parent(path)
                 path.write_text(json.dumps(rows), "utf-8")
             except OSError:
                 pass                     # the cache is a courtesy, not a need

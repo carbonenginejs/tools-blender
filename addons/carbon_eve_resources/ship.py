@@ -1596,6 +1596,24 @@ def ship_armature(hull, collection=None):
     return None
 
 
+def ride_the_hull(obj, armature):
+    """Parents an attachment to the hull itself, keeping where it already is.
+
+    For an attachment with no bone of its own. It is not deformed and not
+    driven, but it belongs to the ship and has to travel with it.
+
+    Returns False: nothing was attached to a BONE, which is what the caller's
+    name asks about.
+    """
+
+    world = obj.matrix_world.copy()
+    obj.parent = armature
+    obj.parent_type = "OBJECT"
+    obj.matrix_parent_inverse = armature.matrix_world.inverted()
+    obj.matrix_world = world
+    return False
+
+
 def attach_to_bone(obj, armature, bone_index):
     """Parents an object to a bone, keeping where it already is.
 
@@ -1608,9 +1626,31 @@ def attach_to_bone(obj, armature, bone_index):
     of leaving an attachment silently on the wrong bone.
     """
 
-    obj["carbon_bone_index"] = int(bone_index)
-    if armature is None or bone_index is None or bone_index < 0:
+    # Recorded first, and tolerantly: a missing field is -1, the same as an
+    # authored transform. `int(None)` raised instead, which took the whole
+    # attachment down rather than placing it.
+    obj["carbon_bone_index"] = -1 if bone_index is None else int(bone_index)
+
+    if armature is None:
         return False
+
+    if bone_index is None or bone_index < 0:
+        # NO BONE IS NOT NO PARENT. -1 means "placed by an authored transform"
+        # rather than "driven by a bone" - the CCP editor is happy with it, and
+        # it is the normal case: on gc1_t2a every sprite (134), every banner and
+        # every banner light carries it. The attachment still belongs to the
+        # ship, so it rides the hull.
+        #
+        # Returning early left them unparented, sitting wherever they were baked
+        # at build time. The hull then animated or entered a state and they
+        # stayed behind - some looking merely offset, once the hull had moved
+        # away from them.
+        #
+        # Bone 0 is often the hull body and reaches the same place by the bone
+        # path below; it is deliberately NOT collapsed into this branch, because
+        # a handful of non-ship models do animate bone 0 and must keep following
+        # it.
+        return ride_the_hull(obj, armature)
 
     # Through the MODEL's own bone order, not Blender's.
     #
@@ -1627,7 +1667,9 @@ def attach_to_bone(obj, armature, bone_index):
         bone = bones.get(str(order[bone_index]))
     if bone is None:
         if bone_index >= len(bones):
-            return False
+            # More bones asked for than the armature has. Riding the hull is
+            # wrong-but-attached; unparented is wrong AND adrift.
+            return ride_the_hull(obj, armature)
         bone = bones[bone_index]
     obj["carbon_bone_name"] = bone.name
     world = obj.matrix_world.copy()

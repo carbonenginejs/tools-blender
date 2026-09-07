@@ -25,6 +25,7 @@ from typing import Optional
 from urllib.request import Request, urlopen
 
 from .tools_remote import USER_AGENT
+from .writing import ensure_parent
 
 
 BINARIES = "https://binaries.eveonline.com"
@@ -88,7 +89,7 @@ def index_file(cache_root, build: str, *, opener=urlopen) -> Path:
         return destination
     payload = _read(f"{BINARIES}/{index_location(build, opener=opener)}",
                     opener=opener)
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    ensure_parent(destination)
     partial = destination.with_name(destination.name + ".part")
     partial.write_bytes(payload)
     partial.replace(destination)

@@ -14,6 +14,7 @@ from __future__ import annotations
 import struct
 import zlib
 from pathlib import Path
+from ..core.writing import ensure_parent
 
 
 SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -56,7 +57,7 @@ def write(path, width: int, height: int, rgba) -> Path:
     """
 
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_parent(path)
     partial = path.with_name(path.name + ".part")
     partial.write_bytes(encode(width, height, rgba))
     partial.replace(path)

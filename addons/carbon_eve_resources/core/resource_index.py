@@ -18,6 +18,7 @@ import tempfile
 import time
 from typing import Callable, Iterable, Optional, Sequence
 from urllib.request import Request, urlopen
+from .writing import ensure_parent
 
 
 METADATA_BASE_URL = "https://binaries.eveonline.com"
@@ -396,7 +397,7 @@ def materialize_resource(
         timeout=timeout,
     )
     destination = safe_join(Path(output_root).expanduser().resolve(), *entry.relative_path.split("/"))
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    ensure_parent(destination)
     temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
     try:
         shutil.copyfile(fetched.path, temporary)
@@ -544,7 +545,7 @@ def _download(url: str, opener: Callable, timeout: float) -> bytes:
 
 
 def _write_atomic(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_parent(path)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     temporary = Path(temporary_name)
     try:

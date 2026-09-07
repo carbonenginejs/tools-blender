@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from .writing import ensure_parent
 
 
 #: Held per (target, build). 114 regions is one small request, but it is one
@@ -75,7 +76,7 @@ def regions(client, *, build: str = "latest", target: str = "eve"):
 
     if path is not None:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            ensure_parent(path)
             path.write_text(json.dumps(found), "utf-8")
         except OSError:
             pass                         # the cache is a courtesy, not a need

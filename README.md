@@ -1,25 +1,45 @@
 # CarbonEngineJS Blender Tools
 
-These add-ons help you get EVE Online assets into Blender:
+Get EVE Online assets into Blender:
 
-- **GR2 Importer** loads EVE's Granny 2 geometry, including meshes, UVs,
-  normals, skeletons, weights, morphs, and embedded animations.
-- **CMF Importer** loads Carbon Mesh Format geometry, LODs, UVs, packed or
-  unpacked tangent frames, morphs, weights, and skeletons. CMF animation curves
-  are readable by the library, but creating Blender Actions from them is still
-  pending.
-- **EVE Resource Browser** finds, downloads, validates, and previews the actual
-  EVE files, so you do not have to work out CCP's index and download system. It
-  also assembles a ship hull from a pre-compiled SOF bundle: the right mesh
-  areas, with the right textures on them.
+- **Ship loading** builds a hull from a SOF DNA — the right mesh areas with the
+  right textures on them, plus decals, skins and attachments.
+- **GR2 importer** loads EVE's Granny 2 geometry: meshes, UVs, normals,
+  skeletons, weights, morphs and embedded animations.
+- **CMF importer** loads Carbon Mesh Format geometry, LODs, UVs, packed or
+  unpacked tangent frames, morphs, weights and skeletons.
 
-You still need to find what you want inside EVE's `res:/` folder structure—
-sorry, we cannot save you from that part yet. <3
+It downloads what it needs on demand, so no EVE install is required.
 
-Browsing, downloading, GR2/CMF import, and ship assembly are pure Python for
-Blender 4.0 and newer. No Node.js, `granny2.dll`, WASM, or converter program is
-required. The add-on asks the hosted CarbonEngineJS service to compose SOF/DNA
-and downloads the resolved EVE resources directly.
+## EVE Content Creation Licence
+
+**You must accept CCP Games' terms before the add-on fetches anything.** In the
+3D View press **N**, open the **CarbonEngineJS** tab, and accept the
+[EVE Online Content Creation Terms of Use](https://support.eveonline.com/hc/en-us/articles/8563917741084-EVE-Online-Content-Creation-Terms-of-Use).
+
+Nothing is downloaded until you do. The accepted revision and the time are
+stored in Blender preferences, and `EVE-CREATOR-LICENSE.md` carries the bundled
+notice.
+
+EVE Online and all related assets are the property of CCP hf. This tool is a
+third-party utility and is not affiliated with or endorsed by CCP.
+
+## Known issue: attachments can sit on the wrong bone
+
+**In 0.7.2, an attachment can be bound to the wrong bone — sometimes an
+ancestor of the right one.** Sprites, spotlights, plane sets and banners are
+placed correctly on a hull at rest, so a still image looks right. Put the hull
+into an animation state, or scrub an animation, and the ones on a wrong bone
+travel with the wrong part of the ship.
+
+Nothing is lost and nothing needs re-downloading; it is where an attachment is
+bound, not what it is. A hull with no animation is unaffected.
+
+The cause is not yet identified. What has been ruled out: the SOF's own bone
+indices are correct, a ship carries only one skeleton, the bone order the
+importer records resolves cleanly, placement at rest is exact, and bone
+parenting itself tracks correctly under pose. So the fault is in how this
+add-on maps a bone index onto a Blender bone, and it is being worked on.
 
 ## What it does not do yet
 
@@ -30,13 +50,15 @@ exactly in Blender, so generated materials are a deliberate approximation.
 
 ## Install
 
+Step-by-step, with troubleshooting: [docs/setup.md](docs/setup.md).
+
 1. Download the zip for the tool you want using the links below. Do not unzip it.
 2. In Blender, open **Edit > Preferences > Add-ons**.
 3. Choose **Install from Disk**, select the zip, then enable the add-on.
 
 Current download:
 
-- [CarbonEngineJS Blender Tools 0.7.1](https://github.com/carbonenginejs/tools-blender/releases/download/v0.7.1/carbon_eve_resources-0.7.1.zip)
+- [CarbonEngineJS Blender Tools 0.7.2](https://github.com/carbonenginejs/tools-blender/releases/download/v0.7.2/carbon_eve_resources-0.7.2.zip)
   — EVE resource browsing and ship loading, with GR2 and CMF importers.
 
 The readers can also be installed without Blender:
@@ -74,27 +96,12 @@ Actions yet. The current Blender projection imports triangle-list geometry and
 one selected skeleton; it reports unsupported topology or multi-skeleton mesh
 bindings instead of silently constructing the wrong scene.
 
-## Browse EVE resources
+## The download cache
 
-1. In the 3D View, press **N** and open the **CarbonEngineJS** tab.
-2. Accept CCP Games' EVE content-creation terms.
-3. Select **Load Resources**.
-
-The browser starts at `res:/dx9/model/ship/`. Double-click folders to open
-them, select an image to preview it, or double-click a GR2 to download and
-import it when the GR2 add-on is enabled. Search and the **Low**/**Medium**
-switches help control the file list.
-
-The latest index is downloaded only when needed. **Refresh** can check for a
-new build at most once every 12 hours per cache; repeated clicks reuse the
-last checked build. Downloaded files are size- and MD5-validated. Preferences
-show cache locations and downloaded totals, and provide **Clear Cache**.
-
-You must accept the live
-[EVE Online Content Creation Terms of Use](https://support.eveonline.com/hc/en-us/articles/8563917741084-EVE-Online-Content-Creation-Terms-of-Use)
-before the browser accesses indexes or resources. The accepted revision and
-time are stored in Blender preferences. See `EVE-CREATOR-LICENSE.md` for the
-bundled notice.
+The **CarbonEngineJS** tab reports what has been downloaded and offers
+**Prune** and **Clear Cache**. Files are fetched on demand as a ship needs
+them, and are size- and MD5-validated; anything converted for Blender is kept
+so the next load reuses it. Preferences show where the cache lives.
 
 ## Build a ship from DNA
 
@@ -114,8 +121,8 @@ forces a fresh request.
 
 The add-on imports the hull geometry through the GR2 importer, maps each
 `Tr2MeshArea` onto the geometry index groups it names, and builds one material
-per area. Anything the bundle does not contain is downloaded through the
-resource browser, so a bare document still works when the index is loaded.
+per area. Anything the bundle does not contain is fetched on demand, so a bare
+document still works.
 
 ### Use your own shader as the material
 

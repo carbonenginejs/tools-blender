@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from . import sof_resolution
+from .writing import ensure_parent
 
 
 #: Cached per (target, build). The name index is 57604 entries and the skin
@@ -131,7 +132,7 @@ def names(client=None, *, build: str = "latest", target: str = "eve") -> dict:
     _CACHE[key] = drawable
     if path is not None:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            ensure_parent(path)
             path.write_text(json.dumps(drawable, separators=(",", ":")),
                             encoding="utf-8")
         except OSError:
