@@ -9,41 +9,17 @@ credentials matter only for authenticated routes and the SKINR harvest.
 
 ## The trap that costs the most: two build facets
 
-`latest` is **not one answer**. `GET /<target>/<ref>/build` returns
-`{buildRef, build, builds: {resources, sde}}`.
-
-- Resource-facet routes take `builds.resources`: `res`, `app`, `resources`,
-  **`sof`**, `audio`, `character`, `resfiles`, `billboards`, `cubes`, `nebulas`.
-- SDE-facet routes take `builds.sde`: `sde`, `icons`, `map`, **`skin`**,
-  **`skinr`**, `weapons`, `dogma`, `industry`, `fitting`, `skills`.
-
-Carrying one across facets is silently expensive -- an SDE build on a SOF route
-acquires an entire second client build, another file index, another
-`data.black`, all cold. There is deliberately no alias collapsing the two.
-
-`builds.sde` clamps to `builds.resources` (the SDE is never newer) and may be
-null. **Resolve once, then address by the exact number**: anything stored under
-`latest` cannot later be matched back to the data it came from.
+Use the tools-core [build-reference contract](https://github.com/carbonenginejs/tools-core/blob/main/docs/reference/http-routes.md#build-references)
+for the two facets, route mapping, SDE clamp/null behavior and exact-build
+pinning. Resolve once: storing `latest` loses reproducibility, and accidentally
+using an SDE build for SOF acquires a second cold client index and `data.black`.
 
 ## SOF Editor and DNA Builder: fully served
 
-    GET /eve/<build>/sof/hulls | factions | races | materials | layouts | patterns
-    GET /eve/<build>/sof/hulls/<hull>
-    GET /eve/<build>/sof/hulls/<hull>/patterns/
-    GET /eve/<build>/sof/factions/<faction>
-    GET /eve/<build>/sof/races/<race>
-    GET /eve/<build>/sof/materials/<material>
-    GET /eve/<build>/sof/patterns/<pattern>/hulls/<hull>
-    GET /eve/<build>/sof/dna/<dna>
-    GET /eve/<build>/sof/dna/<dna>/expanded
-    GET /eve/<build>/sof/dna/<dna>/visibilityGroups
-
-Collections return sorted canonical lowercase names; detail lookups are
-case-insensitive. `/sof/dna/<dna>` returns a model-values graph carrying `_type`
-and `_id`/`_ref`; `/expanded` fills in registered class defaults.
-
-The selector is a PATH SEGMENT, not a query parameter -- a literal `?` after
-`/sof/dna/` is treated as part of the DNA.
+The [SOF route contract](https://github.com/carbonenginejs/tools-core/blob/main/docs/reference/http-routes.md#gpu-free-sof-routes)
+owns catalog and DNA endpoints, canonical names, case-insensitive lookup,
+model-values identity, expanded defaults and path-segment selection (including
+literal `?` handling).
 
 A **faction detail record** is what an editor needs for materials: `colorSet`,
 `areaTypes`, `materialUsageMtl1..4` (the material-slot remap), `defaultPattern`
