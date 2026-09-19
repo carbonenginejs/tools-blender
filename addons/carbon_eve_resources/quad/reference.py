@@ -666,7 +666,8 @@ def kill_counter_digit(count: float, row: int) -> float:
     return float(int((folded * following + 0.5) / place))
 
 
-def kill_counter_coverage(uv: Sequence[float], count: float) -> float:
+def kill_counter_coverage(uv: Sequence[float], count: float,
+                          scaling: Sequence[float] = (1.0, 1.0)) -> float:
     """Whether one point of the counter decal draws a mark.
 
     The counter is not a row of glyphs: each of the three rows draws as many
@@ -679,8 +680,14 @@ def kill_counter_coverage(uv: Sequence[float], count: float) -> float:
     point = (uv[0] * 2.0, uv[1] * 2.0)
     if not (0.0 <= point[0] <= 2.0 and 0.0 <= point[1] <= 2.0):
         return 0.0
-    column = float(int(point[0] * 4.5))
-    row = float(int(point[1] * 1.5))
+    # EVE 3503375 decalcounterv5.sm_depth Main/pass0 DXBC 0-7. The projection
+    # flips V for Blender; scaling selects grid direction, not texture UVs.
+    column0 = float(int(uv[0] * 9.0))
+    column1 = float(int((1.0 - uv[0]) * 9.0))
+    row0 = float(int((1.0 - uv[1]) * 3.0))
+    row1 = float(int(uv[1] * 3.0))
+    column = column0 + scaling[0] * (column1 - column0)
+    row = row0 + scaling[1] * (row1 - row0)
     digit = kill_counter_digit(count, row)
     # The shader discards where the digit is BELOW the column's centre, so a
     # digit of three lights columns 0, 1 and 2.

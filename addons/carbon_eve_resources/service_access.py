@@ -10,6 +10,31 @@ import bpy
 
 
 _CLIENT = {"client": None, "key": None}
+_SOURCES = {}
+
+
+def source_target(context=None, settings=None):
+    """Selected target without fetching build metadata (safe for UI drawing)."""
+    if settings is not None and getattr(settings, "source_target", ""):
+        return settings.source_target
+    state = getattr((context or bpy.context).window_manager, "carbon_eve_resources", None)
+    return getattr(state, "source", "eve")
+
+
+def source(context=None, settings=None):
+    """The object's pinned source, or the browser's current selection."""
+    from .core.source import Source, resolve
+    context = context or bpy.context
+    if settings is not None and getattr(settings, "source_target", ""):
+        return Source(settings.source_target, settings.source_provider,
+                      settings.resource_build, settings.sde_build)
+    target = source_target(context, settings)
+    key = (service_url(context), target)
+    if key not in _SOURCES:
+        prefs = _preferences(context)
+        cache = str(getattr(prefs, "cache_directory", "") or "").strip()
+        _SOURCES[key] = resolve(client(context), target, bpy.path.abspath(cache) if cache else None)
+    return _SOURCES[key]
 
 
 def _preferences(context):
@@ -52,6 +77,9 @@ def client(context=None):
     dds_reader.ROOTS["cache"] = root
     dds_reader.ROOTS["local"] = folder("local_source")
     dds_reader.ROOTS["resfiles"] = folder("local_resfiles")
+    # Keep both read-only roots registered even when a pinned ship's Source
+    # differs from the browser. Derived files always belong in the shared cache.
+    dds_reader.ROOTS["frontier_resfiles"] = folder("frontier_resfiles")
 
     url = service_url(context)
     if _CLIENT["client"] is not None and _CLIENT["key"] == url:
@@ -75,3 +103,4 @@ def forget():
 
     _CLIENT["client"] = None
     _CLIENT["key"] = None
+    _SOURCES.clear()

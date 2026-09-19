@@ -38,6 +38,12 @@ from .quad.materials import (build_area_material,
 #: The area lists an `EveShip2` keeps, in the order they are drawn.
 BATCHES = ("opaqueAreas", "transparentAreas", "additiveAreas", "distortionAreas")
 
+# Disabled at the user's request after reviewing the Frontier chassis preview.
+# Keep the measured builders for investigation; the intended appearance of
+# these overlays still needs asset-level confirmation. Existing quad heat is
+# independent of these two Frontier thermal redraws.
+FRONTIER_THERMAL_ENABLED = False
+
 
 CARBON_DOCUMENT_SCHEMA = "carbon.document"
 
@@ -152,8 +158,8 @@ def load_document(path):
         return expand_document(json.load(handle))
 
 
-def find_meshes(document):
-    """Every Tr2Mesh in the document, in the order it appears."""
+def find_meshes(document, *, include_overlays=True):
+    """Meshes in document order, optionally excluding impact-overlay geometry."""
 
     meshes = []
 
@@ -162,9 +168,13 @@ def find_meshes(document):
             for item in node:
                 walk(item)
         elif isinstance(node, dict):
+            if not include_overlays and node.get("_type") == "EveImpactOverlay":
+                return
             if node.get("_type") in ("Tr2Mesh", "Tr2InstancedMesh"):
                 meshes.append(node)
-            for value in node.values():
+            for key, value in node.items():
+                if not include_overlays and key == "impactOverlay":
+                    continue
                 walk(value)
 
     walk(document)
@@ -326,7 +336,8 @@ def keep_actions(actions, armatures):
     for action in actions:
         action.use_fake_user = True
 
-    if not actions or not armatures:
+    armature_actions = [action for action in actions if action.get("carbon_animation_target") != "SHAPE_KEYS"]
+    if not armature_actions or not armatures:
         return actions
 
     def rank(action):
@@ -336,7 +347,14 @@ def keep_actions(actions, armatures):
                 return position
         return len(IDLE_ACTIONS)
 
-    idle = sorted(actions, key=rank)[0]
+    idle = sorted(armature_actions, key=rank)[0]
+    clip = idle.get("carbon_animation_clip", idle.name.rsplit(".", 1)[-1])
+    for action in actions:
+        if action.get("carbon_animation_target") == "SHAPE_KEYS" and action.get("carbon_animation_clip") == clip:
+            owner = action.get("carbon_animation_owner")
+            if owner is not None:
+                owner.animation_data_create()
+                owner.animation_data.action = action
     for armature in armatures:
         if armature.animation_data is None:
             armature.animation_data_create()
@@ -445,19 +463,30 @@ def assemble(document_path, resources_directory, *, clear=True,
 
     document = load_document(document_path) if document is None else document
     resources = load_manifest(resources_directory) if resources is None else resources
-    family = quad_interface.load_family() if family is None else family
+    family = quad_interface.load_family(target=(document.get("carbonSource") or {}).get("target", "eve")) if family is None else family
+    meshes = find_meshes(document)
+    primary_meshes = find_meshes(document, include_overlays=False)
+    eligible = {id(mesh) for mesh in primary_meshes}
+    if not any(resources.get(mesh.get("geometryResPath"))
+               and os.path.exists(resources[mesh["geometryResPath"]]) for mesh in primary_meshes):
+        print("  ! no available hull or child geometry; impact overlays cannot form a ship")
+        return None
     label = ship_label(document)
 
     if clear:
         for obj in list(bpy.data.objects):
             bpy.data.objects.remove(obj, do_unlink=True)
 
-    meshes = find_meshes(document)
     print(f"document has {len(meshes)} mesh(es)")
 
     primary = None
     warnings = []
+    # Import ordinary children as well as root geometry before overlays. A
+    # shield sphere must never become the hull when the real import is absent.
+    meshes = primary_meshes + [mesh for mesh in meshes if id(mesh) not in eligible]
     for mesh in meshes:
+        if id(mesh) not in eligible and primary is None:
+            continue
         path = mesh.get("geometryResPath")
         local = resources.get(path)
         if not local or not os.path.exists(local):
@@ -482,13 +511,28 @@ def assemble(document_path, resources_directory, *, clear=True,
         # in the same order, so the slot index is the area index.
         areas = [(batch, area) for batch in BATCHES for area in (mesh.get(batch) or [])]
         slots = len(target.data.materials)
+        heat_areas = []
+        native_haze_areas = []
+        assigned = set()
         for batch, area in areas:
             index = area.get("index")
+            effect = area.get("effect") or {}
+            member = family.member(effect.get("effectFilePath", ""), effect.get("options"))
+            if (not FRONTIER_THERMAL_ENABLED and member and member.target == "frontier"
+                    and member.name in {"fxheatv5", "fxheatdistortionv5"}):
+                warnings.append(f"{area.get('name')}: Frontier thermal overlay disabled pending visual review")
+                continue
+            if member and member.target == "frontier" and member.name == "fxheatv5":
+                heat_areas.append((area, member))
+                continue
+            if member and member.target == "frontier" and member.name == "fxheatdistortionv5":
+                native_haze_areas.append((area, member))
+                continue
             material, problem = build_area_material(area, family, resources, index or 0)
             if problem:
                 warnings.append(problem)
                 continue
-            if not isinstance(index, int) or index >= slots:
+            if not isinstance(index, int) or index < 0 or index >= slots:
                 warnings.append(f"{area.get('name')}: index {index} outside {slots} slots")
                 continue
             # Which AREA this material is, and which area TYPE chose its
@@ -512,8 +556,72 @@ def assemble(document_path, resources_directory, *, clear=True,
             for offset in range(max(1, area.get("count") or 1)):
                 if index + offset < slots:
                     target.data.materials[index + offset] = material
+                    assigned.add(index + offset)
             fx = str(area.get("effect", {}).get("effectFilePath", "")).rsplit("/", 1)[-1]
             print(f"  [{batch[:-5]:11}] slot {index} <- {material.name}   ({fx})")
+
+        # Heat redraws the same geometry with ONE/ONE additive blending. Merge
+        # its emission into the base closure: coplanar duplicate objects lose
+        # the base hit in Cycles. Keeping one surface also preserves the
+        # imported animation, morphs, attributes and SOF material editing.
+        for area, member in heat_areas:
+            index = area.get("index")
+            if not isinstance(index, int) or index < 0 or index >= slots:
+                warnings.append(f"{area.get('name')}: index {index} outside {slots} slots")
+                continue
+            # The SOF document carries model-space radius. Thermal sun is an
+            # editable shader input, initialized from Carbon's scene default:
+            # trinity/Eve/EveSpaceScene.cpp:268, m_sunData.DirWorld.
+            radius = document.get("boundingSphereRadius")
+            if radius is None or radius <= 0:
+                warnings.append(f"{area.get('name')}: heat requires an authored ship radius")
+                continue
+            variants = {}
+            for slot in range(index, min(slots, index + max(1, area.get("count") or 1))):
+                base = target.data.materials[slot] if slot in assigned else None
+                key = base.as_pointer() if base else 0
+                if key not in variants:
+                    variants[key] = quad_materials.build_heat_area_material(
+                        area, member, resources, index,
+                        {"radius": radius, "sun_direction": (0, -1, 0)}, base_material=base)
+                material, problem = variants[key]
+                if problem:
+                    warnings.append(problem)
+                    continue
+                target.data.materials[slot] = material
+                assigned.add(slot)
+                print(f"  [heat       ] slot {slot} <- {material.name}")
+
+        materials = [material for material in target.data.materials if material]
+        if any(material.get("carbon_rigid_frame_required") for material in materials):
+            if all(material.get("carbon_rigid_frame_required") for material in materials):
+                from .gr2_importer.skinning import attach_rigid_frame
+                try:
+                    attach_rigid_frame(target)
+                    for material in materials:
+                        if "carbon_frontier_normal_limit" in material:
+                            del material["carbon_frontier_normal_limit"]
+                except ValueError as error:
+                    warnings.append(f"{target.name}: {error}")
+            else:
+                warnings.append(f"{target.name}: mixed vertex deformation paths need separate geometry")
+        for material in materials:
+            if material.get("carbon_frontier_normal_limit"):
+                warnings.append(f"{material.name}: {material['carbon_frontier_normal_limit']}")
+        if any(material and material.get("carbon_frontier_vertex_view") for material in target.data.materials):
+            from .quad.frontier import attach_fx_vertex_view
+            attach_fx_vertex_view(target, bpy.context.scene)
+
+        # User-approved native approximation: derive a refractive shell from
+        # the evaluated hull after its deformation modifiers. Never replace
+        # an opaque/thermal material with this separate redraw's shader.
+        for area, member in native_haze_areas:
+            from .quad import native_heat
+            try:
+                native_heat.attach(target, primary, area, member, resources,
+                                   document.get("boundingSphereRadius"))
+            except ValueError as error:
+                warnings.append(f"{area.get('name')}: {error}")
 
     for warning in warnings:
         print(f"  ! {warning}")
@@ -1101,6 +1209,8 @@ def wire_kill_counter(decal, principled, transparency, projection, mnodes, mlink
 
     counter = mnodes.new("ShaderNodeGroup")
     counter.node_tree = nodes.build_kill_counter_group()
+    scaling = decal.constants.get("DecalTextureScaling", (1.0, 1.0, 0.0, 1.0))
+    counter.inputs["DecalTextureScaling"].default_value = tuple(scaling[:3])
     counter.location = (-400, -200)
     mlinks.new(projection.outputs["UV"], counter.inputs["UV"])
 
@@ -1399,6 +1509,11 @@ def populate_sof(obj, document, family):
     from .core import sof_resolution
 
     settings = obj.carbon_sof
+    source = document.get("carbonSource") or {}
+    settings.source_target = source.get("target", "eve")
+    settings.source_provider = source.get("provider", "ccp")
+    settings.resource_build = source.get("resource_build", "latest")
+    settings.sde_build = source.get("sde_build", "latest")
     dna = str(document.get("dna") or "")
     if dna:
         # Every command, not just the components: the editor shows the DNA's
@@ -1472,9 +1587,12 @@ def populate_sof(obj, document, family):
         for field, pattern in sockets.items():
             socket = group.inputs.get(pattern.format(index))
             if socket is None:
+                socket = group.inputs.get(pattern.format(index) + ".x")
+            if socket is None:
                 continue
-            found[field] = (float(socket.default_value) if field == "gloss"
+            found[field] = (float(socket.default_value) if field in ("gloss", "roughness", "metallic")
                             else tuple(socket.default_value)[:3])
+        entry.pbr = "base_color" in found
         # Filling FROM the SOF, so the colour updates must not read as a
         # person editing them and mark the slot custom.
         with sof_panels.applying():
@@ -2763,11 +2881,6 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
         if not banners:
             continue
         source = (hull_sets or [])[set_index] if set_index < len(hull_sets or []) else {}
-        group = attachment_collection(
-            collection, "bannerSets",
-            str(source.get("visibilityGroupName") or "primary"),
-            source.get("visibilityGroup"))
-
         # The USAGE is the SET's key, not the item's `reference`.
         #
         # An item's reference is its index within the set's own list; the set is
@@ -2778,6 +2891,13 @@ def build_banner_sets(document, hull, collection, hull_sets=None, owners=None,
         # came out blank.
         usage = banner_set.get("key")
         slot = BANNER_USAGES[usage] if isinstance(usage, int)             and 0 <= usage < len(BANNER_USAGES) else str(usage or "")
+        if ((document.get("carbonSource") or {}).get("target") == "frontier"
+                and slot in {"corp_logo", "alliance_logo"}):
+            continue
+        group = attachment_collection(
+            collection, "bannerSets",
+            str(source.get("visibilityGroupName") or "primary"),
+            source.get("visibilityGroup"))
         # No image, no banner. A banner exists to carry a picture: one with
         # nothing resolved is an invisible quad that can still be selected,
         # exported and puzzled over.
@@ -3126,7 +3246,7 @@ def build_ship(document_path, resources_directory, *, clear=True,
     # the other -- a whole class of bug for no benefit.
     document = load_document(document_path)
     resources = load_manifest(resources_directory)
-    family = quad_interface.load_family()
+    family = quad_interface.load_family(target=(document.get("carbonSource") or {}).get("target", "eve"))
 
     reset_set_collections()
     existing = set(bpy.data.objects)

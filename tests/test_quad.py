@@ -698,10 +698,29 @@ class KillCounterTests(unittest.TestCase):
             self.assertEqual(rows, expected, f"count {count}")
 
     def test_a_row_lights_one_mark_per_unit(self):
-        # The bottom row spans v in [0, 1/3); nine columns across u.
-        lit = [reference.kill_counter_coverage(((column + 0.5) / 9.0, 0.1), 3)
+        # With scaling.y=0, units occupy high Blender V (D3D V is flipped).
+        lit = [reference.kill_counter_coverage(((column + 0.5) / 9.0, 0.9), 3, (0, 0))
                for column in range(9)]
         self.assertEqual(lit, [1.0, 1.0, 1.0] + [0.0] * 6)
+
+    def test_authored_direction_controls_select_grid_without_flipping_texture(self):
+        # EVE 3503375 decalcounterv5 Main/pass0: each control interpolates
+        # the two truncated grid directions. Asymmetric digits expose flips.
+        for scaling in ((0, 0), (1, 0), (0, 1), (1, 1)):
+            rows = []
+            for row in range(3):
+                samples = [reference.kill_counter_coverage(
+                    ((column + 0.5) / 9, (row + 0.5) / 3), 123, scaling)
+                    for column in range(9)]
+                rows.append(int(sum(samples)))
+                digit = (1, 2, 3)[row] if scaling[1] == 0 else (3, 2, 1)[row]
+                expected = [1.0] * digit + [0.0] * (9 - digit)
+                self.assertEqual(samples, expected[::-1] if scaling[0] else expected)
+            self.assertEqual(rows, [1, 2, 3] if scaling[1] == 0 else [3, 2, 1])
+
+    def test_exact_boundary_uses_direct_donor_truncation(self):
+        self.assertEqual(reference.kill_counter_coverage((0.05, 0.0), 100, (0, 0)), 0.0)
+        self.assertEqual(reference.kill_counter_coverage((0.05, 0.0), 1000, (0, 0)), 1.0)
 
     def test_nothing_is_drawn_outside_the_decal(self):
         for uv in ((-0.1, 0.5), (1.1, 0.5), (0.5, -0.1), (0.5, 1.1)):

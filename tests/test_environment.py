@@ -14,24 +14,28 @@ from pathlib import Path
 import struct
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "addons"))
 
 from carbon_eve_resources.dds import environment  # noqa: E402
 
 
-def cube_dds(width=8, dxgi=96, caps2=0xFE00, faces=6):
+def cube_dds(width=8, dxgi=96, caps2=0xFE00, faces=6, mips=1, array_size=1):
     """A DDS header describing a cube, with room for its blocks."""
 
     header = bytearray(148)
     header[0:4] = b"DDS "
     struct.pack_into("<I", header, 4, 124)
     struct.pack_into("<II", header, 12, width, width)     # height, width
+    struct.pack_into("<I", header, 28, mips)
     struct.pack_into("<I", header, 84, 0)
     header[84:88] = b"DX10"
     struct.pack_into("<I", header, 112, caps2)
     struct.pack_into("<I", header, 128, dxgi)
-    blocks = max(1, (width + 3) // 4) ** 2 * 16
+    struct.pack_into("<I", header, 140, array_size)
+    blocks = sum(max(1, (max(1, width >> level) + 3) // 4) ** 2 * 16
+                 for level in range(mips))
     return bytes(header) + bytes(blocks * faces)
 
 
@@ -62,6 +66,40 @@ class InspectTests(unittest.TestCase):
         found = environment.inspect(data)
         last = found["offset"] + 5 * found["face_bytes"] + found["face_bytes"]
         self.assertLessEqual(last, len(data))
+
+    def test_face_decode_skips_the_previous_faces_mip_chains(self):
+        data = bytearray(cube_dds(width=8, mips=4))
+        # 8x8 top level plus 4x4, 2x2, 1x1 blocks for EACH face.
+        stride = 64 + 16 + 16 + 16
+        for face in range(6):
+            start = 148 + face * stride
+            data[start:start+64] = bytes([face + 1]) * 64
+            data[start+64:start+stride] = bytes([99]) * (stride-64)
+        info = environment.inspect(data)
+        self.assertEqual(info["face_stride"], stride)
+        with patch.object(environment.bc6h, "decode_block",
+                          side_effect=lambda block, signed: [float(block[0])] * 64):
+            for face in range(6):
+                pixels, size = environment.decode_face(data, info, face)
+                self.assertEqual(size, 8)
+                self.assertEqual(set(pixels), {float(face + 1)})
+
+    def test_cube_data_and_array_count_are_validated(self):
+        with self.assertRaisesRegex(environment.CubeError, "truncated"):
+            environment.inspect(cube_dds(mips=4)[:-1])
+        # Frontier reflection files describe faces in the array-size field.
+        self.assertEqual(environment.inspect(cube_dds(mips=4, array_size=6))["faces"], 6)
+        with self.assertRaisesRegex(environment.CubeError, "arrays"):
+            environment.inspect(cube_dds(mips=4, array_size=2, faces=12))
+
+    def test_small_faces_clip_the_decoded_block(self):
+        for width in (1, 2, 3, 5):
+            data = cube_dds(width=width)
+            with patch.object(environment.bc6h, "decode_block", return_value=[1.] * 64):
+                pixels, size = environment.decode_face(data, environment.inspect(data), 5)
+            self.assertEqual(size, width)
+            self.assertEqual(len(pixels), width*width*3)
+            self.assertEqual(set(pixels), {1.})
 
 
 class SampleTests(unittest.TestCase):

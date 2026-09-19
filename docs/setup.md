@@ -37,6 +37,10 @@ then pick the **CarbonEngineJS** tab. You should see three panels:
 
 ## Do I need to configure anything?
 
+Use **Source** in the sidebar to choose the game. See
+[Sources and Frontier materials](sources-and-frontier.md) for shared-cache
+behavior and the current Frontier material coverage.
+
 **No.** The add-on already knows where to find our hosted service, and every
 setting in its preferences has a working default. Install it, enable it, and
 start loading ships.

@@ -15,6 +15,7 @@ The implementation is pure Python so it works from the installed add-on.
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import re
 
 from . import resfile
@@ -34,15 +35,37 @@ def cached_builds(cache_root) -> list:
     Sorted numerically rather than as text, or build 999999 outranks 1000000.
     """
 
-    folder = Path(cache_root) / "indexes"
-    if not folder.is_dir():
-        return []
-    builds = []
-    for found in folder.iterdir():
-        name = INDEX_NAME.match(found.name)
-        if name is not None and found.is_file():
-            builds.append(name.group(1))
-    return sorted(builds, key=int, reverse=True)
+    return sorted(_index_paths(cache_root), key=int, reverse=True)
+
+
+def _index_paths(cache_root):
+    root = Path(cache_root)
+    found = {}
+    for path in (root / "indexes").glob("resfileindex-*.txt"):
+        match = INDEX_NAME.match(path.name)
+        if match and path.is_file():
+            found.setdefault(match.group(1), []).append(path)
+    for path in (root / "ccp" / "builds").glob("*/indexes/resfileindex.txt"):
+        build = path.parent.parent.name
+        if build.isdecimal() and path.is_file():
+            found.setdefault(build, []).append(path)
+    return found
+
+
+def _protected_addresses(root):
+    addresses = set()
+    for path in (root / "sources").glob("*/*/resolutions/*.json"):
+        try:
+            resolution = json.loads(path.read_text(encoding="utf-8"))
+            url = resolution.get("sourceUrl")
+            if not isinstance(url, str) or not url:
+                raise ValueError("missing source URL")
+            parsed = resfile.parse("/".join(url.split("/")[-2:]))
+            if parsed:
+                addresses.add(f"{parsed['shard']}/{parsed['path_hash']}_{parsed['checksum']}")
+        except (OSError, ValueError, AttributeError) as exc:
+            raise PruneError(f"Cannot read protective resource receipt {path.name}: {exc}") from exc
+    return addresses
 
 
 def addresses_in(index_path) -> set:
@@ -85,9 +108,15 @@ def plan(cache_root, keep_latest: int = 1) -> dict:
 
     keep = max(1, int(keep_latest))
     kept_builds = builds[:keep]
-    wanted = set()
-    for build in kept_builds:
-        wanted |= addresses_in(root / "indexes" / f"resfileindex-{build}.txt")
+    indexes = _index_paths(root)
+    known = set()
+    wanted = _protected_addresses(root)
+    for build, paths in indexes.items():
+        for path in paths:
+            addresses = addresses_in(path)
+            known |= addresses
+            if build in kept_builds:
+                wanted |= addresses
 
     remove, bytes_freed, kept_files = [], 0, 0
     resfiles = root / "ResFiles"
@@ -103,7 +132,9 @@ def plan(cache_root, keep_latest: int = 1) -> dict:
                 # one. Matching on the address alone keeps both, and drops
                 # both when the build they belong to goes.
                 address = f"{shard.name}/{found.name.split('.')[0]}"
-                if address in wanted:
+                # An EVE index cannot prove a Frontier or manually supplied
+                # resource obsolete. Unknown ownership always stays.
+                if address in wanted or address not in known:
                     kept_files += 1
                     continue
                 remove.append(found)
@@ -116,6 +147,7 @@ def plan(cache_root, keep_latest: int = 1) -> dict:
         "kept": kept_files,
         "remove": remove,
         "bytes": bytes_freed,
+        "dropped_indexes": [path for build in builds[keep:] for path in indexes[build]],
     }
 
 
@@ -138,8 +170,7 @@ def prune(cache_root, keep_latest: int = 1, *, apply: bool = False) -> dict:
         except OSError:
             pass                        # a file in use is not worth failing on
 
-    for build in decided["dropped_builds"]:
-        index = Path(cache_root) / "indexes" / f"resfileindex-{build}.txt"
+    for index in decided["dropped_indexes"]:
         try:
             index.unlink()
         except OSError:

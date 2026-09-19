@@ -3,6 +3,7 @@ import json
 import math
 import struct
 import re
+from bisect import bisect_right
 from typing import Any, Dict, List, Optional, Tuple, Set
 
 import bpy
@@ -528,14 +529,19 @@ def _apply_custom_normals(me: bpy.types.Mesh, normals: List[Any], vert_count: in
 
 def _store_vector_attribute(me: bpy.types.Mesh, name: str, values: List[Any], vert_count: int) -> bool:
     """Retain one authored float3 per vertex for shaders and later tooling."""
-    if not isinstance(values, list) or len(values) != vert_count * 3:
+    if not isinstance(values, list) or not vert_count or len(values) not in (vert_count * 3, vert_count * 4):
         return False
+    width = len(values) // vert_count
     try:
         existing = me.attributes.get(name)
         if existing is not None:
             me.attributes.remove(existing)
         attribute = me.attributes.new(name=name, type="FLOAT_VECTOR", domain="POINT")
-        attribute.data.foreach_set("vector", [float(value) for value in values])
+        attribute.data.foreach_set("vector", [float(values[row * width + lane])
+            for row in range(vert_count) for lane in range(3)])
+        if width == 4:
+            lane = me.attributes.new(name=name + "_w", type="FLOAT", domain="POINT")
+            lane.data.foreach_set("value", [float(values[row * width + 3]) for row in range(vert_count)])
         return True
     except (AttributeError, RuntimeError, TypeError, ValueError):
         return False
@@ -546,7 +552,8 @@ def _add_morph_targets(obj: bpy.types.Object, mesh_entry: Dict[str, Any], base_p
     if not isinstance(targets, list) or not targets:
         return 0
 
-    vertex_count = len(base_positions) // 3
+    vertex_count = len(obj.data.vertices)
+    base_width = len(base_positions) // vertex_count
     created = 0
     basis = None
     for target_index, target in enumerate(targets):
@@ -556,7 +563,19 @@ def _add_morph_targets(obj: bpy.types.Object, mesh_entry: Dict[str, Any], base_p
         if not isinstance(positions, list) or len(positions) < 3:
             continue
         indices = target.get("vertexIndices")
-        target_count = len(positions) // 3
+        if indices is not None:
+            target_count = len(indices)
+        elif "vertexCount" in target:
+            target_count = target["vertexCount"]
+            if type(target_count) is not int or target_count < 0:
+                raise ValueError("Morph vertex count must be a non-negative integer")
+        elif vertex_count and len(positions) in (vertex_count * 3, vertex_count * 4):
+            target_count = vertex_count
+        else:
+            target_count = len(positions) // base_width
+        target_width = len(positions) // target_count if target_count else 0
+        if target_width not in (3, 4) or len(positions) != target_count * target_width:
+            raise ValueError("Morph position channel does not match its vertex count")
         if indices is None:
             indices = list(range(min(vertex_count, target_count)))
         if not isinstance(indices, list):
@@ -566,6 +585,11 @@ def _add_morph_targets(obj: bpy.types.Object, mesh_entry: Dict[str, Any], base_p
             basis = obj.shape_key_add(name="Basis", from_mix=False)
         name = _sanitize_name(target.get("name") or f"Morph_{target_index + 1:02d}")
         key = obj.shape_key_add(name=name, from_mix=False)
+        # Animation targets use authored names, not Blender's sanitized or
+        # collision-suffixed display names (EveChildMesh.cpp:1626).
+        names = dict(obj.data.shape_keys.get("carbon_morph_names", {}))
+        names[str(target.get("name") or name)] = key.name
+        obj.data.shape_keys["carbon_morph_names"] = names
         is_delta = bool(target.get("dataIsDeltas"))
         for source_index, vertex_index in enumerate(indices[:target_count]):
             try:
@@ -574,14 +598,14 @@ def _add_morph_targets(obj: bpy.types.Object, mesh_entry: Dict[str, Any], base_p
                 continue
             if not 0 <= vertex_index < vertex_count:
                 continue
-            source = source_index * 3
+            source = source_index * target_width
             value = Vector((
                 float(positions[source]),
                 float(positions[source + 1]),
                 float(positions[source + 2]),
             ))
             if is_delta:
-                base = vertex_index * 3
+                base = vertex_index * base_width
                 value += Vector((
                     float(base_positions[base]),
                     float(base_positions[base + 1]),
@@ -597,11 +621,14 @@ def _add_morph_targets(obj: bpy.types.Object, mesh_entry: Dict[str, Any], base_p
 # =============================================================================
 
 def _make_uv_layer(mesh: bpy.types.Mesh, uv_name: str, uv_flat: List[float], flip_v: bool) -> None:
-    if not uv_flat or len(uv_flat) < 2 or (len(uv_flat) % 2) != 0:
+    vert_uv_count = len(mesh.vertices)
+    if not vert_uv_count or not uv_flat:
         return
-    vert_uv_count = len(uv_flat) // 2
-    if vert_uv_count <= 0:
-        return
+    if len(uv_flat) % vert_uv_count:
+        raise ValueError(f"{uv_name}: incomplete texture coordinates")
+    width = len(uv_flat) // vert_uv_count
+    if not 1 <= width <= 4:
+        raise ValueError(f"{uv_name}: texture coordinate width must be 1 through 4")
 
     uv_layer = mesh.uv_layers.new(name=uv_name)
     data = uv_layer.data
@@ -609,8 +636,8 @@ def _make_uv_layer(mesh: bpy.types.Mesh, uv_name: str, uv_flat: List[float], fli
     for li, loop in enumerate(mesh.loops):
         vi = loop.vertex_index
         if 0 <= vi < vert_uv_count:
-            u = float(uv_flat[2 * vi + 0])
-            v = float(uv_flat[2 * vi + 1])
+            u = float(uv_flat[width * vi + 0])
+            v = float(uv_flat[width * vi + 1]) if width > 1 else 0.0
             if flip_v:
                 v = 1.0 - v
             data[li].uv = (u, v)
@@ -688,11 +715,16 @@ def import_meshes(
             continue
 
         pos = v.get("position", [])
-        if not isinstance(pos, list) or len(pos) < 3 or (len(pos) % 3) != 0:
+        if not isinstance(pos, list) or len(pos) < 3:
             continue
 
-        vert_count = len(pos) // 3
-        verts = [(float(pos[i*3+0]), float(pos[i*3+1]), float(pos[i*3+2])) for i in range(vert_count)]
+        vert_count = m.get("vertexCount", len(pos) // 3)
+        if type(vert_count) is not int or vert_count <= 0:
+            raise ValueError(f"{mesh_name}: invalid vertex count")
+        width = len(pos) // vert_count
+        if width not in (3, 4) or len(pos) != vert_count * width:
+            raise ValueError(f"{mesh_name}: invalid position channel width")
+        verts = [tuple(float(pos[i * width + axis]) for axis in range(3)) for i in range(vert_count)]
 
         faces, face_group_ids, group_names = _build_faces_and_material_map(m, mesh_name=mesh_name)
 
@@ -721,12 +753,31 @@ def import_meshes(
         me.update(calc_edges=True)
 
         # UVs
-        uv0 = v.get("texcoord0", None)
-        if isinstance(uv0, list):
-            _make_uv_layer(me, "UV0", uv0, flip_v=flip_uv_v)
-        uv1 = v.get("texcoord1", None)
-        if isinstance(uv1, list):
-            _make_uv_layer(me, "UV1", uv1, flip_v=flip_uv_v)
+        for channel, values in v.items():
+            if channel.startswith("texcoord") and channel[8:].isdigit() and values:
+                _make_uv_layer(me, "UV" + channel[8:], values, flip_v=flip_uv_v)
+                # Material selectors and UV transforms consume authored lanes
+                # before Blender's image-coordinate V flip.
+                uv_width = len(values) // vert_count
+                attribute = me.attributes.new(name="gr2_" + channel, type="FLOAT_VECTOR", domain="POINT")
+                attribute.data.foreach_set("vector", [float(values[row * uv_width + lane]) if lane < uv_width else 0.0
+                    for row in range(vert_count) for lane in range(3)])
+            if channel.startswith("color") and channel[5:].isdigit() and values:
+                color_width = len(values) // vert_count
+                if color_width not in (3, 4) or len(values) != vert_count * color_width:
+                    raise ValueError(f"{mesh_name}: invalid {channel} channel")
+                attribute = me.color_attributes.new(name="Color" + channel[5:], type="FLOAT_COLOR", domain="POINT")
+                attribute.data.foreach_set("color", [
+                    float(values[row * color_width + axis]) if axis < color_width else 1.0
+                    for row in range(vert_count) for axis in range(4)])
+            # Preserve additional traffic/animation lanes as point attributes;
+            # Blender position/UV storage itself only holds xyz/uv.
+            if channel == "position" or channel.startswith("texcoord"):
+                channel_width = len(values) // vert_count if values else 0
+                start = 3 if channel == "position" else 2
+                for axis in range(start, channel_width):
+                    attribute = me.attributes.new(name=f"gr2_{channel}_{'xyzw'[axis]}", type="FLOAT", domain="POINT")
+                    attribute.data.foreach_set("value", [float(values[row * channel_width + axis]) for row in range(vert_count)])
 
         # Materials / mesh areas
         group_to_slot: Dict[int, int] = {}
@@ -752,9 +803,15 @@ def import_meshes(
             tangent = v.get("tangent")
             if isinstance(tangent, list):
                 normals_applied = _apply_custom_normals_from_packed_tangents(me, tangent, vert_count)
-        _store_vector_attribute(me, "gr2_normal", v.get("normal"), vert_count)
-        _store_vector_attribute(me, "gr2_tangent", v.get("tangent"), vert_count)
-        _store_vector_attribute(me, "gr2_binormal", v.get("binormal"), vert_count)
+        for channel, values in v.items():
+            if re.fullmatch(r"(?:normal|tangent|binormal)(?:[1-9][0-9]*)?", channel):
+                _store_vector_attribute(me, "gr2_" + channel, values, vert_count)
+        if isinstance(normals, list) and len(normals) == vert_count * 3:
+            # Frontier depth triplanar VS normalizes before interpolation.
+            # Normalizing in the material would instead normalize per pixel.
+            unit_normals = [component for row in range(vert_count)
+                            for component in Vector(normals[row * 3:row * 3 + 3]).normalized()]
+            _store_vector_attribute(me, "gr2_triplanar_normal", unit_normals, vert_count)
         _add_morph_targets(obj, m, pos)
         _apply_import_transform(obj, scale=scale, rot_x_deg=rot_x_deg)
         _apply_smoothing_groups(
@@ -922,6 +979,9 @@ def import_armature(
     # wrong bone, and the wrong bone is only obvious once the hull animates
     # and the attachment leaves with it.
     arm_obj["carbon_bone_order"] = order
+    inverse_bind = [bone.get("inverseWorldTransform") for bone in bones]
+    if all(isinstance(matrix, list) and len(matrix) == 16 for matrix in inverse_bind):
+        arm_obj["carbon_inverse_bind"] = [float(value) for matrix in inverse_bind for value in matrix]
 
     bpy.context.view_layer.objects.active = arm_obj
     arm_obj.select_set(True)
@@ -1042,9 +1102,9 @@ def apply_skinning(mesh_obj: bpy.types.Object, mesh_entry: Dict[str, Any], arm_o
         return
 
     pos = v.get("position", [])
-    if not isinstance(pos, list) or (len(pos) % 3) != 0:
+    vert_count = len(mesh_obj.data.vertices)
+    if not isinstance(pos, list) or len(pos) not in (vert_count * 3, vert_count * 4):
         return
-    vert_count = len(pos) // 3
     if vert_count <= 0:
         return
 
@@ -1075,11 +1135,17 @@ def apply_skinning(mesh_obj: bpy.types.Object, mesh_entry: Dict[str, Any], arm_o
         return vg
 
     arm_bones = arm_obj.data.bones
+    order = list(arm_obj.get("carbon_bone_order", [])) if hasattr(arm_obj, "get") else list(arm_bones)
+    by_name = {name: index for index, name in enumerate(order)}
+    rigid = mesh_obj.data.attributes.get("carbon_rigid_bone") or mesh_obj.data.attributes.new(
+        name="carbon_rigid_bone", type="INT", domain="POINT")
+    rigid.data.foreach_set("value", [by_name.get(_get_binding_bone_name(mesh_entry,
+        _as_int_index(blend_i[index * 4])), -1) for index in range(vert_count)])
 
     for vi in range(vert_count):
         idx_base = vi * 4
         weights = _parse_weights4(blend_w[idx_base:idx_base+4]) if has_weights else [1.0, 0.0, 0.0, 0.0]
-
+        combined = {}
         for j in range(4):
             w = float(weights[j])
             if w <= 0.0:
@@ -1092,8 +1158,11 @@ def apply_skinning(mesh_obj: bpy.types.Object, mesh_entry: Dict[str, Any], arm_o
             if bone_name not in arm_bones:
                 continue
 
-            vg = get_vg(bone_name)
-            vg.add([vi], w, "REPLACE")
+            combined[bone_name] = combined.get(bone_name, 0.0) + w
+        for bone_name, weight in combined.items():
+            # Repeated palette entries contribute to the same bone. Replace
+            # once after summing so applying the bindings twice is idempotent.
+            get_vg(bone_name).add([vi], weight, "REPLACE")
 
 
 # =============================================================================
@@ -1429,22 +1498,19 @@ def _lerp_list(a: List[float], b: List[float], f: float) -> List[float]:
 def _find_segment(times: List[float], t: float) -> Tuple[int, float]:
     if not times:
         return (0, 0.0)
-    if t <= times[0]:
+    if t < times[0]:
         return (0, 0.0)
     last = len(times) - 1
     if t >= times[last]:
         return (last, 0.0)
 
-    for i in range(last):
-        t0 = times[i]
-        t1 = times[i + 1]
-        if t0 <= t <= t1:
-            denom = (t1 - t0)
-            f = (t - t0) / denom if denom > 0.0 else 0.0
-            return (i, max(0.0, min(1.0, f)))
-    return (last, 0.0)
+    # Carbon CMF FindKnotInterval selects the new key at an exact boundary,
+    # and the last key among duplicate times.
+    i = max(0, bisect_right(times, t) - 1)
+    denom = times[i + 1] - times[i]
+    return (i, (t - times[i]) / denom if denom > 0 else 0.0)
 
-def _eval_vec_curve(times: List[float], vals: List[List[float]], t: float, default: List[float]) -> List[float]:
+def _eval_vec_curve(times: List[float], vals: List[List[float]], t: float, default: List[float], degree=1) -> List[float]:
     if not times or not vals:
         return default
     if len(times) == 1 or len(vals) == 1:
@@ -1452,6 +1518,8 @@ def _eval_vec_curve(times: List[float], vals: List[List[float]], t: float, defau
         return [float(v[i]) for i in range(len(default))]
 
     i0, f = _find_segment(times, t)
+    if degree == 0:
+        return [float(v) for v in vals[i0][:len(default)]]
     if i0 >= len(vals) - 1:
         v = vals[-1]
         return [float(v[i]) for i in range(len(default))]
@@ -1461,7 +1529,7 @@ def _eval_vec_curve(times: List[float], vals: List[List[float]], t: float, defau
     b2 = [float(b[i]) for i in range(len(default))]
     return _lerp_list(a2, b2, f)
 
-def _eval_quat_curve_xyzw(times: List[float], vals_xyzw: List[List[float]], t: float, default_xyzw: List[float]) -> List[float]:
+def _eval_quat_curve_xyzw(times: List[float], vals_xyzw: List[List[float]], t: float, default_xyzw: List[float], degree=1) -> List[float]:
     if not times or not vals_xyzw:
         return default_xyzw
     if len(times) == 1 or len(vals_xyzw) == 1:
@@ -1469,6 +1537,9 @@ def _eval_quat_curve_xyzw(times: List[float], vals_xyzw: List[List[float]], t: f
         return [q.x, q.y, q.z, q.w]
 
     i0, f = _find_segment(times, t)
+    if degree == 0:
+        q = _quat_xyzw_to_mathutils(vals_xyzw[i0]).normalized()
+        return [q.x, q.y, q.z, q.w]
     if i0 >= len(vals_xyzw) - 1:
         q = _quat_xyzw_to_mathutils(vals_xyzw[-1]).normalized()
         return [q.x, q.y, q.z, q.w]
@@ -1494,6 +1565,17 @@ def _choose_action_end_frame(length_mode: str, dur_end: float, key_end: float) -
         return min(candidates) if candidates else 0.0
     return max(dur_end, key_end)
 
+
+def _action_fcurves(action):
+    """Legacy actions and Blender 4.4+ slotted actions."""
+    if hasattr(action, "fcurves"):
+        yield from action.fcurves
+    else:
+        for layer in action.layers:
+            for strip in layer.strips:
+                for bag in strip.channelbags:
+                    yield from bag.fcurves
+
 def import_animations(
     gr2: Dict[str, Any],
     arm_obj: bpy.types.Object,
@@ -1507,6 +1589,9 @@ def import_animations(
 ) -> List[bpy.types.Action]:
     actions: List[bpy.types.Action] = []
     anims = gr2.get("animations", [])
+    if "cmfVersion" in gr2:
+        from carbon_cmf import build_gr2_animations
+        anims = build_gr2_animations(gr2)
     if not isinstance(anims, list) or not anims:
         return actions
     if arm_obj is None or arm_obj.type != "ARMATURE":
@@ -1539,12 +1624,15 @@ def import_animations(
         fps = _effective_fps(scene)
 
         action = bpy.data.actions.new(name=full_action_name)
+        action["carbon_animation_target"] = "ARMATURE"
+        action["carbon_animation_clip"] = anim_name_raw
         actions.append(action)
         arm_obj.animation_data.action = action
 
         max_frame_keys = 0.0
 
         bone_tracks: Dict[str, Dict[str, Any]] = {}
+        interpolation_by_path = {}
         track_groups = anim.get("trackGroups", [])
         if isinstance(track_groups, list):
             for tg in track_groups:
@@ -1584,6 +1672,7 @@ def import_animations(
             rot_vals: List[List[float]] = []
             ss_times: List[float] = []
             ss_vals: List[List[float]] = []
+            pc, oc, sc = {}, {}, {}
 
             if isinstance(tr, dict):
                 pc = tr.get("position", {})
@@ -1623,6 +1712,12 @@ def import_animations(
                     s.add(float(t))
                 sample_times = sorted(s) if s else [0.0]
 
+            # A fixed-rate bake can miss a discontinuity between frames.
+            # Retain every authored Step boundary, including subframe keys.
+            sample_times = sorted(set(sample_times).union(
+                *(times for curve, times in ((pc, pos_times), (oc, rot_times), (sc, ss_times))
+                  if curve.get("degree", 1) == 0)))
+
             if clamp_keys_to_duration and duration > 0.0:
                 d = float(duration)
                 sample_times = [t for t in sample_times if t <= d + 1e-8]
@@ -1635,17 +1730,25 @@ def import_animations(
                 sample_times = sample_times[:max_keys_per_bone]
 
             pb.rotation_mode = "QUATERNION"
+            for path, curve in (("location", pc), ("rotation_quaternion", oc), ("scale", sc)):
+                interpolation_by_path[pb.path_from_id(path)] = "CONSTANT" if curve.get("degree", 1) == 0 else "LINEAR"
 
+            previous_rotation = None
             for t in sample_times:
-                pos3 = _eval_vec_curve(pos_times, pos_vals, t, def_pos3)
-                rot4 = _eval_quat_curve_xyzw(rot_times, rot_vals, t, def_rot4)
-                ss9  = _eval_vec_curve(ss_times,  ss_vals,  t, def_ss9)
+                pos3 = _eval_vec_curve(pos_times, pos_vals, t, def_pos3, pc.get("degree", 1))
+                rot4 = _eval_quat_curve_xyzw(rot_times, rot_vals, t, def_rot4, oc.get("degree", 1))
+                ss9  = _eval_vec_curve(ss_times, ss_vals, t, def_ss9, sc.get("degree", 1))
 
                 anim_local = _mat_from_anim_components(pos3, rot4, ss9)
                 delta = restMinv @ anim_local
 
                 loc = delta.to_translation()
                 rot = delta.to_quaternion()
+                # Decomposition can choose the opposite quaternion sign even
+                # after the source controls were made continuous (e.g. 180°).
+                if previous_rotation is not None and previous_rotation.dot(rot) < 0:
+                    rot.negate()
+                previous_rotation = rot.copy()
                 scl = delta.to_scale()
 
                 frame = _time_to_frame(t, fps)
@@ -1659,6 +1762,14 @@ def import_animations(
                 pb.keyframe_insert(data_path="location", frame=frame, group=bn)
                 pb.keyframe_insert(data_path="rotation_quaternion", frame=frame, group=bn)
                 pb.keyframe_insert(data_path="scale", frame=frame, group=bn)
+
+        # Component-linear baked quaternion keys match the sampled poses;
+        # they are not exact donor SLERP between those samples. Arbitrary
+        # animated shear also cannot be represented by Blender pose TRS.
+        for fcurve in _action_fcurves(action):
+            interpolation = interpolation_by_path.get(fcurve.data_path, "LINEAR")
+            for point in fcurve.keyframe_points:
+                point.interpolation = interpolation
 
         dur_end = _time_to_frame(duration, fps) if duration > 0.0 else 0.0
         end = _choose_action_end_frame(action_length_mode, dur_end=dur_end, key_end=max_frame_keys)
@@ -1683,6 +1794,88 @@ def import_animations(
 # =============================================================================
 # High-level import
 # =============================================================================
+
+
+def import_morph_animations(graph, mesh_pairs, instance_name, *, clamp_keys_to_duration=True,
+                            action_length_mode="DURATION", action_end_padding_frames=0):
+    """Import scalar vector tracks onto their matching mesh Key datablocks.
+
+    Native CMF channel targets stay exact, as in Carbon's scene morph binding;
+    the separate glTF export convention that strips 'Shape' is not used here.
+    """
+    is_cmf = "cmfVersion" in graph
+    if is_cmf:
+        from carbon_cmf import build_gr2_animations
+        animations = build_gr2_animations(graph)
+    else:
+        animations = graph.get("animations", [])
+    actions = []
+    for obj, _ in mesh_pairs:
+        keys = obj.data.shape_keys
+        if keys is None:
+            continue
+        names = dict(keys.get("carbon_morph_names", {}))
+        first_action = None
+        for animation in animations:
+            # Granny scene morph tracks use the first 'root' group. Native
+            # CMF has no track groups; its adapter appends a dedicated vector
+            # group, which may share a name with a bone-only skeleton group.
+            group = next((g for g in animation.get("trackGroups", [])
+                          if g.get("name") == "root" and (not is_cmf or g.get("vectorTracks"))), {})
+            tracks = {track.get("name"): track for track in group.get("vectorTracks", [])
+                      if track.get("dimension", 1) == 1}
+            matching = {name: tracks[name] for name in names if name in tracks}
+            if not matching:
+                continue
+            timestep = float(animation.get("timeStep", 0) or 1/30)
+            _set_scene_fps_from_time_step(timestep)
+            fps = _effective_fps(bpy.context.scene)
+            duration = float(animation.get("duration", 0) or 0)
+            action = bpy.data.actions.new(_unique_action_name(f"{instance_name}.{obj.name}.{animation.get('name') or 'Action'}"))
+            action["carbon_animation_target"] = "SHAPE_KEYS"
+            action["carbon_animation_clip"] = animation.get("name", "")
+            action["carbon_animation_owner"] = keys
+            action.use_fake_user = True
+            keys.animation_data_create()
+            keys.animation_data.action = action
+            actions.append(action)
+            first_action = first_action or action
+            maximum = 0
+            interpolation = {}
+            for source_name, key_name in names.items():
+                key = keys.key_blocks.get(key_name)
+                if key is None:
+                    continue
+                curve = matching.get(source_name, {}).get("valueCurve", {})
+                times, values = decode_curve(curve, 1, timestep)
+                times_to_write = sorted(set(times)) or [0.0]
+                if clamp_keys_to_duration and duration > 0:
+                    times_to_write = sorted({t for t in times_to_write if t <= duration} | {0.0, duration})
+                degree = curve.get("degree", 1)
+                samples = [(t, _eval_vec_curve(times, values, t, [0], degree)[0]) for t in times_to_write]
+                # Blender's evaluated Key.value is bounded by its slider range,
+                # whose hard limits are +/-10. Do not silently clamp a curve.
+                if any(abs(value) > 10 for _, value in samples):
+                    raise ValueError(f"Morph {source_name!r} exceeds Blender's supported weight range [-10, 10]")
+                key.slider_min, key.slider_max = -10, 10
+                for time, value in samples:
+                    frame = _time_to_frame(time, fps)
+                    key.value = value
+                    key.keyframe_insert(data_path="value", frame=frame, group=source_name)
+                    maximum = max(maximum, frame)
+                interpolation[key.path_from_id("value")] = "CONSTANT" if degree == 0 else "LINEAR"
+            for fcurve in _action_fcurves(action):
+                for point in fcurve.keyframe_points:
+                    point.interpolation = interpolation[fcurve.data_path]
+            end = _choose_action_end_frame(action_length_mode, _time_to_frame(duration, fps), maximum)
+            if clamp_keys_to_duration and duration > 0:
+                end = min(end, _time_to_frame(duration, fps))
+            action.frame_start = 0
+            action.frame_end = max(1, end + action_end_padding_frames)
+            bpy.context.scene.frame_end = max(bpy.context.scene.frame_end, math.ceil(action.frame_end))
+        if first_action is not None:
+            keys.animation_data.action = first_action
+    return actions
 
 def import_gr2_json(
     gr2: Dict[str, Any],
@@ -1740,12 +1933,17 @@ def import_gr2_json(
             action_end_padding_frames=action_end_padding_frames,
         )
 
+    morph_actions = import_morph_animations(gr2, mesh_pairs, instance_name,
+        clamp_keys_to_duration=clamp_keys_to_duration, action_length_mode=action_length_mode,
+        action_end_padding_frames=action_end_padding_frames) if import_anims_flag else []
+
     return {
         "instance_name": instance_name,
         "collection": col,
         "meshes": [o for (o, _) in mesh_pairs],
         "armature": arm_obj,
         "actions": actions,
+        "morph_actions": morph_actions,
     }
 
 
@@ -2036,9 +2234,7 @@ class IMPORT_SCENE_OT_carbon_cmf(Operator, ImportHelper):
             graph,
             base_name,
             apply_skinning_flag=bool(prefs.apply_skinning_default),
-            # CMF curves are read in full, but their typed channels do not yet
-            # map to the Granny transform-track shape consumed below.
-            import_anims_flag=False,
+            import_anims_flag=bool(prefs.import_anims_default),
             scale=float(prefs.import_scale),
             rot_x_deg=float(prefs.import_rot_x_deg),
             flip_uv_v=bool(prefs.flip_uv_v_default),
@@ -2055,8 +2251,6 @@ class IMPORT_SCENE_OT_carbon_cmf(Operator, ImportHelper):
             collection_prefix="CMF",
         )
         warnings = []
-        if document.get("animations"):
-            warnings.append("animation action import is pending")
         if len(document.get("skeletons", [])) > 1:
             warnings.append("only the selected or first skeleton was imported")
         if warnings:

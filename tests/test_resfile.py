@@ -90,6 +90,8 @@ class DerivedBesideSourceTests(unittest.TestCase):
         decoded.write_bytes(b"png")
         stale = source.parent / ("0" * 16 + "_" + "0" * 32 + ".dds")
         stale.write_bytes(b"old")
+        (root / "indexes" / "resfileindex-200.txt").write_text(
+            f"res:/old.dds,{source.parent.name}/{stale.stem},x,1,1\n", encoding="utf-8")
 
         cache_prune.prune(root, apply=True)
 

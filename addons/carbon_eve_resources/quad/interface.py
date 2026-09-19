@@ -7,11 +7,10 @@ which constants it declares, and what Carbon's own default value for each one
 is.
 
 `family.json` is generated from the runtime's effect-interface data, not
-authored by hand. The tier and permutation are not incidental: the production
-body is ``.sm_depth`` with ``SOPPT_ENABLED``, and the default body of
-``.sm_hi`` silently omits dirt, dust, patterns, local lights and the
-spherical-harmonic term while remaining a complete, valid, warning-free
-shader.
+authored by hand. Blender targets ``.sm_depth`` ONLY. Lower tiers can omit
+material features while remaining valid shaders. EVE's measured family uses
+``SOPPT_ENABLED``; Frontier explicitly uses ``SOPPT_DISABLED`` where present.
+``scripts/frontier-interface.mjs`` reproduces the Frontier interface metadata.
 
 This module has no ``bpy`` dependency so it can be tested with the standard
 library alone.
@@ -19,7 +18,7 @@ library alone.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
@@ -171,6 +170,21 @@ class Member:
     scene_textures: tuple[str, ...]
     constants: Mapping[str, Constant]
     annotations: Mapping[str, Annotation]
+    target: str = "eve"
+    effect_path: str = ""
+    selected_options: Mapping[str, str] = field(default_factory=dict)
+    digest: str = ""
+    tier: str = ""
+    aliases: Mapping = field(default_factory=dict)
+
+    @property
+    def identity(self):
+        if self.target == "eve":
+            return self.name
+        options = ",".join(f"{k}={v}" for k, v in sorted(self.selected_options.items()))
+        import hashlib
+        key = hashlib.sha256(f"{self.effect_path}|{self.digest}|{options}".encode()).hexdigest()[:12]
+        return f"{self.target} {self.name} {key}"
 
     def constant(self, name: str) -> Optional[Constant]:
         return self.constants.get(name)
@@ -223,8 +237,9 @@ class Family:
     tier: str
     permutation: Mapping[str, str]
     members: Mapping[str, Member]
+    target: str = "eve"
 
-    def member(self, shader: str) -> Optional[Member]:
+    def member(self, shader: str, options=None) -> Optional[Member]:
         """Looks a member up by effect file name, for example ``quadv5.fx``.
 
         Accepts the authored spellings a SOF document uses: a bare name, an
@@ -233,7 +248,26 @@ class Family:
         resource set.
         """
 
-        return self.members.get(normalize_shader_name(shader))
+        if self.target == "eve":
+            return self.members.get(normalize_shader_name(shader))
+        path = str(shader).lower()
+        if isinstance(options, Mapping):
+            wanted = dict(options)
+        else:
+            wanted = {o["name"]: o["value"] for o in (options or [])}
+        # Frontier has no SOPPT path. Refuse an explicit request for one.
+        if wanted.get("SPACE_OBJECT_PPT_ENABLED", "SOPPT_DISABLED") != "SOPPT_DISABLED":
+            return None
+        for member in self.members.values():
+            if path != member.effect_path.lower() and path not in member.aliases:
+                continue
+            selected = dict(member.selected_options)
+            desired = {**selected, "SPACE_OBJECT_TRANSPARENCY": "SOT_OPAQUE", **wanted}
+            # SOF can attach options absent from this effect's axes (sails
+            # carries SOT_TRANSPARENT, for example). Carbon ignores those.
+            if all(desired.get(k) == v for k, v in selected.items()):
+                return member
+        return None
 
     def common_textures(self) -> tuple[str, ...]:
         """Textures every member binds, in the order the base member binds them."""
@@ -289,10 +323,11 @@ def normalize_shader_name(shader: str) -> str:
     return name
 
 
-def load_family(path: Optional[Path] = None) -> Family:
+def load_family(path: Optional[Path] = None, *, target="eve") -> Family:
     """Reads the generated interface data."""
 
-    source = Path(path) if path else Path(__file__).with_name(DATA_NAME)
+    source = Path(path) if path else Path(__file__).with_name(
+        "frontier-family.json" if target == "frontier" else DATA_NAME)
     try:
         raw = json.loads(source.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -319,30 +354,46 @@ def load_family(path: Optional[Path] = None) -> Family:
         tier=str(raw.get("tier", "")),
         permutation=dict(raw.get("permutation") or {}),
         members=members,
+        target=str(raw.get("target", "eve")),
     )
 
 
 def _member(name: str, entry: Mapping) -> Member:
+    # Authored surface controls may be consumed in the vertex stage (the
+    # asteroid's triplanar tiling and secondary material indices are examples).
+    # Keep stage layouts in the manifest; expose their named values together.
+    vertex_constants = ((entry.get("stages") or {}).get("vertex") or {}).get("constants") or {}
+    pixel_constants = entry.get("constants") or {}
+    for constant_name in vertex_constants.keys() & pixel_constants.keys():
+        if vertex_constants[constant_name]["default"] != pixel_constants[constant_name]["default"]:
+            raise ValueError(f"{name}: stage-dependent default for {constant_name}")
+    authored_constants = {**vertex_constants, **pixel_constants}
     constants = {
         constant_name: Constant(
             name=constant_name,
             vec4=int(value["vec4"]),
             default=tuple(float(number) for number in value["default"]),
         )
-        for constant_name, value in (entry.get("constants") or {}).items()
+        for constant_name, value in authored_constants.items()
     }
     annotations = {
         parameter: Annotation(parameter=parameter, values=dict(values or {}))
         for parameter, values in (entry.get("annotations") or {}).items()
     }
     return Member(
-        name=name,
+        name=str(entry.get("name", name)),
         permutation_index=int(entry.get("permutationIndex", 0)),
         constant_buffer_bytes=int(entry.get("constantBufferBytes", 0)),
         textures=tuple(_strings(entry.get("textures"))),
         scene_textures=tuple(_strings(entry.get("sceneTextures"))),
         constants=constants,
         annotations=annotations,
+        target=str(entry.get("target", "eve")),
+        effect_path=str(entry.get("effectPath", "")),
+        selected_options=dict(entry.get("selectedOptions") or {}),
+        digest=str(entry.get("sha256", "")),
+        tier=str(entry.get("tier", "")),
+        aliases=dict(entry.get("aliases") or {}),
     )
 
 

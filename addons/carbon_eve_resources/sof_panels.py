@@ -29,6 +29,9 @@ MATERIAL_SOCKETS = {
     "diffuse": "Mtl{}DiffuseColor",
     "gloss": "Mtl{}Gloss",
     "fresnel": "Mtl{}FresnelColor",
+    "base_color": "Mtl{}BaseColor",
+    "roughness": "Mtl{}GeneralData.x",
+    "metallic": "Mtl{}GeneralData.y",
 }
 PATTERN_SOCKETS = {
     "diffuse": "PMtl{}DiffuseColor",
@@ -158,6 +161,9 @@ def _material_update(self, context):
         "diffuse": tuple(self.diffuse),
         "fresnel": tuple(self.fresnel),
         "gloss": self.gloss,
+        "base_color": tuple(self.base_color),
+        "roughness": self.roughness,
+        "metallic": self.metallic,
     })
 
 
@@ -247,6 +253,39 @@ MAX_ATTEMPTS = 5
 _ATTEMPTS = {}
 
 
+def _catalog_settings(context=None):
+    from .sidebar import _ship_of
+    obj = _ship_of(context or bpy.context)
+    return obj.carbon_sof if obj is not None else None
+
+
+def _catalog_source(context=None):
+    from . import service_access
+    return service_access.source(context, _catalog_settings(context))
+
+
+_CATALOG_IDENTITY = None
+
+
+def _check_catalog_identity(context=None):
+    # Called from draw/search: identity checks must never perform network I/O.
+    global _CATALOG_IDENTITY
+    context = context or bpy.context
+    settings = _catalog_settings(context)
+    state = getattr(context.window_manager, "carbon_eve_resources", None)
+    identity = ((settings.source_target, settings.resource_build, settings.sde_build)
+                if settings is not None and settings.source_target
+                else (getattr(state, "source", "eve"), "latest", "latest"))
+    if identity != _CATALOG_IDENTITY:
+        _CATALOG_IDENTITY = identity
+        _NAMES.clear()
+        # CollectionProperty writes during draw can crash Blender. Defer
+        # invalidation exactly like catalog population itself.
+        bpy.app.timers.register(forget_catalogs, first_interval=0.0)
+        return False
+    return True
+
+
 def _populate(kind):
     """Fills one catalog list. Runs from a TIMER, never from a draw.
 
@@ -268,11 +307,11 @@ def _populate(kind):
         if kind == "ships":
             from .core import sof_lookup
 
-            names = [name for name, entries in sof_lookup.names(client).items()
+            names = [name for name, entries in sof_lookup.names(client, **_catalog_source().sde()).items()
                      if any(entry.get("graphicID") or entry.get("kind") == "skin"
                             for entry in entries)]
         else:
-            names = sof_materials.catalog(client, kind=kind)
+            names = sof_materials.catalog(client, kind=kind, **_catalog_source().resources())
         for name in sorted(names):
             items.add().name = name
     except Exception as exc:
@@ -293,6 +332,8 @@ def catalog_items(kind="materials", context=None):
     The list appears on the next redraw.
     """
 
+    if not _check_catalog_identity(context):
+        return 0
     window = (context or bpy.context).window_manager
     items = getattr(window, f"carbon_sof_{kind}", None)
     if items is None:
@@ -324,11 +365,11 @@ def _fill_names(kind):
     try:
         client = service_access.client()
         if kind == "ships":
-            found = [name for name, entries in sof_lookup.names(client).items()
+            found = [name for name, entries in sof_lookup.names(client, **_catalog_source().sde()).items()
                      if any(entry.get("graphicID") or entry.get("kind") == "skin"
                             for entry in entries)]
         else:
-            found = list(sof_materials.catalog(client, kind=kind))
+            found = list(sof_materials.catalog(client, kind=kind, **_catalog_source().resources()))
         _NAMES[kind] = sorted(found)
     except Exception as exc:
         print(f"[CarbonEngineJS SOF] {kind} names unavailable: {exc}")
@@ -342,6 +383,8 @@ def names_for(kind):
     """The cached names of one kind, fetching them in the background if new."""
 
     def names(context=None):
+        if not _check_catalog_identity(context):
+            return ()
         found = _NAMES.get(kind)
         if found is not None:
             return found
@@ -448,17 +491,35 @@ def _material_named(self, context):
     from .core import sof_materials
 
     obj = getattr(self, "id_data", None)
+    self.error = ""
     _lowercase(self, "material")
     chosen = str(self.material or "")
     if not isinstance(obj, bpy.types.Object) or not chosen or chosen == CUSTOM_MATERIAL:
         return
+    previous = bound_group_for(obj, self)
+
+    def reject(message):
+        with applying():
+            self.material = previous.get("carbon_sof_material", "") if previous else ""
+            self.error = message
+        print(f"[CarbonEngineJS SOF] {message}")
+
     values = sof_materials.material_values(
-        sof_materials.material(chosen, service_access.client(context)))
+        sof_materials.material(chosen, service_access.client(context),
+            **service_access.source(context, obj.carbon_sof).resources()))
     if not values:
         # Said plainly rather than leaving the old colours under a new name,
         # which would be a slot lying about what it holds.
-        print(f"[CarbonEngineJS SOF] {chosen}: no parameters were fetched; "
-              "the colours below still belong to the previous material")
+        reject(f"{chosen}: no material parameters were fetched")
+        return
+
+    pbr = "base_color" in values
+    destinations = [material for material in slot_materials(obj, self)
+                    if any(sof_material_nodes.slot_sockets(material, self.index,
+                           pbr=kind, is_pattern=self.is_pattern) for kind in (False, True))]
+    if not destinations or not all(sof_material_nodes.slot_sockets(material, self.index,
+                                   pbr=pbr, is_pattern=self.is_pattern) for material in destinations):
+        reject(f"{chosen}: material type does not match this slot")
         return
 
     # REBIND to the chosen material. Writing the new values into the group the
@@ -466,11 +527,14 @@ def _material_named(self, context):
     # naming the sails' slot 1 differently changed the hull, because both read
     # `black_deadstar_coated` -- and would leave that group holding one
     # material's values under another material's name.
-    tree = sof_material_nodes.material_group(chosen, values)
-    for material in slot_materials(obj, self):
+    selected = service_access.source(context, obj.carbon_sof)
+    tree = sof_material_nodes.material_group(chosen, values,
+        source=f"{selected.target}:{selected.resource_build}")
+    for material in destinations:
         sof_material_nodes.bind_slot(material, self.index, tree,
                                      is_pattern=self.is_pattern)
     with applying():
+        self.pbr = pbr
         for field, value in values.items():
             setattr(self, field, value)
 
@@ -488,6 +552,7 @@ class CARBON_SOF_Material(PropertyGroup):
     """
 
     index: IntProperty(default=1, min=1, max=4)
+    error: StringProperty(default="", options={"SKIP_SAVE"})
     is_pattern: BoolProperty(default=False)
     #: A string, not an enum: a dynamic EnumProperty stores the chosen INDEX,
     #: which is meaningless once the catalog changes.
@@ -518,6 +583,11 @@ class CARBON_SOF_Material(PropertyGroup):
         description="F0, the reflectance looking straight on")
     gloss: FloatProperty(
         name="Gloss", default=0.5, min=0.0, max=1.0, update=_colour_edited)
+    pbr: BoolProperty(default=False)
+    base_color: FloatVectorProperty(name="Base Color", subtype="COLOR", size=3,
+        default=(1, 1, 1), update=_colour_edited)
+    roughness: FloatProperty(name="Roughness", default=.5, min=0, max=1, update=_colour_edited)
+    metallic: FloatProperty(name="Metallic", default=0, min=0, max=1, update=_colour_edited)
 
 
 #: The name fields a DNA is made of. A DNA is case-INSENSITIVE and written in
@@ -581,13 +651,14 @@ def _identity_typed(self, context):
 
     client = service_access.client(context)
     type_id, skin_id = int(self.type_id or 0), int(self.skin_id or 0)
+    source = service_access.source(context, self)
 
     name = str(self.ship_name or "").strip()
     if name and self.get("_carbon_last_name", "") != name:
         # A name can mean a type and a skin at once. A skin carries its own
         # type, so it answers both questions and is preferred.
-        skins = sof_lookup.find(name, client, kind="skin")
-        types = sof_lookup.find(name, client, kind="type")
+        skins = sof_lookup.find(name, client, kind="skin", **source.sde())
+        types = sof_lookup.find(name, client, kind="type", **source.sde())
         if skins:
             skin_id = int(skins[0].get("skinID") or 0)
             type_id = int(skins[0].get("typeID") or 0)
@@ -598,10 +669,10 @@ def _identity_typed(self, context):
     # A skin belongs to specific types, so one that does not fit the type in
     # hand is dropped rather than carried: changing the type otherwise left a
     # Rifter wearing an Abaddon's materials.
-    if skin_id and not sof_lookup.skin_applies(skin_id, type_id, client):
+    if skin_id and not sof_lookup.skin_applies(skin_id, type_id, client, **source.sde()):
         skin_id = 0
 
-    dna = sof_lookup.dna_for(type_id, skin_id, client)
+    dna = sof_lookup.dna_for(type_id, skin_id, client, **source.sde())
     if not dna:
         return
 
@@ -635,6 +706,10 @@ class CARBON_SOF_Settings(PropertyGroup):
     back out of the scene.
     """
 
+    source_target: StringProperty(default="")
+    source_provider: StringProperty(default="ccp")
+    resource_build: StringProperty(default="latest")
+    sde_build: StringProperty(default="latest")
     hull: StringProperty(
         name="Hull", default="", update=_component_update,
         description="The SOF hull, for example mde3_t3")
@@ -733,12 +808,14 @@ class CARBON_SOF_Settings(PropertyGroup):
             return ""
 
         commands = {}
-        if self.use_mesh:
+        from .service_access import source_target
+        frontier = source_target(settings=self) == "frontier"
+        if self.use_mesh and not frontier:
             args = [str(getattr(self, f"mesh_material{index}") or NONE_MATERIAL)
                     for index in (1, 2, 3, 4)]
             if any(value != NONE_MATERIAL for value in args):
                 commands["material"] = args
-        if self.use_pattern and self.pattern:
+        if self.use_pattern and self.pattern and not frontier:
             commands["pattern"] = [
                 self.pattern,
                 str(self.pattern_material5 or NONE_MATERIAL),
@@ -746,7 +823,7 @@ class CARBON_SOF_Settings(PropertyGroup):
             ]
         if self.use_respath and self.respath_insert:
             commands["respathinsert"] = [self.respath_insert]
-        if self.use_layout and self.layout_names:
+        if self.use_layout and self.layout_names and not frontier:
             # Several layouts are legal -- GetLayoutData takes a list -- so the
             # separator is the DNA's own `;` rather than a second field.
             names = [name.strip() for name in str(self.layout_names).split(";")]
@@ -820,14 +897,16 @@ class CARBON_SOF_Settings(PropertyGroup):
             if not name or name == CUSTOM_MATERIAL:
                 continue
             values = sof_materials.material_values(
-                sof_materials.material(name, client))
+                sof_materials.material(name, client, **service_access.source(settings=self).resources()))
             if not values:
                 # Named but unfetchable. Binding an empty group would paint the
                 # area black, which is worse than leaving it as it was built.
                 if name not in report["missing"]:
                     report["missing"].append(name)
                 continue
-            tree = sof_material_nodes.material_group(name, values)
+            selected = service_access.source(settings=self)
+            tree = sof_material_nodes.material_group(name, values,
+                source=f"{selected.target}:{selected.resource_build}")
             report["materials"] += 1
             for material in slot_materials(obj, entry):
                 if sof_material_nodes.bind_slot(material, entry.index, tree,
@@ -853,7 +932,8 @@ class CARBON_SOF_Settings(PropertyGroup):
         from . import service_access
         from .core import sof_materials
         names = sof_materials.faction_material_names(
-            sof_materials.faction(self.faction, service_access.client()))
+            sof_materials.faction(self.faction, service_access.client(),
+                **service_access.source(settings=self).resources()))
 
         # Per area, not per ship. Two areas can disagree about the same slot
         # number -- an area that blocks a slot keeps the faction's material
@@ -1047,7 +1127,9 @@ class CARBON_SOF_OT_rebuild(Operator):
             return {"CANCELLED"}
         state.dna = dna
         self.report({"INFO"}, f"Rebuilding {dna}")
-        return bpy.ops.carbon.eve_resource_build_sof_dna(refresh=True)
+        return bpy.ops.carbon.eve_resource_build_sof_dna(
+            refresh=True, dna=dna, source_target=settings.source_target,
+            resource_build=settings.resource_build, sde_build=settings.sde_build)
 
 
 class CARBON_SOF_OT_export_material(Operator):
@@ -1102,6 +1184,14 @@ class CARBON_SOF_OT_export_material(Operator):
                 "gloss": round(entry.gloss, 6),
             },
         }
+        document["from"]["source"] = settings.source_target or "eve"
+        document["from"]["resourceBuild"] = settings.resource_build
+        if entry.pbr:
+            document["values"] = {
+                "base_color": [round(v, 6) for v in entry.base_color],
+                "roughness": round(entry.roughness, 6),
+                "metallic": round(entry.metallic, 6),
+            }
 
         directory = os.path.dirname(bpy.data.filepath) or bpy.app.tempdir
         path = os.path.join(directory, document["name"] + ".sof-material.json")
@@ -1216,6 +1306,8 @@ def draw_slot(layout, settings, entry, *, compact=False):
     # material from a build we cannot reach still displays what it holds
     # instead of snapping to whatever happens to be first.
     draw_name_search(name, entry, "material", icon="MATERIAL")
+    if entry.error:
+        box.label(text=entry.error, icon="ERROR")
     if entry.material == CUSTOM_MATERIAL:
         header.operator("carbon.sof_export_material", text="", icon="EXPORT"
                         ).slot = f"{entry.index}:{int(entry.is_pattern)}:{entry.area_type}"

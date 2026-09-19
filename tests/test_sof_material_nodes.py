@@ -36,7 +36,7 @@ def _quad_material(name, sockets=("Mtl1DiffuseColor", "Mtl1FresnelColor", "Mtl1G
     tree = bpy.data.node_groups.new(f"{quad_nodes.GROUP_PREFIX} {name}",
                                     "ShaderNodeTree")
     for socket in sockets:
-        kind = "NodeSocketFloat" if socket.endswith("Gloss") else "NodeSocketColor"
+        kind = "NodeSocketFloat" if socket.endswith(("Gloss", ".x", ".y")) else "NodeSocketColor"
         tree.interface.new_socket(name=socket, in_out="INPUT", socket_type=kind)
     material = bpy.data.materials.new(name)
     material.use_nodes = True
@@ -127,6 +127,17 @@ class BindingTests(unittest.TestCase):
         nodes.bind_slot(self.hull, 1, nodes.material_group("orange_fire_colorshift", ORANGE))
         quad = nodes.quad_group_node(self.hull)
         self.assertEqual(len(quad.inputs["Mtl1DiffuseColor"].links), 1)
+
+    def test_incompatible_schema_does_not_change_existing_group_or_links(self):
+        pbr = nodes.material_group("pbr copper", {"base_color": (.6, .3, .1), "roughness": .4, "metallic": 1})
+        pbr_area = _quad_material("pbr area", ("Mtl1BaseColor", "Mtl1GeneralData.x", "Mtl1GeneralData.y"))
+        for area, original, rejected in ((self.hull, self.black, pbr), (pbr_area, pbr, self.black)):
+            self.assertEqual(nodes.bind_slot(area, 1, original), 3)
+            links = [(link.from_socket.as_pointer(), link.to_socket.as_pointer()) for link in area.node_tree.links]
+            self.assertEqual(nodes.bind_slot(area, 1, rejected), 0)
+            self.assertEqual(nodes.bound_group(area, 1), original)
+            self.assertEqual([(link.from_socket.as_pointer(), link.to_socket.as_pointer())
+                              for link in area.node_tree.links], links)
 
     def test_a_private_copy_leaves_the_original(self):
         nodes.bind_slot(self.hull, 1, self.black)

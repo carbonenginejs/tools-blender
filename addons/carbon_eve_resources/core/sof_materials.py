@@ -79,6 +79,12 @@ def material_values(material_record: Mapping[str, Any] | None) -> dict:
         if not numbers:
             continue
         values[field] = numbers[0] if field == "gloss" else tuple(numbers[:3])
+    base = parameters.get("BaseColor")
+    general = parameters.get("GeneralData")
+    if isinstance(base, (list, tuple)) and len(base) >= 3:
+        values["base_color"] = tuple(float(v) for v in base[:3])
+    if isinstance(general, (list, tuple)) and len(general) >= 2:
+        values["roughness"], values["metallic"] = float(general[0]), float(general[1])
     return values
 
 

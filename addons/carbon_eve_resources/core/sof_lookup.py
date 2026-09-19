@@ -117,7 +117,17 @@ def names(client=None, *, build: str = "latest", target: str = "eve") -> dict:
         except (OSError, ValueError):
             pass                       # a bad cache file is not worth keeping
 
-    found = _fetch(client, f"/{target}/{build}/skin/names", key)
+    if target == "frontier":
+        hulls = _fetch(client, f"/{target}/{build}/dna/hulls", (target, build, "hulls")) or {}
+        found = {}
+        for hull in hulls.get("hulls", []):
+            name = hull.get("name") or {}
+            if isinstance(name, Mapping):
+                name = name.get("en") or name.get("text") or next(iter(name.values()), "")
+            if name and hull.get("dna"):
+                found.setdefault(str(name).lower(), []).append(dict(hull, kind="type"))
+    else:
+        found = _fetch(client, f"/{target}/{build}/skin/names", key)
     if not isinstance(found, Mapping):
         return {}
     groups = ship_groups(client, build=build, target=target)
@@ -153,7 +163,8 @@ def _names_path(target: str, build: str, client=None):
     exact = str(build or "")
     if exact in ("", "latest"):
         answer = _fetch(client, f"/{target}/latest/build", (target, "latest", "build"))
-        exact = str((answer or {}).get("build") or "")
+        exact = str(((answer or {}).get("builds") or {}).get("sde")
+                    or (answer or {}).get("build") or "")
         if not exact:
             return None
     return Path(root) / NAMES_FILE.format(target=target, build=exact)
@@ -326,6 +337,12 @@ def dna_for(type_id=0, skin_id=0, client=None, *, build: str = "latest",
     pattern, and the respathinsert.
     """
 
+    if target == "frontier":
+        if skin_id or not type_id:
+            return ""
+        answer = _fetch(client, f"/{target}/{build}/dna/resolve?typeID={int(type_id)}",
+                        (target, build, "dna", int(type_id)))
+        return str((answer or {}).get("dna") or "")
     components = type_components(type_id, client, build=build, target=target)
     if not components:
         return ""

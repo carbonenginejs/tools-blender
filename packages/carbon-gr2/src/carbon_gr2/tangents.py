@@ -11,7 +11,7 @@ def unpack_mesh_tangents(mesh: dict) -> bool:
     vertex = mesh.get("vertex") or {}
     positions = vertex.get("position") or []
     packed = vertex.get("tangent") or []
-    vertex_count = len(positions) // 3
+    vertex_count = mesh.get("vertexCount", len(positions) // 3)
     if (
         not vertex_count
         or len(packed) != vertex_count * 4

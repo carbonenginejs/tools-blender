@@ -48,9 +48,9 @@ _CURVE_FORMATS = {
 }
 
 
-def _finite(value: Any) -> float:
+def _finite(value: Any, fallback: float = 0.0) -> float:
     value = float(value)
-    return value if math.isfinite(value) else 0.0
+    return value if math.isfinite(value) else fallback
 
 
 def _signed_i32(value: Any) -> int:
@@ -87,6 +87,10 @@ def _copy_channel(vertices, member_name: str, destination_width: int) -> list[fl
     if member is None:
         return []
     source_width = member["array_width"] if member["array_width"] > 1 else 1
+    # Match runtime GR2 shared.copyChannel: traffic channels and authored
+    # tangent frames retain three/four-wide storage rather than padding it.
+    if member_name in ("Position", "Tangent", "Binormal", "TextureCoordinates0", "TextureCoordinates1") and source_width in (3, 4):
+        destination_width = source_width
     copy_width = min(source_width, destination_width)
     output = [0.0] * (len(vertices) * destination_width)
     for index, vertex in enumerate(vertices):
@@ -106,8 +110,9 @@ def _emit_vertex_channels(vertices) -> dict[str, list[float]]:
     }
 
 
-def _float_array(values) -> list[float]:
-    return [_finite(f32(value)) for value in _scalar_array(values)]
+def _float_array(values, fallback=(0.0,)) -> list[float]:
+    return [_finite(f32(value), fallback[index % len(fallback)])
+            for index, value in enumerate(_scalar_array(values))]
 
 
 def _uint_array(values) -> list[int]:
@@ -121,7 +126,7 @@ def _curve_header(curve_data: dict[str, Any]):
     return None
 
 
-def _emit_curve(curve: dict[str, Any] | None) -> dict[str, Any]:
+def _emit_curve(curve: dict[str, Any] | None, fallback=(0.0,)) -> dict[str, Any]:
     curve_data = curve and curve.get("CurveData")
     if not curve_data:
         return {"format": 0, "degree": 0, "error": "no curve data"}
@@ -136,22 +141,16 @@ def _emit_curve(curve: dict[str, Any] | None) -> dict[str, Any]:
         pass
     elif curve_format == _CURVE_FORMATS["DaKeyframes32f"]:
         output["dimension"] = int(curve_data.get("Dimension", 0))
-        output["controls"] = _float_array(curve_data.get("Controls"))
+        output["controls"] = _float_array(curve_data.get("Controls"), fallback)
     elif curve_format == _CURVE_FORMATS["DaConstant32f"]:
-        output["controls"] = _float_array(curve_data.get("Controls"))
+        output["controls"] = _float_array(curve_data.get("Controls"), fallback)
     elif curve_format == _CURVE_FORMATS["D3Constant32f"]:
-        output["controls"] = [
-            _finite(f32(value))
-            for value in list(curve_data.get("Controls") or [0.0, 0.0, 0.0])[:3]
-        ]
+        output["controls"] = _float_array(list(curve_data.get("Controls") or [0.0, 0.0, 0.0])[:3], fallback)
     elif curve_format == _CURVE_FORMATS["D4Constant32f"]:
-        output["controls"] = [
-            _finite(f32(value))
-            for value in list(curve_data.get("Controls") or [0.0, 0.0, 0.0, 0.0])[:4]
-        ]
+        output["controls"] = _float_array(list(curve_data.get("Controls") or [0.0, 0.0, 0.0, 1.0])[:4], fallback)
     elif curve_format == _CURVE_FORMATS["DaK32fC32f"]:
         output["knots"] = _float_array(curve_data.get("Knots"))
-        output["controls"] = _float_array(curve_data.get("Controls"))
+        output["controls"] = _float_array(curve_data.get("Controls"), fallback)
     elif curve_format in (
         _CURVE_FORMATS["DaK16uC16u"],
         _CURVE_FORMATS["DaK8uC8u"],
@@ -238,6 +237,7 @@ def _emit_morph_target(target: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": target.get("ScalarName") or "",
         "dataIsDeltas": bool(target.get("DataIsDeltas")),
+        "vertexCount": len(vertex_data.get("Vertices") or []),
         "vertex": _emit_vertex_channels(vertex_data.get("Vertices") or TypedList()),
     }
 
@@ -276,6 +276,7 @@ def _emit_annotation_target(annotation_set: dict[str, Any], vertex_count: int):
     output = {
         "name": annotation_set.get("Name") or "",
         "dataIsDeltas": True,
+        "vertexCount": len(rows),
         "vertex": _emit_vertex_channels(rows),
     }
     if vertex_indices is not None:
@@ -300,6 +301,8 @@ def _emit_mesh(mesh: dict[str, Any]) -> dict[str, Any]:
     vertex_data = mesh.get("PrimaryVertexData") or {}
     vertices = vertex_data.get("Vertices") or TypedList()
     output["vertex"] = _emit_vertex_channels(vertices)
+    if vertices and len(output["vertex"]["position"]) != len(vertices) * 3:
+        output["vertexCount"] = len(vertices)
     output["morphTargets"] = [
         _emit_morph_target(target) for target in mesh.get("MorphTargets") or []
     ]
@@ -348,9 +351,9 @@ def _emit_bone(bone: dict[str, Any]) -> dict[str, Any]:
     if flags & 1:
         output["position"] = [_finite(f32(value)) for value in transform["position"]]
     if flags & 2:
-        output["orientation"] = [_finite(f32(value)) for value in transform["orientation"]]
+        output["orientation"] = _float_array(transform["orientation"], (0, 0, 0, 1))
     if flags & 4:
-        output["scaleShear"] = [_finite(f32(value)) for value in transform["scaleShear"]]
+        output["scaleShear"] = _float_array(transform["scaleShear"], (1, 0, 0, 0, 1, 0, 0, 0, 1))
     _add_extended(output, bone.get("ExtendedData"))
     return output
 
@@ -412,9 +415,9 @@ def _emit_animation(animation: dict[str, Any]) -> dict[str, Any]:
                     {
                         "name": track.get("Name") or "",
                         "flags": _signed_i32(track.get("Flags", 0)),
-                        "orientation": _emit_curve(track.get("OrientationCurve")),
+                        "orientation": _emit_curve(track.get("OrientationCurve"), (0, 0, 0, 1)),
                         "position": _emit_curve(track.get("PositionCurve")),
-                        "scaleShear": _emit_curve(track.get("ScaleShearCurve")),
+                        "scaleShear": _emit_curve(track.get("ScaleShearCurve"), (1, 0, 0, 0, 1, 0, 0, 0, 1)),
                     }
                     for track in group.get("TransformTracks") or []
                 ],

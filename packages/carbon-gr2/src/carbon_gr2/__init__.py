@@ -59,7 +59,11 @@ def read_gr2(
                         f"cannot rebuild normals for mesh {mesh.get('name')!r}: "
                         "positions or triangle indices are missing"
                     )
-                vertex["normal"] = generate_normals(vertex["position"], faces)
+                positions = vertex["position"]
+                count = mesh.get("vertexCount") or len(positions) // 3
+                width = len(positions) // count
+                xyz = [positions[row * width + axis] for row in range(count) for axis in range(3)]
+                vertex["normal"] = generate_normals(xyz, faces)
         return result
     except Gr2Error:
         raise

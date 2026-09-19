@@ -73,6 +73,22 @@ Where something has no Carbon counterpart it says so where it is defined:
 
 ## Traps this design already paid for
 
+CMF animation remains native in the shared graph. When importing bone actions,
+`carbon_cmf.build_gr2_animations` supplies the track-group view used by the
+existing armature importer. Typed knots/values, Step/Linear modes and absent
+component rest defaults survive this boundary. Stepped channels get CONSTANT
+keys, including authored subframe boundaries; baked continuous channels get
+LINEAR keys. Quaternion signs remain continuous after matrix decomposition.
+Baked poses do not guarantee exact donor quaternion interpolation between
+samples, and Blender pose TRS cannot represent arbitrary animated shear.
+Scalar morph tracks create separate shape-key actions, including on meshes
+without a skeleton. Binding uses preserved authored target names, independently
+of Blender display-name sanitization. Shape-key actions retain a fake user and
+are excluded from armature action selection; ship assembly selects the same
+idle clip for the armature and its shape keys. Authored weights within `[-10,10]`
+are preserved; larger values are rejected explicitly because Blender's evaluated
+shape-key weight range cannot represent them.
+
 - **Blender loads add-ons from its own scripts directory, never from a
   checkout.** Run `scripts/install_addon.py` after changes, or the panel keeps
   running an older copy and a tested change appears to do nothing. A month-old
@@ -92,3 +108,15 @@ Where something has no Carbon counterpart it says so where it is defined:
 - **A skinned mesh must be parented to its armature.** The importer leaves them
   as siblings, which looks fine until the ship is moved and the geometry deforms
   against a rig that is no longer where it is.
+
+## Nebula conversion
+
+Nebula BC6H cubemaps are decoded to floating-point RGB and converted to a
+Radiance HDR environment. Each face's complete mip chain precedes the next
+face; decoding mip zero must therefore advance by the full chain, not just
+the top level. This matters for Frontier's 2048-square, 12-mip nebula cubes.
+Reflection cubes that declare six faces in the DX10 array-size field are
+accepted only when exactly one cube accounts for their payload. Genuine cube
+arrays are rejected. Converted environments use `.cube-v2.hdr` so obsolete
+conversions with incorrect face strides are not reused. Separate nebula alpha,
+star and volume-noise layers are not reproduced by this environment conversion.

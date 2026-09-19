@@ -325,19 +325,43 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
     # the service to resolve is the fallback for a path it has no row for.
     row = resindex.locate(index, logical_path) if index else None
 
-    provided = local_at_address(resfiles_root, row)
+    def provided_at_address(location):
+        provided = local_at_address(resfiles_root, location)
+        if provided is None:
+            return None
+        # Older downloads can contain HTTP gzip bytes. Keep game inputs read
+        # only: materialize the hash-verified resource in our own cache. If the
+        # user selected that cache as their optional root, it is still ours.
+        with provided.open("rb") as stream:
+            if stream.read(2) != b"\x1f\x8b":
+                return provided
+        payload = provided.read_bytes()
+        decoded = unpack_resource_payload(payload, provided.name)
+        if decoded is payload:
+            return provided
+        destination = resfile.stored_path(cache_root, location)
+        ensure_parent(destination)
+        partial = destination.with_name(destination.name + ".part")
+        partial.write_bytes(decoded)
+        partial.replace(destination)
+        return destination
+
+    provided = provided_at_address(row)
     if provided is None:
         provided = local_file(local_root, logical_path)
     if provided is not None:
         return note("local", provided)
 
-    provided = local_file(cache_root, logical_path)
+    # Legacy readable caches are EVE-only. The same logical name may denote
+    # different bytes in another Source; only hash addresses are shared.
+    provided = local_file(cache_root, logical_path) if target == "eve" else None
     if provided is not None:
         return note("cache", provided)
 
     def stored(location):
         found = resfile.stored_path(cache_root, location, logical_path)
         if found is not None and found.is_file() and found.stat().st_size > 0:
+            repair_compressed_resource(found)
             return found
         return None
 
@@ -349,22 +373,27 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
             return note("cache", cached)
 
     if not url:
-        found = client.resolve_resource(logical_path, build, target=target)
-        resolution = (found or {}).get("resolution") or found or {}
+        from .source import resource_resolution
+        resolution = resource_resolution(client, cache_root, logical_path, build, target)
         url = str(resolution.get("sourceUrl") or "")
         location = "/".join(url.split("/")[-2:]) if url else ""
+        provided = provided_at_address(location)
+        if provided is not None:
+            return note("local", provided)
         cached = stored(location) if location else None
         if cached is not None:
             return note("cache", cached)
     if not url:
         raise FetchError(f"{logical_path}: no source for it")
 
-    payload = read_url(url, opener=opener)
+    payload = unpack_resource_payload(read_url(url, opener=opener), location)
     destination = resfile.stored_path(cache_root, location, logical_path)
     if destination is None:
         # No usable address: the human-readable layout, which is the same
         # place the optional local-files folder is read from.
-        destination = resfile.readable_path(cache_root, logical_path)
+        destination = resfile.readable_path(
+            Path(cache_root) / "sources" / target / str(build) / "resources",
+            logical_path)
         if destination is None:
             raise FetchError(f"{logical_path}: nowhere to store it")
     ensure_parent(destination)
@@ -374,13 +403,52 @@ def fetch_resource(logical_path: str, client, cache_root, *, build: str,
     return note("download", destination)
 
 
+def unpack_resource_payload(payload, location):
+    """Recover transport-gzipped ResFiles only when their content hash agrees.
+
+    Frontier can serve gzip bytes at a hash address. The stored MD5 is for the
+    decoded resource. A legitimately authored gzip resource whose compressed
+    bytes already match its address must remain compressed.
+    """
+    checksum = str(location).replace("\\", "/").rsplit("/", 1)[-1].rsplit("_", 1)[-1]
+    if not payload.startswith(b"\x1f\x8b") or not re.fullmatch(r"[0-9a-fA-F]{32}", checksum):
+        return payload
+    if hashlib.md5(payload).hexdigest() == checksum.lower():
+        return payload
+    try:
+        decoded = gzip.decompress(payload)
+    except (OSError, EOFError) as error:
+        raise FetchError(f"Invalid compressed resource at {location}") from error
+    if hashlib.md5(decoded).hexdigest() != checksum.lower():
+        raise FetchError(f"Decompressed resource does not match its hash: {location}")
+    return decoded
+
+
+def repair_compressed_resource(path):
+    """Repair our own previously downloaded cache; never call on game inputs."""
+    path = Path(path)
+    with path.open("rb") as stream:
+        if stream.read(2) != b"\x1f\x8b":
+            return
+    payload = path.read_bytes()
+    decoded = unpack_resource_payload(payload, path.name)
+    if decoded is not payload:
+        partial = path.with_name(path.name + ".part")
+        partial.write_bytes(decoded)
+        partial.replace(path)
+
+
 def read_url(url: str, *, opener=urlopen, timeout: float = 120.0) -> bytes:
     """The bytes at one URL."""
 
     request = Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with opener(request, timeout=timeout) as response:
-            return response.read()
+            payload = response.read()
+            headers = getattr(response, "headers", {})
+            if str(headers.get("Content-Encoding", "")).lower().strip() in ("gzip", "x-gzip"):
+                payload = gzip.decompress(payload)
+            return payload
     except Exception as exc:
         raise FetchError(f"{url}: {exc}") from exc
 
@@ -394,14 +462,11 @@ def download(source_url: str, destination: Path, *, opener=urlopen,
     """
 
     if destination.is_file() and destination.stat().st_size > 0:
+        repair_compressed_resource(destination)
         return destination
     ensure_parent(destination)
-    request = Request(source_url, headers={"User-Agent": USER_AGENT})
-    try:
-        with opener(request, timeout=timeout) as response:
-            payload = response.read()
-    except Exception as exc:
-        raise FetchError(f"{source_url}: {exc}") from exc
+    payload = unpack_resource_payload(
+        read_url(source_url, opener=opener, timeout=timeout), source_url)
     partial = destination.with_suffix(destination.suffix + ".part")
     partial.write_bytes(payload)
     partial.replace(destination)
@@ -413,7 +478,7 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
                opener=urlopen, cancelled: Optional[Callable] = None,
                local_root=None, resfiles_root=None,
                prepare: Optional[Callable] = None,
-               extra_paths=()) -> tuple:
+               extra_paths=(), source=None) -> tuple:
     """`(document, {res path: local file})` for one DNA.
 
     A resource that cannot be fetched is left OUT of the map rather than
@@ -424,19 +489,22 @@ def fetch_ship(dna: str, client, cache_root, *, build: str = "",
     exact = str(build or "").strip()
     if not exact or exact == "latest":
         answer = client.request_json("GET", f"/{target}/latest/build")
-        exact = str((answer or {}).get("build") or "").strip()
+        exact = str(((answer or {}).get("builds") or {}).get("resources")
+                    or (answer or {}).get("build") or "").strip()
         if not exact:
             raise FetchError("the service did not report a build")
 
     # One index per build instead of a question per file.
     try:
-        index = resindex.load(cache_root, exact)
+        index = resindex.load(cache_root, exact) if target == "eve" else None
     except Exception as exc:
         print(f"[CarbonEngineJS SOF] index unavailable, resolving per file: {exc}")
         index = None
 
     document = document_for(dna, client, build=exact, target=target,
                             cache_root=cache_root)
+    from .source import Source, provider_for
+    document["carbonSource"] = (source or Source(target, provider_for(target), exact, exact)).to_dict()
     # Paths the document does NOT name. A booster's shape atlas and its
     # gradients are one: the document carries the shader and leaves every one
     # of its texture paths null, so what a flame looks like has to be asked for

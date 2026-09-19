@@ -65,8 +65,12 @@ def _weapon_names(slot):
     """Every weapon name for one slot, for the search field."""
 
     def names(context=None):
-        rows = weapons.catalogue(service_access.client(context), slots=(slot,))
-        return [row["name"] for row in rows]
+        try:
+            source = sof_panels._catalog_source(context)
+        except Exception:
+            return []
+        rows = weapons.catalogue(service_access.client(context), slots=(slot,), **source.sde())
+        return [f"{row['name']} [{row['typeID']}]" for row in rows]
 
     return names
 
@@ -118,8 +122,17 @@ def weapon_locators(context, kind=""):
     """
 
     wanted = {kind} if kind else set(KIND_SLOT)
+    source = sof_panels._catalog_source(context)
+    def same_source(obj):
+        while obj is not None:
+            settings = getattr(obj, "carbon_sof", None)
+            if settings is not None and settings.source_target:
+                return (settings.source_target == source.target
+                        and settings.resource_build == source.resource_build)
+            obj = obj.parent
+        return source.target == "eve"
     found = [obj for obj in bpy.data.objects
-             if obj.get("carbon_locator_kind") in wanted]
+             if obj.get("carbon_locator_kind") in wanted and same_source(obj)]
     if not context.selected_objects:
         return found
 
@@ -230,14 +243,16 @@ def factions_for(locators) -> list:
 
 
 def fetch_turret(client, res_path: str, cache_root, *, progress=None,
-                 factions=()):
+                 factions=(), source=None, resfiles_root=None):
     """The turret's document and its files. Runs on the JOB thread.
 
     No `bpy` and no scene changes in here: what comes back is handed to the
     main thread, which is the only place allowed to touch Blender data.
     """
 
-    document = weapons.turret_document(client, res_path)
+    from .core.source import resolve
+    source = source or resolve(client, cache_root=cache_root)
+    document = weapons.turret_document(client, res_path, **source.resources())
     if not document:
         raise RuntimeError(f"no turret document for {res_path}")
 
@@ -245,9 +260,8 @@ def fetch_turret(client, res_path: str, cache_root, *, progress=None,
     if not geometry:
         raise RuntimeError(f"{res_path} names no geometry")
 
-    build = str((client.request_json("GET", "/eve/latest/build")
-                 or {}).get("build") or "")
-    index = resindex.load(cache_root, build) if build else None
+    build = source.resource_build
+    index = resindex.load(cache_root, build) if source.target == "eve" else None
 
     wanted = [geometry]
     effect = document.get("turretEffect") or {}
@@ -262,7 +276,7 @@ def fetch_turret(client, res_path: str, cache_root, *, progress=None,
             progress(f"Fetching {Path(path).name}")
         try:
             found = sof_fetch.fetch_resource(path, client, cache_root,
-                                             build=build, index=index)
+                                             **source.resources(), index=index, resfiles_root=resfiles_root)
         except Exception as exc:
             print(f"[CarbonEngineJS SOF] turret resource {path}: {exc}")
             continue
@@ -283,7 +297,7 @@ def fetch_turret(client, res_path: str, cache_root, *, progress=None,
         if progress is not None:
             progress(f"Reading {faction}")
         colours[faction] = faction_colours(
-            sof_materials.faction(faction, client), client)
+            sof_materials.faction(faction, client, **source.resources()), client, selected_source=source)
     return document, resources, colours
 
 
@@ -302,7 +316,7 @@ def clear_fitted(locators=None):
     return removed
 
 
-def _turret_material(document, resources, name):
+def _turret_material(document, resources, name, target="eve"):
     """The turret's own material, through the quad family the hull uses."""
 
     from .quad import interface as quad_interface
@@ -312,25 +326,15 @@ def _turret_material(document, resources, name):
     if not effect.get("effectFilePath"):
         return None
 
-    # A `.black` is not a SOF document, and its effect is not shaped like one.
-    # `constParameters` arrives as a packed `black.structureList` -- a byte
-    # blob with a count and a stride -- where the document carries a list of
-    # named values, and `parameters` is null rather than empty. Iterating
-    # either as the document's shape walks a dict's KEYS and fails on a string.
-    #
-    # So only what is genuinely the same is passed through. The turret's
-    # constants stay unread; decoding that container is its own job.
-    effect = {
-        "_type": effect.get("_type"),
-        "effectFilePath": effect.get("effectFilePath"),
-        "resources": [entry for entry in (effect.get("resources") or [])
-                      if isinstance(entry, dict)],
-        "parameters": [],
-        "constParameters": [],
-        "options": [],
-    }
+    # Typed packed values are decoded once by the service's shared Black reader.
+    effect = dict(effect)
+    for field in ("resources", "parameters", "constParameters", "options"):
+        value = effect.get(field)
+        if isinstance(value, dict) and value.get("count", 0):
+            raise RuntimeError(f"Service did not decode turret {field}; update tools-core")
+        effect[field] = value if isinstance(value, list) else []
     try:
-        family = quad_interface.load_family()
+        family = quad_interface.load_family(target=target)
     except Exception as exc:
         print(f"[CarbonEngineJS SOF] turret family unavailable: {exc}")
         return None
@@ -389,9 +393,10 @@ def self_name(name: str) -> str:
 
 
 def fit(context, document, resources, res_path: str, name: str,
-        locators=None, colours=None):
+        locators=None, colours=None, source=None):
     """Places one turret on every hardpoint. MAIN thread only."""
 
+    target = source.target if source else "eve"
     geometry = str(document.get("geometryResPath") or "")
     local = resources.get(geometry)
     if not local:
@@ -404,7 +409,7 @@ def fit(context, document, resources, res_path: str, name: str,
         raise RuntimeError("this ship has no hardpoints of that kind")
 
     before = set(bpy.data.objects)
-    bpy.ops.import_scene.carbon_gr2(filepath=str(local))
+    ship_module.import_geometry(local, name, logical_path=geometry)
     imported = [obj for obj in bpy.data.objects if obj not in before]
     if not imported:
         raise RuntimeError(f"{Path(local).name} imported nothing")
@@ -417,7 +422,7 @@ def fit(context, document, resources, res_path: str, name: str,
 
     def material_for(faction: str):
         if faction not in by_faction:
-            made = _turret_material(document, resources, name)
+            made = _turret_material(document, resources, name, target)
             written = apply_faction_colours(made, colours.get(faction))
             if made is not None:
                 made.name = f"{made.name} {faction}" if faction else made.name
@@ -545,7 +550,7 @@ TURRET_AREA_TYPE = 0
 GLOW_DIM = 0.5
 
 
-def faction_colours(faction_record, client):
+def faction_colours(faction_record, client, selected_source=None):
     """The four materials and the glow a faction gives a turret.
 
     This is `SetupTurretMaterial`'s rule, and its shape is worth stating
@@ -577,7 +582,8 @@ def faction_colours(faction_record, client):
         name = sof_materials.material_name_for(names, TURRET_AREA_TYPE, source)
         if not name:
             continue
-        record = sof_materials.material(name, client)
+        record = sof_materials.material(name, client,
+            **(selected_source.resources() if selected_source else {}))
         values = sof_materials.material_values(record)
         # `AssignParameters` assigns EVERY parameter a material carries, not a
         # chosen three, and `DustDiffuseColor` is one of them -- the colour the
@@ -671,6 +677,7 @@ class CARBON_OT_fit_turrets(Operator):
     def execute(self, context):
         from . import addon
 
+        source = sof_panels._catalog_source(context)
         state = context.window_manager.carbon_eve_turrets
         chosen_name = str(getattr(state, self.kind, "") or "").strip()
         if not chosen_name:
@@ -691,26 +698,26 @@ class CARBON_OT_fit_turrets(Operator):
         locators = [locator for _kind, _bay, group in wanted
                     for locator in group]
 
-        # Matched by NAME, because that is what the search field stores, and
-        # names are unique across the catalogue. typeID is still what gets
-        # fitted - it is read off the row below.
-        wanted_name = chosen_name.casefold()
-        chosen = next((row for row in weapons.catalogue(
-                           client, slots=(KIND_SLOT.get(self.kind),))
-                       if str(row["name"]).casefold() == wanted_name), None)
+        rows = weapons.catalogue(client, slots=(KIND_SLOT.get(self.kind),), **source.sde())
+        matches = [row for row in rows
+                   if chosen_name.casefold() in (str(row["name"]).casefold(),
+                       f"{row['name']} [{row['typeID']}]".casefold())]
+        chosen = matches[0] if len(matches) == 1 else None
         if chosen is None:
             self.report({"ERROR"},
                         f"No weapon named \"{chosen_name}\" for this hardpoint")
             return {"CANCELLED"}
         res_path, name = chosen["resPath"], chosen["name"]
         cache_root = _cache_root(context)
-
+        factions = factions_for(locators) if source.target != "frontier" else []
+        from .core.source import resfiles_directory
+        resfiles_root = resfiles_directory(addon._prefs(context), source.target)
 
         def work():
             document, resources, colours = fetch_turret(
                 client, res_path, cache_root, progress=addon._set_progress,
-                factions=factions_for(locators))
-            return name, res_path, document, resources, colours, locators
+                factions=factions, source=source, resfiles_root=resfiles_root)
+            return name, res_path, document, resources, colours, locators, source
 
         try:
             addon._launch_job(context, "turrets", work, f"Fetching {name}")
@@ -723,11 +730,15 @@ class CARBON_OT_fit_turrets(Operator):
 def finish_job(context, result) -> str:
     """Applies a fetched turret. MAIN thread only."""
 
-    name, res_path, document, resources, colours, locators = result
+    name, res_path, document, resources, colours, locators, source = result
     state = context.window_manager.carbon_eve_turrets
+    # Fetching runs in the background; the picker may now belong to another source.
+    if source != sof_panels._catalog_source(context):
+        state.status = "Source changed; fetched weapon was not fitted"
+        return state.status
     clear_fitted(locators)
     count, by_faction = fit(context, document, resources, res_path, name,
-                            locators, colours)
+                            locators, colours, source)
     painted = [f for f in by_faction if f]
     state.status = (f"{name} on {count} hardpoint(s)"
                     + (f", {len(painted)} faction(s)" if painted else ""))

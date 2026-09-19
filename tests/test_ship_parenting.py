@@ -9,6 +9,9 @@ choice.
 from pathlib import Path
 import sys
 import unittest
+import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "addons"))
 
@@ -34,6 +37,37 @@ class Fake:
         self.type = type_
         self.data = Data(vertices) if type_ == "MESH" else None
         self.modifiers = list(modifiers)
+
+
+class MeshOwnershipTests(unittest.TestCase):
+    def test_overlay_does_not_become_primary_and_child_only_hull_is_valid(self):
+        from carbon_eve_resources import ship
+        overlay = {"_type": "Tr2Mesh", "geometryResPath": "res:/shield.cmf"}
+        child = {"_type": "Tr2Mesh", "geometryResPath": "res:/child.cmf"}
+        document = {"impactOverlay": {"_type": "EveImpactOverlay", "mesh": overlay},
+                    "mesh": {"_type": "Tr2Mesh", "geometryResPath": ""},
+                    "children": [{"mesh": child}]}
+        self.assertNotIn(overlay, ship.find_meshes(document, include_overlays=False))
+        self.assertIn(child, ship.find_meshes(document, include_overlays=False))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mesh"
+            path.write_bytes(b"fixture")
+            resources = {"res:/shield.cmf": str(path), "res:/child.cmf": str(path)}
+            imported = []
+            def import_mesh(local, label, logical):
+                obj = SimpleNamespace(name=logical, data=SimpleNamespace(materials=[]))
+                imported.append(obj)
+                return [obj]
+            with patch.object(ship, "import_geometry", side_effect=import_mesh):
+                result = ship.assemble("", "", document=document, resources=resources, family=object(), clear=False)
+            self.assertEqual(result.name, "res:/child.cmf")
+            self.assertEqual([obj.name for obj in imported], ["res:/child.cmf", "res:/shield.cmf"])
+            document["children"] = []
+            with patch.object(ship, "import_geometry") as importer:
+                # clear=True must not destroy the existing scene for this failure.
+                with patch.object(ship, "bpy", None):
+                    self.assertIsNone(ship.assemble("", "", document=document, resources=resources, family=object(), clear=True))
+                importer.assert_not_called()
 
 
 class AnchorTests(unittest.TestCase):

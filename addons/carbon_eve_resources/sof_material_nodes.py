@@ -26,6 +26,10 @@ OUTPUTS = (
     ("Fresnel", "NodeSocketColor", "fresnel"),
     ("Gloss", "NodeSocketFloat", "gloss"),
 )
+PBR_OUTPUTS = (("BaseColor", "NodeSocketColor", "base_color"),
+               ("Roughness", "NodeSocketFloat", "roughness"),
+               ("Metallic", "NodeSocketFloat", "metallic"))
+PBR_SOCKETS = ("Mtl{}BaseColor", "Mtl{}GeneralData.x", "Mtl{}GeneralData.y")
 
 #: Where a slot's values land on the quad group, by slot index.
 MATERIAL_SOCKETS = ("Mtl{}DiffuseColor", "Mtl{}FresnelColor", "Mtl{}Gloss")
@@ -36,13 +40,16 @@ def group_name(material: str) -> str:
     return f"{PREFIX} {str(material or 'unnamed')}"
 
 
-def material_group(material: str, values=None, *, rebuild: bool = False):
+def material_group(material: str, values=None, *, rebuild: bool = False, source: str = ""):
     """The node group for one named SOF material, made once and shared.
 
     An existing group is returned untouched: it IS the material.
     """
 
-    name = group_name(material)
+    pbr = "base_color" in (values or {})
+    name = group_name(f"{source} {material}" if source else material)
+    if pbr:
+        name += " PBR"
     tree = bpy.data.node_groups.get(name)
     if tree is not None and not rebuild:
         # Re-filling would undo an edit; `rebuild` asks for that explicitly.
@@ -58,7 +65,7 @@ def material_group(material: str, values=None, *, rebuild: bool = False):
 
     output = tree.nodes.new("NodeGroupOutput")
     output.location = (300, 0)
-    for row, (label, kind, _field) in enumerate(OUTPUTS):
+    for row, (label, kind, _field) in enumerate(PBR_OUTPUTS if pbr else OUTPUTS):
         tree.interface.new_socket(name=label, in_out="OUTPUT", socket_type=kind)
         if kind == "NodeSocketColor":
             node = tree.nodes.new("ShaderNodeRGB")
@@ -70,6 +77,8 @@ def material_group(material: str, values=None, *, rebuild: bool = False):
         tree.links.new(node.outputs[0], output.inputs[row])
 
     tree["carbon_sof_material"] = str(material or "")
+    tree["carbon_source"] = source
+    tree["carbon_pbr"] = pbr
     if values:
         _fill(tree, values)
     return tree
@@ -78,7 +87,7 @@ def material_group(material: str, values=None, *, rebuild: bool = False):
 def _fill(tree, values) -> None:
     """Writes a material's fetched values into its group."""
 
-    for label, kind, field in OUTPUTS:
+    for label, kind, field in OUTPUTS + PBR_OUTPUTS:
         node = tree.nodes.get(label)
         value = values.get(field) if hasattr(values, "get") else None
         if node is None or value is None:
@@ -95,7 +104,7 @@ def group_values(tree) -> dict:
     values = {}
     if tree is None:
         return values
-    for label, kind, field in OUTPUTS:
+    for label, kind, field in OUTPUTS + PBR_OUTPUTS:
         node = tree.nodes.get(label)
         if node is None:
             continue
@@ -121,6 +130,22 @@ def quad_group_node(material):
                  and node.node_tree.name.startswith(GROUP_PREFIX)), None)
 
 
+def slot_sockets(material, index: int, *, pbr=False, is_pattern=False):
+    """Actual destination sockets, checked before mutating an existing binding."""
+    quad = quad_group_node(material)
+    if quad is None or (pbr and is_pattern):
+        return []
+    patterns = PBR_SOCKETS if pbr else PATTERN_SOCKETS if is_pattern else MATERIAL_SOCKETS
+    found = []
+    for offset, pattern in enumerate(patterns):
+        socket = quad.inputs.get(pattern.format(index))
+        if socket is None:
+            socket = quad.inputs.get(pattern.format(index) + ".x")
+        if socket is not None:
+            found.append((offset, socket))
+    return found
+
+
 def bind_slot(material, index: int, tree, *, is_pattern: bool = False) -> int:
     """Links one material group into one slot of an area's shader.
 
@@ -130,6 +155,10 @@ def bind_slot(material, index: int, tree, *, is_pattern: bool = False) -> int:
 
     quad = quad_group_node(material)
     if quad is None or tree is None:
+        return 0
+    destinations = slot_sockets(material, index, pbr=bool(tree.get("carbon_pbr")),
+                                is_pattern=is_pattern)
+    if not destinations:
         return 0
 
     node_tree = material.node_tree
@@ -143,12 +172,8 @@ def bind_slot(material, index: int, tree, *, is_pattern: bool = False) -> int:
     node.label = tree.get("carbon_sof_material", "") or tree.name
     node.node_tree = tree
 
-    patterns = PATTERN_SOCKETS if is_pattern else MATERIAL_SOCKETS
     linked = 0
-    for offset, pattern in enumerate(patterns):
-        socket = quad.inputs.get(pattern.format(index))
-        if socket is None:
-            continue
+    for offset, socket in destinations:
         # Drop any existing link: Blender keeps the older of two sources.
         for link in list(node_tree.links):
             if link.to_socket == socket:

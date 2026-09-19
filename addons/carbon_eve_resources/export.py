@@ -14,6 +14,7 @@ Nothing here writes to the cache, and nothing writes to the artist's folders.
 from __future__ import annotations
 
 import shutil
+import hashlib
 from pathlib import Path
 
 import bpy
@@ -57,16 +58,36 @@ def export_images(folder, *, repoint: bool = True):
             failed.append(f"{image.name}: no path to export it under")
             continue
         try:
+            # A logical name can refer to different payloads across Sources
+            # or builds. Keep an existing exported edit, but never redirect a
+            # second payload onto that file just because its name matches.
+            previous = image.get("carbon_export_path", "")
+            identity = image.get("carbon_export_identity", "") if previous == str(source) else ""
+            identity = identity or _file_identity(source)
+            if (destination.is_file() and destination.stat().st_size
+                    and source.resolve() != destination.resolve()
+                    and _file_identity(destination) != identity):
+                destination = destination.with_name(f"{destination.stem}__{identity}{destination.suffix}")
             if not destination.is_file() or destination.stat().st_size == 0:
                 ensure_parent(destination)
                 shutil.copyfile(source, destination)
             if repoint:
                 image.filepath = str(destination)
+                image["carbon_export_path"] = str(destination)
+                image["carbon_export_identity"] = identity
             written.append(destination)
         except OSError as exc:
             failed.append(f"{image.name}: {exc}")
 
     return written, failed
+
+
+def _file_identity(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def ship_settings(context):
@@ -105,7 +126,7 @@ def suggested_name(context) -> str:
 
         name = sof_lookup.file_name(sof_lookup.name_for(
             getattr(settings, "type_id", 0), getattr(settings, "skin_id", 0),
-            service_access.client(context)))
+            service_access.client(context), **service_access.source(context, settings).sde()))
     except Exception as exc:
         print(f"[CarbonEngineJS SOF] name lookup: {exc}")
 

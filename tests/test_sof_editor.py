@@ -3,6 +3,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 
 ADDONS = Path(__file__).resolve().parents[1] / "addons"
@@ -42,6 +43,42 @@ class EditorTests(unittest.TestCase):
         self.settings.read_dna(FULL)
         self.assertEqual((self.settings.hull, self.settings.faction, self.settings.race),
                          ("mde3_t3", "legion_minmatar", "minmatar"))
+
+    def test_incompatible_material_choice_restores_name_and_keeps_values(self):
+        from carbon_eve_resources import sof_material_nodes as nodes, service_access
+        from carbon_eve_resources.core import sof_materials, source
+        from test_sof_material_nodes import _quad_material
+        area = _quad_material("PBR ship", ("Mtl1BaseColor", "Mtl1GeneralData.x", "Mtl1GeneralData.y"))
+        previous = nodes.material_group("original_pbr", {"base_color": (.3, .4, .5), "roughness": .2, "metallic": .8})
+        nodes.bind_slot(area, 1, previous)
+        entry = self.settings.materials.add()
+        with sof_panels.applying():
+            entry.material = "original_pbr"
+            entry.pbr = True
+            entry.base_color = (.3, .4, .5)
+        record = {"parameters": {"DiffuseColor": [.1, .2, .3, 1], "Gloss": [.7, 0, 0, 0]}}
+        with patch.object(sof_panels, "slot_materials", return_value=[area]), \
+             patch.object(sof_materials, "material", return_value=record), \
+             patch.object(service_access, "client", return_value=None), \
+             patch.object(service_access, "source", return_value=source.Source("frontier", "ccp", "1", "2")):
+            entry.material = "legacy_material"
+        self.assertEqual(entry.material, "original_pbr")
+        self.assertIn("does not match", entry.error)
+        self.assertEqual(nodes.bound_group(area, 1), previous)
+        self.assertTrue(entry.pbr)
+        self.assertAlmostEqual(entry.base_color[0], .3)
+
+    def test_frontier_composition_disables_mesh_pattern_layout_only(self):
+        self.settings.read_dna(FULL)
+        self.settings.source_target = "frontier"
+        self.assertEqual(self.settings.compose_dna(),
+                         "mde3_t3:legion_minmatar:minmatar:respathinsert?deathless")
+        # Source-specific composition must not destroy the stored EVE choices.
+        self.settings.source_target = "eve"
+        made = self.settings.compose_dna()
+        self.assertIn(":material?mtl_a;none;mtl_c;none", made)
+        self.assertIn(":pattern?", made)
+        self.assertIn(":layout?", made)
 
     def test_reads_all_four_mesh_materials_including_the_nones(self):
         self.settings.read_dna(FULL)

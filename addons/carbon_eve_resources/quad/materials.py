@@ -204,7 +204,7 @@ def wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources):
     if noise_local is None or glow_local is None:
         return
 
-    lanes = {}
+    lanes = {name: value for name, value in member.defaults().items() if "HeatGlowData" in name}
     for constant in effect.get("constParameters", []):
         name = str(constant.get("name", ""))
         if "HeatGlowData" in name:
@@ -220,12 +220,12 @@ def wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources):
     mlinks.new(material_map.outputs["Color"], separate.inputs[0])
 
     uv_group = mnodes.new("ShaderNodeGroup")
-    uv_group.node_tree = nodes.build_heat_uv_group()
+    uv_group.node_tree = nodes.build_heat_uv_group(authored_uv=member.target == "frontier")
     uv_group.location = (-1300, 500)
     mlinks.new(separate.outputs["Red"], uv_group.inputs["MaterialMap"])
 
     displace = mnodes.new("ShaderNodeGroup")
-    displace.node_tree = nodes.build_heat_displace_group()
+    displace.node_tree = nodes.build_heat_displace_group(authored_uv=member.target == "frontier")
     displace.location = (-700, 500)
     mlinks.new(separate.outputs["Red"], displace.inputs["MaterialMap"])
 
@@ -262,17 +262,138 @@ def wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources):
     print("  heat shimmer wired (glow sampled at a displaced UV)")
 
 
-def build_area_material(area, family, resources, index):
+def build_heat_area_material(area, member, resources, index, context, *, base_material=None):
+    """Thermal emission with explicit scene inputs and no bound volume texture.
+
+    A coincident second surface loses the opaque hit in Cycles. When heat
+    redraws an existing area, add its emission to a copy of that surface's
+    closure instead. This is Blender's adaptation of Carbon's ONE/ONE draw;
+    the original material and its SOF/editor identity remain intact.
+    """
+    from . import frontier
+    effect = area.get("effect") or {}
+    if context is None:
+        return None, "Heat emission requires ship radius and thermal sun direction"
+    if any(r.get("name") == "NoiseMap" and r.get("resourcePath") for r in effect.get("resources", [])):
+        return None, "Bound heat NoiseMap requires a qualified 3D volume sampler"
+    resource = next((r for r in effect.get("resources", []) if r.get("name") == "GradientMap"), None)
+    samples = ((0, 0, 0, 0),)
+    if resource and resource.get("resourcePath"):
+        local = local_file(resources, resource["resourcePath"])
+        image = load_texture(local, logical_path=resource["resourcePath"]) if local else None
+        if image is None:
+            return None, "Heat GradientMap is unavailable"
+        if image.colorspace_settings.name != "Non-Color":
+            image = image.copy()
+            image.colorspace_settings.name = "Non-Color"
+        samples = frontier.mip0_first_row(image, srgb=True)
+    tree = frontier.build_heat_group(member, samples)
+    material = (base_material.copy() if base_material else
+                bpy.data.materials.new(f"{index:02d} {area.get('name') or member.name}"))
+    material.use_nodes = True
+    if base_material is None:
+        material.node_tree.nodes.clear()
+    else:
+        material.name = f"{base_material.name} + {area.get('name') or 'Heat'}"
+    group = material.node_tree.nodes.new("ShaderNodeGroup")
+    group.node_tree = tree
+    group.label = "Frontier thermal emission"
+    if base_material is None:
+        output = material.node_tree.nodes.new("ShaderNodeOutputMaterial")
+        material.node_tree.links.new(group.outputs["BSDF"], output.inputs["Surface"])
+    else:
+        outputs = [n for n in material.node_tree.nodes
+                   if n.bl_idname == "ShaderNodeOutputMaterial" and n.is_active_output]
+        if len(outputs) != 1 or not outputs[0].inputs["Surface"].is_linked:
+            bpy.data.materials.remove(material)
+            return None, "Heat overlay requires one active base surface output"
+        output = outputs[0]
+        base_surface = output.inputs["Surface"].links[0].from_socket
+        emission = material.node_tree.nodes.new("ShaderNodeEmission")
+        material.node_tree.links.new(group.outputs["Emission"], emission.inputs["Color"])
+        addition = material.node_tree.nodes.new("ShaderNodeAddShader")
+        material.node_tree.links.new(base_surface, addition.inputs[0])
+        material.node_tree.links.new(emission.outputs[0], addition.inputs[1])
+        material.node_tree.links.new(addition.outputs[0], output.inputs["Surface"])
+    for constant in effect.get("constParameters", []):
+        name, value = constant.get("name"), constant.get("value") or []
+        if name not in member.constants or not value:
+            continue
+        for lane, (label, kind, _) in enumerate(frontier.constant_sockets(member, name)):
+            if kind == "NodeSocketColor":
+                group.inputs[label].default_value = tuple(value[:3]) + (1.0,)
+            elif lane < len(value):
+                group.inputs[label].default_value = float(value[lane])
+    try:
+        frontier.wire_heat_inputs(member, effect, material, group, resources,
+                                 radius=context["radius"], sun_direction=context["sun_direction"])
+    except ValueError as error:
+        bpy.data.materials.remove(material)
+        return None, str(error)
+    if base_material is None:
+        material["carbon_source"] = member.target
+        material["carbon_effect_path"] = effect.get("effectFilePath", "")
+        material["carbon_effect_identity"] = member.identity
+    else:
+        material["carbon_heat_effect_path"] = effect.get("effectFilePath", "")
+        material["carbon_heat_effect_identity"] = member.identity
+        material.surface_render_method = base_material.surface_render_method
+    material["carbon_heat_context"] = "Growth and thermal sun direction are editable material inputs; status controllers are not imported"
+    return material, None
+
+
+def build_area_material(area, family, resources, index, *, heat_context=None):
     """One material for one mesh area, from its own effect."""
 
     effect = area.get("effect") or {}
     shader = str(effect.get("effectFilePath", ""))
-    member = family.member(shader)
+    member = family.member(shader, effect.get("options"))
     if member is None:
         return None, f"{area.get('name')}: no measured member for {shader.rsplit('/', 1)[-1]}"
 
-    tree = nodes.build_group(member)
+    if member.target == "frontier":
+        from . import frontier
+        if member.name == "fxheatv5":
+            return build_heat_area_material(area, member, resources, index, heat_context)
+        if member.name not in frontier.SUPPORTED:
+            return None, f"{area.get('name')}: Frontier {member.name} surface is not yet qualified"
+        lookup_samples = None
+        if member.name == "asteroid":
+            resource = next((r for r in effect.get("resources", []) if r.get("name") == "MaterialLookupGradient"), None)
+            local = local_file(resources, resource.get("resourcePath")) if resource else None
+            if local:
+                image = load_texture(local, name=resfile.display_name(resource["resourcePath"]),
+                                     logical_path=resource["resourcePath"])
+                if image is not None and image.size[0] and image.size[1]:
+                    if image.colorspace_settings.name != "Non-Color" and image.users:
+                        image = image.copy()
+                    if image.colorspace_settings.name != "Non-Color":
+                        image.colorspace_settings.name = "Non-Color"
+                    lookup_samples = tuple(texel[0] for texel in frontier.mip0_first_row(image))
+            if lookup_samples is None:
+                print(f"  ! {area.get('name')}: MaterialLookupGradient unavailable; using the unbound black lookup")
+        tree = frontier.build_group(member, lookup_samples=lookup_samples)
+    else:
+        tree = nodes.build_group(member)
     material = bpy.data.materials.new(f"{index:02d} {area.get('name') or member.name}")
+    material["carbon_source"] = member.target
+    material["carbon_effect_path"] = shader
+    material["carbon_effect_identity"] = member.identity
+    if member.target == "frontier" and member.name == "fxv5":
+        material["carbon_frontier_vertex_view"] = True
+        # Eevee's dithered path discards the fully transparent closure and
+        # loses its additive emission. The blended path preserves ONE+ONE.
+        if hasattr(material, "surface_render_method"):
+            material.surface_render_method = "BLENDED"
+        else:
+            material.blend_method = "BLEND"
+    if member.target == "frontier" and "skinned_" in shader.rsplit("/", 1)[-1].lower():
+        # Blender's Armature modifier leaves imported generic vector
+        # attributes in the rest pose; pixel-bytecode aliases do not prove
+        # equivalent animated vertex frames.
+        material["carbon_frontier_normal_limit"] = "Authored tangent frame remains in the rest pose"
+        alias = member.aliases.get(shader.lower(), {})
+        material["carbon_rigid_frame_required"] = alias.get("vertexSha256") == frontier.RIGID_VERTEX_SHA256
     material.use_nodes = True
     mnodes, mlinks = material.node_tree.nodes, material.node_tree.links
     mnodes.clear()
@@ -294,9 +415,16 @@ def build_area_material(area, family, resources, index):
                              logical_path=path)
         if image is None:
             continue          # a 3D volume texture, or unreadable
-        image.colorspace_settings.name = (
-            "sRGB" if member.annotation(name).srgb else "Non-Color"
-        )
+        color_space = "sRGB" if member.annotation(name).srgb else "Non-Color"
+        # Colorspace belongs to the Blender image datablock, not the texture
+        # node. Shared EVE/Frontier bytes may have different interpretations.
+        if image.colorspace_settings.name != color_space and image.users:
+            image = next((other for other in bpy.data.images
+                if other.filepath == image.filepath and other.colorspace_settings.name == color_space), None) or image.copy()
+        # Even assigning the existing colorspace can discard edited/generated
+        # pixel data in Blender. Only change interpretation when necessary.
+        if image.colorspace_settings.name != color_space:
+            image.colorspace_settings.name = color_space
         node = mnodes.new("ShaderNodeTexImage")
         node.image = image
         node.location = (-700, row)
@@ -313,9 +441,9 @@ def build_area_material(area, family, resources, index):
         if name == "SailsDetailMap":
             node.extension = "REPEAT"
             data = next((c.get("value") for c in effect.get("constParameters", [])
-                         if c.get("name") == "SailsDetailData"), None)
+                         if c.get("name") == "SailsDetailData"), member.defaults().get("SailsDetailData"))
             sails = mnodes.new("ShaderNodeGroup")
-            sails.node_tree = nodes.build_sails_group()
+            sails.node_tree = nodes.build_sails_group(authored_uv=member.target == "frontier")
             sails.location = (-1000, row)
             if data:
                 sails.inputs["Tiling"].default_value = float(data[0])
@@ -343,13 +471,44 @@ def build_area_material(area, family, resources, index):
             mlinks.new(mapping.outputs["Vector"], node.inputs["Vector"])
         if name == "DustNoiseMap" and nodes.DUST_ALPHA in group.inputs:
             mlinks.new(node.outputs["Alpha"], group.inputs[nodes.DUST_ALPHA])
+        if member.target == "frontier" and name in ("Detail1Map", "Detail2Map"):
+            alpha = group.inputs.get(name.replace("Map", "Alpha"))
+            if alpha is not None:
+                mlinks.new(node.outputs["Alpha"], alpha)
+        if member.target == "frontier" and member.name == "fxv5":
+            mlinks.new(node.outputs["Alpha"], group.inputs[name + "Alpha"])
         row -= 300
 
-    wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources)
+    if member.target != "frontier":
+        wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources)
     fill_unbound_textures(member, group, mnodes, mlinks, row)
+    if member.target == "frontier":
+        from .frontier import wire_coordinates
+        wire_coordinates(member, effect, material)
+        wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources)
 
     for constant in effect.get("constParameters", []):
         name, value = constant.get("name"), constant.get("value") or []
+        if member.target == "frontier":
+            if name not in member.constants or not value:
+                continue
+            if member.name == "fxv5" and name == "BaseColor" and len(value) > 3:
+                group.inputs["BaseColorAlpha"].default_value = float(value[3])
+            from .frontier import constant_sockets
+            for lane, (label, kind, _) in enumerate(constant_sockets(member, name)):
+                socket = group.inputs.get(label)
+                if socket is not None:
+                    socket.default_value = (tuple(value[:3]) + (1.0,) if kind == "NodeSocketColor"
+                                            else float(value[lane]) if lane < len(value) else socket.default_value)
+            continue
+        annotation = member.annotation(name)
+        lanes = [] if nodes.socket_name(name) != name else annotation.components()
+        if len(lanes) > 1 and not annotation.is_color:
+            for lane, label in enumerate(lanes):
+                socket = group.inputs.get(f"{name.replace('Data', '')} {label}")
+                if socket is not None and lane < len(value):
+                    socket.default_value = float(value[lane])
+            continue
         socket = group.inputs.get(nodes.socket_name(name))
         if socket is None or not value:
             continue

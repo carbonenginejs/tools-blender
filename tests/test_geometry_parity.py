@@ -43,6 +43,14 @@ def project(meshes=None, skeletons=None, animations=None, **extra):
 
 
 class GeometryProjectionTests(unittest.TestCase):
+    def test_morph_count_is_validated_before_layout_inference(self):
+        for count in ("3", 3.0, True, -1, 0):
+            mesh = triangle()
+            mesh["morphTargets"] = [{"name": "Invalid", "vertexCount": count,
+                                    "vertex": {"position": [1, 0, 0] * 3}}]
+            with self.subTest(count=count), self.assertRaises(CmfError):
+                build_cmf_from_shared({"meshes": [mesh]})
+
     def test_absolute_and_delta_morphs_produce_absolute_cmf_positions(self):
         for deltas in (True, False):
             mesh = triangle()
@@ -98,6 +106,26 @@ class GeometryProjectionTests(unittest.TestCase):
             mesh["indices"][0]["faces"][0] = index
             with self.assertRaisesRegex(CmfError, "index"):
                 build_cmf_from_shared({"meshes": [mesh]})
+        for count in (0, False, 3.0, -1):
+            mesh = triangle()
+            mesh["vertexCount"] = count
+            with self.assertRaisesRegex(CmfError, "vec3"):
+                build_cmf_from_shared({"meshes": [mesh]})
+
+    def test_four_wide_geometry_and_morph_preserve_extra_lanes(self):
+        original = triangle()
+        xyz = build_cmf_from_shared({"meshes": [original]})["meshes"][0]
+        mesh = triangle()
+        mesh["vertexCount"] = 3
+        mesh["vertex"]["position"] = [x for i in range(3)
+            for x in (*mesh["vertex"]["position"][i*3:i*3+3], 42)]
+        mesh["morphTargets"] = [{"name": "move", "vertexCount": 3,
+            "dataIsDeltas": True, "vertex": {"position": [0, 0, 1, 0] * 3}}]
+        built = build_cmf_from_shared({"meshes": [mesh]})["meshes"][0]
+        self.assertEqual(built["uvDensities"], xyz["uvDensities"])
+        self.assertEqual(next(d for d in built["decl"] if d["usage"] == "Position")["elementCount"], 4)
+        self.assertEqual(built["lods"][0]["morphTargets"][0]["vertex"]["position"][3::4], [42]*3)
+        self.assertEqual(build_shared_from_cmf({"meshes": [built]})["meshes"][0]["vertexCount"], 3)
 
     def test_indexed_channels_and_density_holes(self):
         mesh = triangle()
@@ -277,6 +305,30 @@ except ImportError:
 
 @unittest.skipUnless(bpy, "needs Blender")
 class BlenderMorphParityTests(unittest.TestCase):
+    def test_vec4_positions_keep_skinning_and_duplicate_influences_accumulate(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        sys.path.insert(0, str(ROOT / "addons"))
+        from carbon_eve_resources.gr2_importer import addon
+        data = bpy.data.meshes.new("skin width test")
+        data.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [], [(0, 1, 2)])
+        obj = bpy.data.objects.new("skin width test", data)
+        entry = {"vertexCount": 3, "boneBindings": [{"name": "A"}, {"name": "B"}],
+                 "vertex": {"position": [0, 0, 0, 1] * 3,
+                            "blendIndice": [0, 0, 1, 0] * 3,
+                            "blendWeight": [.2, .3, .5, 0] * 3}}
+        armature = SimpleNamespace(type="ARMATURE", data=SimpleNamespace(bones={"A": None, "B": None}))
+        try:
+            with patch.object(addon, "_ensure_armature_modifier"):
+                for _ in range(2):
+                    addon.apply_skinning(obj, entry, armature)
+                    for index in range(3):
+                        self.assertAlmostEqual(obj.vertex_groups["A"].weight(index), .5)
+                        self.assertAlmostEqual(obj.vertex_groups["B"].weight(index), .5)
+        finally:
+            bpy.data.objects.remove(obj)
+            bpy.data.meshes.remove(data)
+
     def test_cmf_absolute_position_reaches_shape_key_without_double_offset(self):
         sys.path.insert(0, str(ROOT / "addons"))
         from carbon_eve_resources.gr2_importer.addon import _add_morph_targets

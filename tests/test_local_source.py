@@ -206,6 +206,14 @@ class TranslationsStayInTheCacheTests(unittest.TestCase):
         self.assertEqual(found.relative_to(self.cache),
                          Path("dx9/model/ship/gb2_t1_a.png"))
 
+    def test_frontier_install_derivatives_use_the_shared_cache(self):
+        frontier = self.resfiles / "frontier"
+        self.reader.ROOTS["frontier_resfiles"] = str(frontier)
+        self.reader.ROOTS["resfiles"] = str(self.local)
+        source = frontier / "ResFiles" / "b4" / "b40590f110b66d26_abc"
+        found = self.reader.derived_path(source)
+        self.assertEqual(found, self.cache / "ResFiles/b4/b40590f110b66d26_abc.png")
+
     def test_nothing_lands_in_either_local_folder(self):
         # The rule stated as a rule, so it fails on ANY future path that
         # would put a translation in somebody else's tree.

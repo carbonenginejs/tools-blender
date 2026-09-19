@@ -33,7 +33,7 @@ SUFFIX = ".parsed"
 
 #: Bumped when the parser's output changes shape. An old file is then ignored
 #: rather than fed to a newer importer that expects something else.
-VERSION = 2
+VERSION = 3
 
 #: What the child runs. It imports the PARSER package, which is free of
 #: Blender. The add-on module next to it is Blender's side of the importer and

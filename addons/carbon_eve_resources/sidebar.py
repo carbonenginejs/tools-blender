@@ -57,6 +57,10 @@ def _ship_of(context):
             return obj
         obj = obj.parent
 
+    state = getattr(getattr(context, "window_manager", None), "carbon_eve_resources", None)
+    if state is not None and getattr(state, "new_ship", False):
+        return None
+
     ships = ships_in_file()
     return ships[0] if len(ships) == 1 else None
 
@@ -114,6 +118,9 @@ class CARBON_PT_sidebar_about(Panel):
         state = getattr(context.window_manager, "carbon_eve_resources", None)
         if state is None:
             return
+        source = self.layout.row()
+        source.enabled = not state.busy
+        source.prop(state, "source")
         cache = self.layout.row(align=True)
         cache.label(text=state.cache_summary, icon="DISK_DRIVE")
         cache.operator(addon.EVE_RESOURCE_OT_refresh_cache_stats.bl_idname,
@@ -145,6 +152,7 @@ class CARBON_PT_sidebar_about(Panel):
         # wants when the ship belongs to nobody yet, or when they are showing
         # a design rather than a character's actual corp.
         banners = self.layout.box()
+        banners.enabled = state.source != "frontier"
         banners.label(text="Banners")
         for switch, field in (("use_corp_banner", "corp_banner"),
                               ("use_alliance_banner", "alliance_banner")):
@@ -189,6 +197,7 @@ class CARBON_PT_sidebar_dna(Panel):
         layout.use_property_decorate = False
         state = getattr(context.window_manager, "carbon_eve_resources", None)
         ship = _ship_of(context)
+        layout.operator("carbon.eve_resource_new_ship", text="New Ship", icon="ADD")
         # The loaded ship's settings, else the scene's scratch SOF so a DNA
         # can be composed before anything is loaded.
         settings = ship.carbon_sof if ship is not None else context.scene.carbon_sof
@@ -210,14 +219,16 @@ class CARBON_PT_sidebar_dna(Panel):
             sof_panels.draw_name_search(required, settings, field, kind=kind,
                                         text=field.title(), icon=icon)
 
+        from .service_access import source_target
+        eve_commands = source_target(context, settings) != "frontier"
         _command(layout, settings, "use_mesh", "carbon_cmd_mesh",
-                 [f"mesh_material{index}" for index in (1, 2, 3, 4)])
+                 [f"mesh_material{index}" for index in (1, 2, 3, 4)], enabled=eve_commands)
         _command(layout, settings, "use_pattern", "carbon_cmd_pattern",
-                 ["pattern", "pattern_material5", "pattern_material6"])
+                 ["pattern", "pattern_material5", "pattern_material6"], enabled=eve_commands)
         _command(layout, settings, "use_respath", "carbon_cmd_respath",
                  ["respath_insert"])
         _command(layout, settings, "use_layout", "carbon_cmd_layout",
-                 ["layout_names"])
+                 ["layout_names"], enabled=eve_commands)
 
         # Load builds the DNA into a ship; Refresh re-resolves the materials
         # of the ship already here. The arrow forces a fresh bundle.
@@ -230,6 +241,10 @@ class CARBON_PT_sidebar_dna(Panel):
                                  text="", icon="FILE_REFRESH")
         again.dna = settings.dna
         again.refresh = True
+        for operator in (load, again):
+            operator.source_target = settings.source_target
+            operator.resource_build = settings.resource_build
+            operator.sde_build = settings.sde_build
         actions = layout.row(align=True)
         actions.operator("carbon.sof_apply", text="Refresh Materials",
                          icon="MATERIAL")
@@ -253,7 +268,7 @@ class CARBON_PT_sidebar_dna(Panel):
             layout.operator("carbon.eve_resource_cancel", icon="X")
 
 
-def _command(layout, settings, toggle, idname, fields):
+def _command(layout, settings, toggle, idname, fields, *, enabled=True):
     """One optional DNA command: a switch, and its arguments beneath it.
 
     The switch is the command's PRESENCE: off means absent from the DNA, which
@@ -264,12 +279,13 @@ def _command(layout, settings, toggle, idname, fields):
     if header is None:
         body = layout.column(align=True)
     target = header if header is not None else body
+    target.enabled = enabled
     # Left-aligned: a property split floats the checkbox mid-panel.
     target.use_property_split = False
     target.prop(settings, toggle)
     if body is None:
         return
-    body.enabled = bool(getattr(settings, toggle))
+    body.enabled = enabled and bool(getattr(settings, toggle))
     body.use_property_split = True
     body.use_property_decorate = False
     for field in fields:
@@ -327,6 +343,16 @@ class CARBON_PT_sidebar_attributes(Panel):
         for name, label in self.VALUES:
             if name in ship.keys():
                 layout.prop(ship, f'["{name}"]', text=label)
+        from .quad import native_heat
+        if native_heat.STRENGTH in ship:
+            box = layout.box()
+            box.label(text="Native heat haze (approximation)")
+            for name, label in ((native_heat.STRENGTH, "Strength"),
+                                (native_heat.GROWTH, "Coverage"),
+                                (native_heat.WIDTH, "Shell width / radius")):
+                box.prop(ship, f'["{name}"]', text=label)
+            box.label(text="Strength 0 disables the effect")
+            box.prop(context.scene.eevee, "use_raytracing", text="Eevee ray tracing")
 
 
 CLASSES = (

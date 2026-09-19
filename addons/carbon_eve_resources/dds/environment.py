@@ -45,6 +45,9 @@ FACE_SIZE = 0
 #: the ship.
 EQUIRECT_WIDTH = 0
 
+# Face strides now include mip chains; do not reuse old misaddressed skies.
+CACHE_SUFFIX = ".cube-v2.hdr"
+
 #: DDS cube face order, which is also the order `sample_cube` indexes.
 FACE_ORDER = ("+x", "-x", "+y", "-y", "+z", "-z")
 
@@ -69,6 +72,25 @@ def inspect(data: bytes) -> dict:
         raise CubeError("cube map is missing faces")
     if not bc6h.is_bc6h(header.dxgi_format):
         raise CubeError(f"unsupported cube format: DXGI {header.dxgi_format}")
+    if header.width < 1 or header.width != header.height:
+        raise CubeError("cube faces must be nonempty and square")
+    mip_count = max(1, struct.unpack_from("<I", data, 28)[0])
+    if mip_count > header.width.bit_length():
+        raise CubeError("cube mip count exceeds its dimensions")
+    # DDS stores the complete mip chain of each face before the next face.
+    # Runtime's dds/core/helpers.js buildDdsSubresources uses the same
+    # layer-then-mip order. Frontier's 2048-square nebulae carry 12 levels.
+    face_stride = sum(_block_bytes(max(1, header.width >> level),
+                                   max(1, header.height >> level))
+                      for level in range(mip_count))
+    payload_size = len(data) - header.data_offset
+    if payload_size < 6 * face_stride:
+        raise CubeError("cube map data is truncated")
+    array_size = max(1, struct.unpack_from("<I", data, 140)[0])
+    # Carbon counts faces here in some Frontier files. As in runtime, accept
+    # that spelling only when exactly one complete cube accounts for the data.
+    if array_size > 1 and payload_size != 6 * face_stride:
+        raise CubeError("cube arrays cannot form one environment")
     return {
         "width": header.width,
         "height": header.height,
@@ -76,6 +98,8 @@ def inspect(data: bytes) -> dict:
         "dxgi": header.dxgi_format,
         "offset": header.data_offset,
         "face_bytes": _block_bytes(header.width, header.height),
+        "face_stride": face_stride,
+        "mip_count": mip_count,
     }
 
 
@@ -93,9 +117,11 @@ def decode_face(data: bytes, info: dict, index: int, size: int = FACE_SIZE):
     """
 
     width = info["width"]
-    blocks = max(1, width // 4)
+    blocks = max(1, (width + 3) // 4)
     signed = info["dxgi"] == bc6h.DXGI_BC6H_SF16
-    base = info["offset"] + index * info["face_bytes"]
+    if not 0 <= index < 6:
+        raise CubeError("cube face index must be in 0..5")
+    base = info["offset"] + index * info["face_stride"]
 
     decode = bc6h.decode_block
     pixels = array("f", bytes(4 * width * width * 3))
@@ -107,13 +133,12 @@ def decode_face(data: bytes, info: dict, index: int, size: int = FACE_SIZE):
             offset = base + (by * blocks + bx) * 16
             block = decode(data[offset:offset + 16], signed)
             left = bx * 12                       # 4 texels, 3 channels each
-            for y in range(4):
+            for y in range(min(4, width - top)):
                 at = (top + y) * stride + left
                 source = y * 16
-                pixels[at:at + 3] = array("f", block[source:source + 3])
-                pixels[at + 3:at + 6] = array("f", block[source + 4:source + 7])
-                pixels[at + 6:at + 9] = array("f", block[source + 8:source + 11])
-                pixels[at + 9:at + 12] = array("f", block[source + 12:source + 15])
+                for x in range(min(4, width - bx * 4)):
+                    pixels[at + x * 3:at + x * 3 + 3] = array(
+                        "f", block[source + x * 4:source + x * 4 + 3])
 
     if size and size < width:
         pixels = _box_filter(pixels, width, size)

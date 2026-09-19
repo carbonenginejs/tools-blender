@@ -113,6 +113,9 @@ class CatalogueTests(unittest.TestCase):
                          ["launchers", "xlTurrets"])
 
     def test_weapon_kind_mapping_covers_every_natural_slot_once(self):
+        self.assertEqual(weapons.compatible_slots({
+            "slot": "turrets", "chargeSize": 4, "compatibleSlots": [],
+        }), ())
         self.assertEqual(tuple(row[1] for row in weapons.WEAPON_KINDS),
                          weapons.WEAPON_SLOTS)
         self.assertEqual(len(set(weapons.WEAPON_SLOTS)), 6)

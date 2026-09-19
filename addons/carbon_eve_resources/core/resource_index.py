@@ -7,6 +7,7 @@ network behavior can be tested with the standard Python runtime.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import gzip
 import hashlib
 import json
 import math
@@ -45,6 +46,7 @@ class IndexEntry:
     uncompressed_size: Optional[int]
     compressed_size: Optional[int]
     binary_operation: Optional[int] = None
+    source_url: str = ""
 
     @property
     def extension(self) -> str:
@@ -154,6 +156,45 @@ class ResourceCatalog:
         results = sorted(folders.values(), key=lambda item: item.name.lower())
         results.extend(sorted(files, key=lambda item: item.name.lower()))
         return tuple(results[:limit])
+
+
+class ServiceResourceCatalog(ResourceCatalog):
+    """A target's logical catalog; resolve addresses only when requested."""
+
+    def __init__(self, source, client, entries, cache_root, cache_hit):
+        super().__init__(source.resource_build, entries, cache_root, cache_hit)
+        self.source = source
+        self.client = client
+
+    def get(self, logical_path):
+        from dataclasses import replace
+        from .source import resource_resolution
+        entry = super().get(logical_path)
+        resolution = resource_resolution(self.client, self.cache_root,
+            entry.logical_path, self.build, self.source.target)
+        url = resolution.get("sourceUrl") or ""
+        location = normalize_storage_path("/".join(url.split("/")[-2:]))
+        return replace(entry, location=location, source_url=url)
+
+
+def service_catalog(source, client, cache_root, refresh=False):
+    from .source import write_json
+    path = Path(cache_root) / "sources" / source.target / source.resource_build / "catalog.json"
+    hit = path.is_file() and not refresh
+    if hit:
+        paths = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        paths = client.request_json("GET", f"/{source.target}/{source.resource_build}/resfiles")
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            raise ResourceIndexError("Service returned an invalid resource catalog")
+        write_json(path, paths)
+    entries = []
+    for path in paths:
+        if not path.lower().startswith("res:/"):
+            continue
+        logical = normalize_logical_path(path)
+        entries.append(IndexEntry(logical, logical[5:], "", None, None, None))
+    return ServiceResourceCatalog(source, client, entries, Path(cache_root), hit)
 
 
 def is_detail_variant(entry: IndexEntry) -> bool:
@@ -372,7 +413,7 @@ def fetch_resource(
         cached = _read_valid_file(path, entry)
         if cached is not None:
             return FetchResult(entry, path, True)
-    url = f"{RESOURCE_BASE_URL}/{entry.location}"
+    url = entry.source_url or f"{RESOURCE_BASE_URL}/{entry.location}"
     payload = _download(url, opener, timeout)
     validate_bytes(payload, entry, entry.logical_path)
     _write_atomic(path, payload)
@@ -537,7 +578,11 @@ def _download(url: str, opener: Callable, timeout: float) -> bytes:
             status = getattr(response, "status", 200)
             if status is not None and not 200 <= int(status) < 300:
                 raise ResourceIndexError(f"Failed to download {url}: HTTP {status}")
-            return response.read()
+            payload = response.read()
+            headers = getattr(response, "headers", {})
+            if str(headers.get("Content-Encoding", "")).lower().strip() in ("gzip", "x-gzip"):
+                payload = gzip.decompress(payload)
+            return payload
     except ResourceIndexError:
         raise
     except Exception as exc:

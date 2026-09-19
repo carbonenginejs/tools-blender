@@ -103,7 +103,7 @@ def compatible_slots(entry, group_name: str = "") -> tuple:
     """The bays that accept a weapon, preferring tools-core's shared answer."""
 
     authored = entry.get("compatibleSlots")
-    if isinstance(authored, (list, tuple)) and authored:
+    if isinstance(authored, (list, tuple)):
         return tuple(str(slot) for slot in authored if slot)
 
     natural = str(entry.get("slot") or "")

@@ -37,6 +37,12 @@ class OverrideTests(unittest.TestCase):
     def test_nothing_chosen_overrides_nothing(self):
         self.assertEqual(self.addon.banner_overrides(Prefs()), {})
 
+    def test_frontier_ignores_eve_banner_preferences(self):
+        prefs = Prefs(use_corp_banner=True, corp_banner="//corp.png",
+                      use_alliance_banner=True, alliance_banner="//alliance.png")
+        self.assertEqual(self.addon.banner_overrides(prefs, target="frontier"), {})
+        self.assertEqual(len(self.addon.banner_overrides(prefs, target="eve")), 2)
+
     def test_a_path_alone_does_nothing(self):
         # The tick is the switch. A half-filled setting behaves as off rather
         # than as a missing file.
@@ -69,6 +75,18 @@ class OverrideTests(unittest.TestCase):
 
 @unittest.skipIf(bpy is None, "needs Blender")
 class LoadingTests(unittest.TestCase):
+    def test_frontier_skips_corporation_and_alliance_sets(self):
+        from unittest.mock import patch
+        from carbon_eve_resources import ship
+        document = {"carbonSource": {"target": "frontier"}, "bannerSets": [
+            {"_type": "EveBannerSet", "key": ship.BANNER_USAGES.index(usage),
+             "banners": [{"name": "not built"}]}
+            for usage in ("corp_logo", "alliance_logo")]}
+        with patch.object(ship, "ship_armature", return_value=None), \
+             patch.object(ship, "attachment_collection") as collection:
+            self.assertEqual(ship.build_banner_sets(document, None, None), [])
+            collection.assert_not_called()
+
     def test_a_path_that_will_not_open_falls_through(self):
         # Reported, and treated as absent. A banner that falls back to the
         # fetched logo is recoverable; one silently left blank is not.

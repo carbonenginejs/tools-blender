@@ -8,6 +8,8 @@ from pathlib import Path
 import sys
 import inspect
 import unittest
+import tempfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "addons"))
 
@@ -40,6 +42,32 @@ class DestinationTests(unittest.TestCase):
 
     def test_nothing_to_export_it_under(self):
         self.assertIsNone(resfile.export_destination("/out", "", "/cache/x"))
+
+
+class ExportIdentityTests(unittest.TestCase):
+    def test_shared_logical_name_preserves_each_payload_and_exported_edits(self):
+        from carbon_eve_resources import export
+        class Image(dict):
+            def __init__(self, name, path):
+                super().__init__()
+                self.name, self.filepath = name, str(path)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            eve, frontier = root / "eve.dds", root / "frontier.dds"
+            eve.write_bytes(b"eve payload")
+            frontier.write_bytes(b"frontier payload")
+            images = [(Image("eve", eve), PATH), (Image("frontier", frontier), PATH)]
+            with patch.object(export, "eve_images", return_value=images):
+                written, failed = export.export_images(root / "output")
+                self.assertEqual(failed, [])
+                self.assertNotEqual(written[0], written[1])
+                self.assertEqual(written[0].read_bytes(), b"eve payload")
+                self.assertEqual(written[1].read_bytes(), b"frontier payload")
+                written[1].write_bytes(b"artist edit")
+                again, failed = export.export_images(root / "output")
+                self.assertEqual(failed, [])
+                self.assertEqual(again, written)
+                self.assertEqual(again[1].read_bytes(), b"artist edit")
 
 
 class EveImagesTests(unittest.TestCase):

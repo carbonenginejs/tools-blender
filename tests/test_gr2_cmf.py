@@ -9,9 +9,33 @@ for package in ("carbon-cmf", "carbon-granny", "carbon-gr2"):
 
 from carbon_gr2 import project_cmf  # noqa: E402
 from carbon_gr2.json_graph import emit_json  # noqa: E402
+from carbon_granny import TypedList, MEMBER_TYPES
+from carbon_gr2.tangents import unpack_mesh_tangents
 
 
 class Gr2CmfTests(unittest.TestCase):
+    def test_authored_widths_do_not_turn_plain_tangents_into_packed_frames(self):
+        vertices = TypedList(granny_type=[
+            {"name": name, "array_width": width, "type": MEMBER_TYPES["Real32"]}
+            for name, width in (("Position", 4), ("Tangent", 3), ("TextureCoordinates0", 4))])
+        vertices.extend([{"Position": [1, 2, 3, 42], "Tangent": [1, 0, 0],
+                          "TextureCoordinates0": [0.1, 0.2, 7, 8]}])
+        mesh = emit_json({"Meshes": [{"PrimaryVertexData": {"Vertices": vertices}}]}, 7)["meshes"][0]
+        self.assertEqual(mesh["vertexCount"], 1)
+        self.assertEqual(mesh["vertex"]["position"], [1, 2, 3, 42])
+        self.assertEqual(mesh["vertex"]["texcoord0"][2:], [7, 8])
+        self.assertFalse(unpack_mesh_tangents(mesh))
+        self.assertEqual(mesh["vertex"]["tangent"], [1, 0, 0])
+
+    def test_nonfinite_transform_components_use_channel_identity(self):
+        nan = float("nan")
+        skeleton = {"Bones": [{"LocalTransform": {"flags": 6,
+            "orientation": [0, 0, 0, nan], "scaleShear": [nan] * 9}}]}
+        result = emit_json({"Skeletons": [skeleton]}, 7)
+        bone = result["skeletons"][0]["bones"][0]
+        self.assertEqual(bone["orientation"], [0, 0, 0, 1])
+        self.assertEqual(bone["scaleShear"], [1, 0, 0, 0, 1, 0, 0, 0, 1])
+
     def test_emitter_preserves_root_skeleton_identity_and_vector_tracks(self):
         skeleton = {
             "Name": "rig",

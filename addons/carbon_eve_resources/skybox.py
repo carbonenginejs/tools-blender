@@ -4,10 +4,11 @@ Most of what lights a quad surface comes from the environment, so a hull lit by
 a flat grey reads as far too dark however right its materials are. This puts
 the real sky behind it.
 
-The choice offered is the REGION rather than the system. A nebula belongs to
+For EVE the choice offered is the REGION rather than the system. A nebula belongs to
 the region -- every system in The Forge sees the same sky -- so 114 named
 regions say everything 8490 systems would, and the service confirms it by
 reporting which region a system's nebula came from.
+Frontier instead chooses a scene resource and reads its authored NebulaMap.
 
 Three conversions stand between the cube and the world, and all of them are in
 `dds/environment.py`: BC6H, which Blender does not read; cube to
@@ -36,6 +37,7 @@ from .core import nebula, resindex, sof_fetch
 #: strings a dynamic `items` callback returns. Letting them be collected shows
 #: up as mangled labels, or a crash.
 _ITEMS: list = []
+_SCENE_ITEMS: list = []
 
 #: The node names, so a rebuild replaces its own work rather than stacking.
 ENVIRONMENT_NODE = "CarbonNebula"
@@ -46,7 +48,12 @@ def region_items(self, context):
 
     global _ITEMS
     client = service_access.client(context)
-    found = nebula.regions(client)
+    try:
+        source = service_access.source(context)
+    except Exception:
+        _ITEMS = [("", "No regions loaded", "The service is unreachable")]
+        return _ITEMS
+    found = nebula.regions(client, **source.sde()) if source.target != "frontier" else []
     if not found:
         _ITEMS = [("", "No regions loaded", "The service is unreachable")]
         return _ITEMS
@@ -67,7 +74,34 @@ def _region_update(self, context):
         bpy.ops.carbon.apply_skybox("INVOKE_DEFAULT")
 
 
+def scene_items(self, context):
+    """Frontier's scene assets, independently of EVE region IDs."""
+    global _SCENE_ITEMS
+    try:
+        client = service_access.client(context)
+        source = service_access.source(context)
+        found = nebula.scenes(client, **source.resources())
+        _SCENE_ITEMS = [(path, Path(path).stem.removesuffix("_cube").replace("_", " ").title(), path)
+                        for path in found]
+    except Exception:
+        _SCENE_ITEMS = []
+    if not _SCENE_ITEMS:
+        _SCENE_ITEMS = [("", "No nebula scenes loaded", "The scene catalog is unavailable")]
+    return _SCENE_ITEMS
+
+
+def _scene_update(self, context):
+    if self.nebula_scene:
+        bpy.ops.carbon.apply_skybox("INVOKE_DEFAULT")
+
+
 class CARBON_SkyboxState(PropertyGroup):
+    nebula_scene: EnumProperty(
+        name="Scene",
+        description="Frontier scene whose nebula appears behind the ship",
+        items=scene_items,
+        update=_scene_update,
+    )
     region: EnumProperty(
         name="Region",
         description="Whose sky to put behind the ship. Every system in a "
@@ -138,7 +172,8 @@ def apply_world(scene, image, strength: float = NEBULA_STRENGTH):
     return world
 
 
-def build_environment(client, nebula_id: int, cache_root, *, progress=None):
+def build_environment(client, nebula_id: int, cache_root, *, progress=None, source=None,
+                      scene_path="", local_root=None, resfiles_root=None):
     """The nebula's cube, fetched and converted. Returns the `.hdr` path.
 
     Runs on the JOB thread: no `bpy` and no scene changes in here, only the
@@ -146,33 +181,33 @@ def build_environment(client, nebula_id: int, cache_root, *, progress=None):
     by `finish_job`.
     """
 
-    from .dds import reader as dds_reader, worker
+    from .dds import environment as cube, reader as dds_reader, worker
 
-    path = nebula.cube_path(client, nebula_id)
+    from .core.source import resolve
+    source = source or resolve(client, cache_root=cache_root)
+    path = (nebula.scene_cube_path(client, scene_path, **source.resources()) if scene_path else
+            nebula.cube_path(client, nebula_id, **source.sde()))
     if not path:
         raise RuntimeError("that region names no nebula cube")
 
     if progress is not None:
         progress(f"Fetching {Path(path).name}")
-    build = str((client.request_json("GET", "/eve/latest/build")
-                 or {}).get("build") or "")
-    index = resindex.load(cache_root, build) if build else None
-    source = sof_fetch.fetch_resource(path, client, cache_root, build=build,
-                                      index=index)
+    build = source.resource_build
+    index = resindex.load(cache_root, build) if source.target == "eve" else None
+    local = sof_fetch.fetch_resource(path, client, cache_root, **source.resources(),
+                                     index=index, local_root=local_root, resfiles_root=resfiles_root)
 
     # Beside the cube in our cache, addressed by the cube's CONTENT, so the
     # regions that share a nebula share the conversion too.
-    destination = dds_reader.derived_path(source, ".hdr")
+    destination = dds_reader.derived_path(local, cube.CACHE_SUFFIX)
     if destination.is_file() and destination.stat().st_size > 0:
         return destination, path
 
-    if not worker.convert_environment(source, destination, progress=progress):
+    if not worker.convert_environment(local, destination, progress=progress):
         # The child could not run. Do it here rather than refuse: this thread
         # holds the GIL while it works, so the window will stutter, but the
         # artist gets their sky.
-        from .dds import environment as cube
-
-        cube.convert_file(source, destination)
+        cube.convert_file(local, destination)
     return destination, path
 
 
@@ -259,28 +294,44 @@ class CARBON_OT_apply_skybox(Operator):
         from . import addon
 
         state = context.window_manager.carbon_eve_skybox
-        if not state.region:
-            self.report({"ERROR"}, "Choose a region first")
-            return {"CANCELLED"}
 
         client = service_access.client(context)
         if client is None:
             self.report({"ERROR"}, "The CarbonEngineJS service is unreachable")
             return {"CANCELLED"}
 
-        chosen = int(state.region)
-        row = next((row for row in nebula.regions(client) if row[0] == chosen),
-                   None)
-        if row is None:
-            self.report({"ERROR"}, "That region is no longer listed")
-            return {"CANCELLED"}
-        name, nebula_id = row[1], row[2]
+        source = service_access.source(context)
+        scene_path = ""
+        nebula_id = None
+        if source.target == "frontier":
+            scene_path = state.nebula_scene
+            if not scene_path or scene_path not in nebula.scenes(client, **source.resources()):
+                self.report({"ERROR"}, "Choose a Frontier nebula scene first")
+                return {"CANCELLED"}
+            name = Path(scene_path).stem.removesuffix("_cube").replace("_", " ").title()
+        else:
+            if not state.region:
+                self.report({"ERROR"}, "Choose a region first")
+                return {"CANCELLED"}
+            chosen = int(state.region)
+            row = next((row for row in nebula.regions(client, **source.sde()) if row[0] == chosen), None)
+            if row is None:
+                self.report({"ERROR"}, "That region is no longer listed")
+                return {"CANCELLED"}
+            name, nebula_id = row[1], row[2]
 
         cache_root = _cache_root(context)
+        from .core.source import resfiles_directory
+        prefs = addon._prefs(context)
+        resfiles_root = resfiles_directory(prefs, source.target)
+        resfiles_root = bpy.path.abspath(resfiles_root) if resfiles_root else None
+        local_root = (bpy.path.abspath(prefs.local_source) if prefs.use_local_source and prefs.local_source else None)
 
         def work():
             return name, build_environment(client, nebula_id, cache_root,
-                                           progress=addon._set_progress)
+                                           progress=addon._set_progress, source=source,
+                                           scene_path=scene_path, local_root=local_root,
+                                           resfiles_root=resfiles_root)
 
         try:
             # The same background job the ships use. A nebula is six faces of
@@ -306,12 +357,13 @@ class CARBON_PT_sidebar_skybox(Panel):
 
     def draw(self, context):
         layout = self.layout
+        browser = getattr(context.window_manager, "carbon_eve_resources", None)
         state = getattr(context.window_manager, "carbon_eve_skybox", None)
         if state is None:
             layout.label(text="Not registered")
             return
 
-        layout.prop(state, "region")
+        layout.prop(state, "nebula_scene" if getattr(browser, "source", "eve") == "frontier" else "region")
         layout.prop(state, "use_sun")
         layout.operator(CARBON_OT_apply_skybox.bl_idname, icon="WORLD")
         if state.status:

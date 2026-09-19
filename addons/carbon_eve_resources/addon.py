@@ -48,7 +48,7 @@ def _gr2_settings():
 
     return GR2ImporterPreferences
 IMAGE_EXTENSIONS = {".bmp", ".dds", ".jpeg", ".jpg", ".png", ".tga", ".tif", ".tiff"}
-MODEL_EXTENSIONS = {".gr2"}
+MODEL_EXTENSIONS = {".gr2", ".cmf"}
 DATA_EXTENSIONS = {".black", ".blue", ".json", ".red", ".xml", ".yaml", ".yml"}
 DEFAULT_DIRECTORY = "res:/dx9/model/ship/"
 CREATOR_TERMS_TITLE = "EVE Online Content Creation Terms of Use"
@@ -102,7 +102,7 @@ def _local_path_set(self, context):
     setting, and indistinguishable from the feature being broken.
     """
 
-    if (self.local_source or self.local_resfiles) and not self.use_local_source:
+    if (self.local_source or self.local_resfiles or self.frontier_resfiles) and not self.use_local_source:
         self.use_local_source = True
 
 
@@ -205,6 +205,15 @@ def _view_transform_chosen(self, context):
 class EVE_RESOURCE_Preferences(AddonPreferences):
     bl_idname = ADDON_ID
 
+    # service_access reads this through fresh RNA wrappers. An ordinary Python
+    # attribute assigned by a local preview disappears across those wrappers,
+    # silently routing later UI requests back to the hosted service.
+    service_url: StringProperty(
+        name="Service URL",
+        description="Optional tools-core endpoint override for local development",
+        default="",
+        options={"HIDDEN"},
+    )
     cache_directory: StringProperty(
         name="Tool cache",
         description="Shared content-addressed cache used for EVE indexes and ResFiles",
@@ -246,9 +255,16 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
     #: Both are READ ONLY. Anything translated out of them is written to our
     #: own cache -- never beside the file it came from.
     local_resfiles: StringProperty(
-        name="Local ResFiles",
+        name="EVE ResFiles",
         description="Folder laid out like the cache (ResFiles/<shard>/<name>), "
                     "read before downloading. Never written to",
+        subtype="DIR_PATH",
+        default="",
+        update=_local_path_set,
+    )
+    frontier_resfiles: StringProperty(
+        name="Frontier ResFiles",
+        description="Optional Frontier resource folder; read before downloading into the shared tool cache. Never written to",
         subtype="DIR_PATH",
         default="",
         update=_local_path_set,
@@ -384,6 +400,8 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         layout.prop(self, "haze_falloff")
 
         banners = layout.box()
+        from . import service_access
+        banners.enabled = service_access.source_target(context) != "frontier"
         banners.label(text="Banners")
         for switch, field in (("use_corp_banner", "corp_banner"),
                               ("use_alliance_banner", "alliance_banner")):
@@ -399,6 +417,7 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         local.enabled = self.use_local_source
         local.prop(self, "local_source")
         local.prop(self, "local_resfiles")
+        local.prop(self, "frontier_resfiles")
 
 
 class EVE_RESOURCE_OT_open_creator_terms(Operator):
@@ -506,7 +525,33 @@ class EVE_RESOURCE_Result(PropertyGroup):
     cached: BoolProperty(default=False)
 
 
+def _source_updated(self, context):
+    global _catalog
+    from . import service_access, sof_panels
+    _catalog = None
+    self.results.clear()
+    self.build = ""
+    self.preview_image = None
+    self.preview_logical_path = ""
+    self.preview_error_path = ""
+    self.dna = ""
+    self.status = "Source changed; load its resource index or SOF object"
+    service_access.forget()
+    sof_panels.forget_catalogs()
+    _new_ship(context)
+    skybox = getattr(context.window_manager, "carbon_eve_skybox", None)
+    if skybox is not None:
+        skybox.property_unset("region")
+        skybox.property_unset("nebula_scene")
+
+
 class EVE_RESOURCE_State(PropertyGroup):
+    new_ship: BoolProperty(default=False, options={"HIDDEN"})
+    source: EnumProperty(name="Source", default="eve", update=_source_updated,
+        items=(("eve", "EVE Online", "Tranquility"),
+               ("frontier", "EVE Frontier", "Frontier"),
+               ("infinity", "Infinity", "NetEase Infinity"),
+               ("serenity", "Serenity", "NetEase Serenity")))
     status: StringProperty(default="Resource index is not loaded")
     busy: BoolProperty(default=False)
     build: StringProperty(default="")
@@ -521,7 +566,7 @@ class EVE_RESOURCE_State(PropertyGroup):
         items=(
             ("ALL", "All files", "Show every file type"),
             ("IMAGES", "Textures", "Show Blender-previewable image and texture files"),
-            ("MODELS", "GR2", "Show Granny GR2 files"),
+            ("MODELS", "Models", "Show GR2 and CMF geometry"),
             ("DATA", "Data", "Show common Carbon data and descriptor files"),
         ),
         default="ALL",
@@ -555,6 +600,27 @@ class EVE_RESOURCE_State(PropertyGroup):
     preview_error_path: StringProperty(default="")
 
 
+def _new_ship(context):
+    """Start a draft for the selected Source without retargeting loaded ships."""
+    state = context.window_manager.carbon_eve_resources
+    state.new_ship = True
+    state.dna = ""
+    context.scene.property_unset("carbon_sof")
+    for obj in context.selected_objects:
+        obj.select_set(False)
+    context.view_layer.objects.active = None
+
+
+class EVE_RESOURCE_OT_new_ship(Operator):
+    bl_idname = "carbon.eve_resource_new_ship"
+    bl_label = "New Ship"
+    bl_description = "Start a new DNA for the selected Source; keep existing ships"
+
+    def execute(self, context):
+        _new_ship(context)
+        return {"FINISHED"}
+
+
 class EVE_RESOURCE_OT_build_sof_dna(Operator):
     """Fetches a composed DNA document and assembles its EVE resources."""
 
@@ -572,6 +638,9 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
     #: what the person was looking at -- usually nothing, which failed with a
     #: message about an empty DNA while a perfectly good one was on screen.
     dna: StringProperty(default="", options={"HIDDEN"})
+    source_target: StringProperty(default="", options={"HIDDEN"})
+    resource_build: StringProperty(default="", options={"HIDDEN"})
+    sde_build: StringProperty(default="", options={"HIDDEN"})
     refresh: BoolProperty(
         name="Rebuild",
         description="Request and download this DNA again instead of reusing cached files",
@@ -616,14 +685,18 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
 
         local_root = (bpy.path.abspath(prefs.local_source)
                       if prefs.use_local_source and prefs.local_source else None)
-        resfiles_root = (bpy.path.abspath(prefs.local_resfiles)
-                         if prefs.use_local_source and prefs.local_resfiles
-                         else None)
 
         # The booster's textures come from the RACE, and the document never
         # names them, so they are asked for alongside the ship rather than
         # after it -- one fetch, one cache pass, one progress line.
-        booster = _race_record(dna).get("booster") or {}
+        from .core.source import Source, provider_for
+        source = (Source(self.source_target, provider_for(self.source_target),
+                         self.resource_build, self.sde_build)
+                  if self.source_target else service_access.source(context))
+        from .core.source import resfiles_directory
+        resfiles_root = resfiles_directory(prefs, source.target)
+        resfiles_root = bpy.path.abspath(resfiles_root) if resfiles_root else None
+        booster = _race_record(dna, source).get("booster") or {}
         extra = tuple(path for path in (booster.get("shapeAtlasResPath"),
                                         booster.get("gradient0ResPath"),
                                         booster.get("gradient1ResPath"))
@@ -631,6 +704,7 @@ class EVE_RESOURCE_OT_build_sof_dna(Operator):
 
         def fetch():
             return sof_fetch.fetch_ship(dna, client, cache_root,
+                                        **source.resources(), source=source,
                                         progress=_set_progress,
                                         cancelled=_job_cancelled,
                                         local_root=local_root,
@@ -652,13 +726,15 @@ BANNER_OVERRIDES = {
     "alliance_logo": ("use_alliance_banner", "alliance_banner"),
 }
 
-def banner_overrides(prefs):
+def banner_overrides(prefs, *, target="eve"):
     """One path per banner slot somebody has pointed elsewhere, by usage.
 
     Only ticked slots with a path, so a half-filled setting behaves as off
     rather than as a missing file.
     """
 
+    if target == "frontier":
+        return {}
     found = {}
     for usage, (switch, field) in BANNER_OVERRIDES.items():
         path = str(getattr(prefs, field, "") or "").strip()
@@ -868,6 +944,18 @@ def _start_catalog_job(context, refresh: bool) -> None:
     if not _creator_terms_accepted(prefs):
         raise ResourceIndexError("Accept the EVE Creator License before loading the resource index")
     cache_root = _cache_path(prefs)
+    from . import service_access
+    from .core.resource_index import service_catalog
+    target = context.window_manager.carbon_eve_resources.source
+    client = service_access.client(context)
+    if target != "eve":
+        if refresh:
+            service_access.forget()
+        source = service_access.source(context)
+        _launch_job(context, "catalog", lambda: (
+            service_catalog(source, client, cache_root, refresh),
+            payload_cache_stats(cache_root), target), f"Loading {target} resources")
+        return
     _launch_job(
         context,
         "catalog",
@@ -879,6 +967,7 @@ def _start_catalog_job(context, refresh: bool) -> None:
                 offline_first=not refresh,
             ),
             payload_cache_stats(cache_root),
+            target,
         ),
         "Checking cached EVE resource index" if not refresh else "Checking latest Tranquility build",
     )
@@ -888,7 +977,7 @@ def _run_with_cache_stats(worker: Callable[[], Any], cache_root: Path):
     return worker(), payload_cache_stats(cache_root)
 
 
-def _hull_record(dna: str) -> dict:
+def _hull_record(dna: str, source=None) -> dict:
     """The hull record for a DNA, or an empty dict if it cannot be had.
 
     Carries the decal sets, plane sets, banner sets and area types, so a ship
@@ -919,7 +1008,8 @@ def _hull_record(dna: str) -> dict:
         # The RESOURCE build. `latest` resolves to two different numbers, one
         # for resources and one for the SDE, and a SOF route handed the SDE
         # build quietly acquires a whole second client build.
-        record = client.request_json("GET", f"/eve/latest/sof/hulls/{hull}")
+        source = source or service_access.source()
+        record = client.request_json("GET", f"/{source.target}/{source.resource_build}/sof/hulls/{hull}")
     except Exception as exc:
         print(f"[CarbonEngineJS SOF] hull record unavailable for {hull}: {exc}")
         return {}
@@ -978,7 +1068,7 @@ def apply_view_transform(prefs) -> bool:
     return True
 
 
-def _race_record(dna: str) -> dict:
+def _race_record(dna: str, source=None) -> dict:
     """The race record for a DNA, or an empty dict.
 
     The BOOSTER lives here, not on the faction and not on the hull: the shape
@@ -1002,14 +1092,15 @@ def _race_record(dna: str) -> dict:
     if client is None:
         return {}
     try:
-        record = client.request_json("GET", f"/eve/latest/sof/races/{race}")
+        source = source or service_access.source()
+        record = client.request_json("GET", f"/{source.target}/{source.resource_build}/sof/races/{race}")
     except Exception as exc:
         print(f"[CarbonEngineJS SOF] race record unavailable for {race}: {exc}")
         return {}
     return record if isinstance(record, dict) else {}
 
 
-def _faction_record(dna: str) -> dict:
+def _faction_record(dna: str, source=None) -> dict:
     """The faction record for a DNA, or an empty dict.
 
     It carries the colour set: thirty-eight named slots that most colours on
@@ -1031,7 +1122,8 @@ def _faction_record(dna: str) -> dict:
     if client is None:
         return {}
     try:
-        record = client.request_json("GET", f"/eve/latest/sof/factions/{faction}")
+        source = source or service_access.source()
+        record = client.request_json("GET", f"/{source.target}/{source.resource_build}/sof/factions/{faction}")
     except Exception as exc:
         print(f"[CarbonEngineJS SOF] faction record unavailable for {faction}: {exc}")
         return {}
@@ -1047,7 +1139,9 @@ def _build_fetched_ship(document, resources, problems) -> str:
     from .core import sof_fetch
 
     dna = str(document.get("dna") or "")
-    hull_record = _hull_record(dna)
+    from .core.source import Source
+    source = Source(**(document.get("carbonSource") or {}))
+    hull_record = _hull_record(dna, source)
     if apply_view_transform(_prefs(bpy.context)):
         print("  colour space overridden to Standard; "
               "AgX desaturates EVE's colours")
@@ -1066,16 +1160,18 @@ def _build_fetched_ship(document, resources, problems) -> str:
             decal_sets=(hull_record.get("decalSets") or []),
             hull_record=hull_record,
             cache_directory=str(_cache_path(_prefs(bpy.context)) / "logos"),
-            banner_images=banner_overrides(_prefs(bpy.context)),
-            faction_record=_faction_record(dna),
-            booster_record=(_race_record(dna).get("booster") or {}),
+            banner_images=banner_overrides(_prefs(bpy.context), target=source.target),
+            faction_record=_faction_record(dna, source),
+            booster_record=(_race_record(dna, source).get("booster") or {}),
             sprite_size=float(getattr(_prefs(bpy.context), "sprite_scale", 0.047)),
             haze_density=float(getattr(_prefs(bpy.context), "haze_density", 0.7)),
             haze_falloff=float(getattr(_prefs(bpy.context), "haze_falloff", 8.0)),
         )
 
     if primary is None:
-        problems.append("no geometry was assembled")
+        return f"Error: no hull or child geometry was assembled for {dna or 'SOF document'}"
+    else:
+        bpy.context.window_manager.carbon_eve_resources.new_ship = False
     if not hull_record and dna:
         problems.append(f"no hull record for {dna}; decals and area types are unavailable")
     for problem in problems:
@@ -1176,7 +1272,11 @@ def _poll_job():
 
     try:
         if job.kind == "catalog":
-            _catalog, stats = job.result
+            catalog, stats, target = job.result
+            if state.source != target:
+                state.status = "Source changed; load its resource index"
+                return None
+            _catalog = catalog
             _set_cache_stats(state, stats)
             state.build = _catalog.build
             state.current_directory = DEFAULT_DIRECTORY
@@ -1193,6 +1293,19 @@ def _poll_job():
                     f"Loaded {_catalog.build} ({len(_catalog.entries):,} files, "
                     f"{_catalog.hidden_detail_count:,} detail variants hidden by default, {source})"
                 )
+            _populate_results(context)
+        elif job.kind == "browser_resource":
+            path, logical, target, download_only = job.result
+            if target != state.source:
+                state.status = "Source changed; resource cached without loading"
+                return None
+            if not download_only and Path(logical).suffix.lower() in MODEL_EXTENSIONS:
+                from .ship import import_geometry
+                if not import_geometry(path, logical_path=logical):
+                    raise RuntimeError(f"No geometry imported from {logical}")
+                state.status = f"Loaded {logical}"
+            else:
+                state.status = f"Downloaded {logical} to {path}"
             _populate_results(context)
         elif job.kind == "cache_stats":
             _set_cache_stats(state, job.result)
@@ -1227,7 +1340,10 @@ def _poll_job():
             fetched, stats = job.result
             _set_cache_stats(state, stats)
             state.status = f"Downloaded {fetched.entry.logical_path}"
-            bpy.ops.import_scene.carbon_gr2("EXEC_DEFAULT", filepath=str(fetched.path))
+            importer = (bpy.ops.import_scene.carbon_cmf
+                        if fetched.entry.logical_path.lower().endswith(".cmf")
+                        else bpy.ops.import_scene.carbon_gr2)
+            importer("EXEC_DEFAULT", filepath=str(fetched.path))
             _populate_results(context)
         else:
             fetched, stats = job.result
@@ -1263,8 +1379,10 @@ def _populate_results(context) -> None:
         extensions=_filter_extensions(state.file_filter),
         show_lowdetail=bool(state.show_lowdetail),
         show_mediumdetail=bool(state.show_mediumdetail),
-        limit=int(prefs.result_limit),
+        limit=int(prefs.result_limit) + 1,
     )
+    truncated = len(results) > int(prefs.result_limit)
+    results = results[:int(prefs.result_limit)]
     _suppress_selection_actions = True
     try:
         state.results.clear()
@@ -1292,7 +1410,7 @@ def _populate_results(context) -> None:
     finally:
         _suppress_selection_actions = False
     mode = "matches" if state.query.strip() else "items"
-    state.result_summary = f"Showing {len(results):,} {mode} (limit {prefs.result_limit:,})"
+    state.result_summary = f"Showing {len(results):,} {mode}" + ("; more available—narrow the search" if truncated else "")
 
 
 def _on_active_result_changed(state, context) -> None:
@@ -1373,6 +1491,7 @@ classes = (
     EVE_RESOURCE_OT_revoke_creator_terms,
     EVE_RESOURCE_Result,
     EVE_RESOURCE_State,
+    EVE_RESOURCE_OT_new_ship,
     EVE_RESOURCE_OT_build_sof_dna,
     EVE_RESOURCE_OT_refresh_cache_stats,
     EVE_RESOURCE_OT_clear_cache,
@@ -1394,6 +1513,8 @@ def register():
     sof_panels.register()
     from . import sidebar
     sidebar.register()
+    from . import resource_browser
+    resource_browser.register()
     _registered = True
     if not bpy.app.timers.is_registered(_auto_load):
         bpy.app.timers.register(_auto_load, first_interval=1.0)
@@ -1414,6 +1535,8 @@ def unregister():
         bpy.utils.previews.remove(_preview_collection)
         _preview_collection = None
     from . import sidebar
+    from . import resource_browser
+    resource_browser.unregister()
     sidebar.unregister()
     from . import sof_panels
     sof_panels.unregister()

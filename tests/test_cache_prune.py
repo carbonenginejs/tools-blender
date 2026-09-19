@@ -48,6 +48,7 @@ class PruneTests(unittest.TestCase):
     def test_a_superseded_file_goes_and_the_current_one_stays(self):
         # The same logical path at two digests: this is the whole reason the
         # cache grows, since the new one arrives BESIDE the old.
+        self.write_index("200", [("res:/a.dds", "a" * 32)])
         self.write_index("300", [("res:/a.dds", "b" * 32)])
         old = self.write_file("res:/a.dds", "a" * 32)
         current = self.write_file("res:/a.dds", "b" * 32)
@@ -76,6 +77,7 @@ class PruneTests(unittest.TestCase):
         self.assertEqual(cache_prune.cached_builds(self.root)[0], "1000000")
 
     def test_planning_removes_nothing(self):
+        self.write_index("200", [("res:/a.dds", "a" * 32)])
         self.write_index("300", [("res:/a.dds", "b" * 32)])
         stale = self.write_file("res:/a.dds", "a" * 32)
 

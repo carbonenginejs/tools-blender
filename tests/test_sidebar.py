@@ -51,6 +51,21 @@ class ShipLookupTests(unittest.TestCase):
     def test_one_ship_needs_no_selection(self):
         self.assertIs(sidebar._ship_of(_Context(None)), self.a)
 
+    def test_new_source_draft_does_not_inherit_the_sole_loaded_ship(self):
+        from types import SimpleNamespace
+        from carbon_eve_resources import addon
+        self.a.carbon_sof.source_target = "eve"
+        bpy.context.scene.carbon_sof.dna = "ab1_t1:amarrbase:amarr"
+        state = SimpleNamespace(new_ship=False, source="frontier")
+        context = SimpleNamespace(window_manager=SimpleNamespace(carbon_eve_resources=state),
+            scene=bpy.context.scene, selected_objects=[], view_layer=bpy.context.view_layer, object=None)
+        addon._new_ship(context)
+        self.assertIsNone(sidebar._ship_of(context))
+        self.assertEqual(context.scene.carbon_sof.dna, "")
+        self.assertEqual(self.a.carbon_sof.source_target, "eve")
+        context.object = self.a
+        self.assertIs(sidebar._ship_of(context), self.a)
+
     def test_two_ships_and_no_selection_is_refused_not_guessed(self):
         # The defect: with two ships open, every edit landed on whichever came
         # first in the file, however carefully the other was selected.

@@ -86,7 +86,13 @@ def calculate_uv_densities(vertex, groups, declaration):
         return []
     result = [0.0] * (max(item["usageIndex"] for item in elements) + 1)
     indices = [index for group in groups for index in group.get("faces") or []]
+    position_width = next(item["elementCount"] for item in declaration if item["usage"] == "Position")
+    positions = vertex["position"]
+    xyz = [positions[row + axis] for row in range(0, len(positions), position_width) for axis in range(3)]
     for element in elements:
         index = element["usageIndex"]
-        result[index] = _density(vertex["position"], vertex.get(f"texcoord{index}") or [], indices)
+        values = vertex.get(f"texcoord{index}") or []
+        width = element["elementCount"]
+        uv = [values[row + axis] for row in range(0, len(values), width) for axis in range(2)] if width >= 2 else []
+        result[index] = _density(xyz, uv, indices)
     return result

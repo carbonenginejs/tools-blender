@@ -4,6 +4,7 @@ from .binary import CmfError
 from .constants import FILE_SIGNATURE, FILE_VERSION
 from .graph import build_cmf_from_shared, build_shared_from_cmf
 from .reader import inspect_cmf, read_cmf
+from .gr2_compat import build_gr2_animations
 from .tangents import (
     PACKED_TANGENT,
     PACKED_TANGENT_LEGACY,
@@ -22,6 +23,7 @@ __all__ = [
     "PACKED_TANGENT_LEGACY",
     "build_cmf_from_shared",
     "build_shared_from_cmf",
+    "build_gr2_animations",
     "decode_packed_tangent",
     "__version__",
     "inspect",

@@ -23,9 +23,9 @@ from pathlib import Path
 
 #: The roots this add-on knows about, filled in by `service_access`.
 #:
-#: `cache` is the only one we may WRITE to. The other two are read-only source
-#: material: a folder of authored files, or a copy of - or a real - EVE install.
-ROOTS = {"cache": None, "local": None, "resfiles": None}
+#: `cache` is the only one we may WRITE to. The others are read-only source
+#: material: authored files and separate EVE/Frontier installations.
+ROOTS = {"cache": None, "local": None, "resfiles": None, "frontier_resfiles": None}
 
 
 def ensure_folder(folder):
@@ -84,7 +84,7 @@ def derived(source, suffix: str, *, append: bool = False):
         return named(source)
 
     cache = Path(cache)
-    for root in (cache, ROOTS.get("resfiles"), ROOTS.get("local")):
+    for root in (cache, ROOTS.get("resfiles"), ROOTS.get("frontier_resfiles"), ROOTS.get("local")):
         if not root:
             continue
         try:

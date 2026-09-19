@@ -631,7 +631,7 @@ def build_projection_group() -> bpy.types.ShaderNodeTree:
 SAILS_GROUP = "SofPattern Sails Projection"
 
 
-def build_sails_group() -> bpy.types.ShaderNodeTree:
+def build_sails_group(*, authored_uv=False) -> bpy.types.ShaderNodeTree:
     """Builds the sails detail-texture transform.
 
     `quadsailsv5` does NOT project: it scales and rotates the mesh's own UV0 and
@@ -649,11 +649,12 @@ def build_sails_group() -> bpy.types.ShaderNodeTree:
     scale, then rotation, then location.
     """
 
-    existing = bpy.data.node_groups.get(SAILS_GROUP)
+    name = SAILS_GROUP + (" Authored UV" if authored_uv else "")
+    existing = bpy.data.node_groups.get(name)
     if existing is not None:
         return existing
 
-    tree = _new_group(SAILS_GROUP)
+    tree = _new_group(name)
     nodes, links = tree.nodes, tree.links
 
     tiling = tree.interface.new_socket(name="Tiling", in_out="INPUT", socket_type="NodeSocketFloat")
@@ -671,7 +672,9 @@ def build_sails_group() -> bpy.types.ShaderNodeTree:
     group_out = nodes.new("NodeGroupOutput")
     group_out.location = (300, 0)
 
-    coordinate = nodes.new("ShaderNodeTexCoord")
+    coordinate = nodes.new("ShaderNodeAttribute" if authored_uv else "ShaderNodeTexCoord")
+    if authored_uv:
+        coordinate.attribute_name = "gr2_texcoord0"
     coordinate.location = (-600, 220)
 
     scale = nodes.new("ShaderNodeCombineXYZ")
@@ -688,11 +691,12 @@ def build_sails_group() -> bpy.types.ShaderNodeTree:
     mapping.vector_type = "POINT"
     mapping.location = (-140, 0)
     mapping.label = "uv * tiling, rotated"
-    links.new(coordinate.outputs["UV"], mapping.inputs["Vector"])
+    links.new(coordinate.outputs["Vector" if authored_uv else "UV"], mapping.inputs["Vector"])
     links.new(scale.outputs[0], mapping.inputs["Scale"])
     links.new(angle.outputs[0], mapping.inputs["Rotation"])
 
-    links.new(mapping.outputs["Vector"], group_out.inputs["UV"])
+    value = _image_uv(tree, mapping.outputs["Vector"]) if authored_uv else mapping.outputs["Vector"]
+    links.new(value, group_out.inputs["UV"])
     return tree
 
 
@@ -709,7 +713,7 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
     """
 
     member = member or load_family().member("quadv5.fx")
-    name = f"{GROUP_PREFIX} {member.name}"
+    name = f"{GROUP_PREFIX} {member.identity}"
     if not rebuild:
         existing = bpy.data.node_groups.get(name)
         if existing is not None:
@@ -1350,25 +1354,32 @@ def build_kill_counter_group() -> bpy.types.ShaderNodeTree:
     """
 
     existing = bpy.data.node_groups.get(KILL_COUNTER_GROUP)
-    if existing is not None:
+    if existing is not None and existing.get("carbon_kill_counter_version") == 3:
         return existing
 
-    tree = _new_group(KILL_COUNTER_GROUP)
+    # Upgrade in place: materials in a saved blend retain their tree, socket
+    # identifiers, links and killCount drivers when its internals change.
+    tree = existing if existing is not None else _new_group(KILL_COUNTER_GROUP)
+    tree.nodes.clear()
     nodes, links = tree.nodes, tree.links
 
-    tree.interface.new_socket(name="UV", in_out="INPUT", socket_type="NodeSocketVector")
-    count_socket = tree.interface.new_socket(
-        name="killCount", in_out="INPUT", socket_type="NodeSocketFloat")
+    def socket(name, direction, kind):
+        for item in tree.interface.items_tree:
+            if item.item_type == "SOCKET" and item.name == name and item.in_out == direction:
+                return item
+        return tree.interface.new_socket(name=name, in_out=direction, socket_type=kind)
+
+    socket("UV", "INPUT", "NodeSocketVector")
+    count_socket = socket("killCount", "INPUT", "NodeSocketFloat")
     count_socket.default_value = SHIP_PROPERTIES["killCount"][1]
     count_socket.description = ("Driven from the object's kill count -- edit it "
                                 "under Object Properties > Carbon Ship Values")
     count_socket.hide_value = True
-    tree.interface.new_socket(
-        name="Mark UV", in_out="OUTPUT", socket_type="NodeSocketVector"
-    ).description = "Nine mark widths across the decal, one down"
-    tree.interface.new_socket(
-        name="Coverage", in_out="OUTPUT", socket_type="NodeSocketFloat"
-    ).description = "One where a mark is drawn; zero where the shader discards"
+    socket("Mark UV", "OUTPUT", "NodeSocketVector").description = "Nine mark widths across the decal, one down"
+    socket("Coverage", "OUTPUT", "NodeSocketFloat").description = "One where a mark is drawn; zero where the shader discards"
+    scaling_socket = socket("DecalTextureScaling", "INPUT", "NodeSocketVector")
+    scaling_socket.description = "Authored counter column and row direction"
+    scaling_socket.default_value = (1.0, 1.0, 0.0)
 
     group_in = nodes.new("NodeGroupInput")
     group_in.location = (-1200, 0)
@@ -1400,21 +1411,20 @@ def build_kill_counter_group() -> bpy.types.ShaderNodeTree:
     px = math("MULTIPLY", separate.outputs["X"], 2.0, location=(-820, 120), label="into [0, 2]")
     py = math("MULTIPLY", separate.outputs["Y"], 2.0, location=(-820, -40))
 
-    column = math("TRUNC", math("MULTIPLY", px, 4.5, location=(-660, 200)),
-                  location=(-500, 200), label="column")
-    # UNITS on the bottom row, so the tally grows upward.
-    #
-    # The row index runs the other way from the coordinate: row 0 is units,
-    # and units belongs at the BOTTOM. Taking the coordinate's own order put
-    # units at the top and the counter read upside down (operator, in game).
-    #
-    # Only the counter is inverted here, not the projection's V. The whole
-    # decal family shares that V, so flipping it would turn every logo over
-    # to fix one counter -- and the logos are right.
-    row = math("SUBTRACT", reference.KILL_COUNTER_ROWS - 1.0,
-               math("TRUNC", math("MULTIPLY", py, 1.5, location=(-660, 40)),
-                    location=(-560, 40)),
-               location=(-500, 40), label="row: units at the bottom")
+    # EVE 3503375 decalcounterv5.sm_depth Main/pass0 DXBC 0-7. Preserve direct
+    # truncation at grid boundaries and both authored direction controls.
+    scaling = nodes.new("ShaderNodeSeparateXYZ")
+    scaling.location = (-1000, -340)
+    links.new(group_in.outputs["DecalTextureScaling"], scaling.inputs[0])
+
+    def cell(coordinate, count, direction, reverse=False):
+        forward = math("TRUNC", math("MULTIPLY", coordinate, count))
+        backward = math("TRUNC", math("MULTIPLY", math("SUBTRACT", 1.0, coordinate), count))
+        first, second = (backward, forward) if reverse else (forward, backward)
+        return math("ADD", first, math("MULTIPLY", direction, math("SUBTRACT", second, first)))
+
+    column = cell(separate.outputs["X"], 9.0, scaling.outputs["X"])
+    row = cell(separate.outputs["Y"], 3.0, scaling.outputs["Y"], reverse=True)
 
     # Ten to the row, spelled as the shader spells it.
     place = math("POWER", 2.0,
@@ -1460,6 +1470,7 @@ def build_kill_counter_group() -> bpy.types.ShaderNodeTree:
     links.new(math("MULTIPLY", px, 4.5, location=(600, 160)), combine.inputs["X"])
     links.new(math("MULTIPLY", py, 0.5, location=(600, 100)), combine.inputs["Y"])
     links.new(combine.outputs[0], group_out.inputs["Mark UV"])
+    tree["carbon_kill_counter_version"] = 3
     return tree
 
 def build_decal_projection_group() -> bpy.types.ShaderNodeTree:
@@ -1658,7 +1669,20 @@ def time_value(tree, location=(-900, -400)):
     return node.outputs[0]
 
 
-def build_heat_uv_group() -> bpy.types.ShaderNodeTree:
+def _image_uv(tree, value):
+    """Convert authored D3D coordinates after all UV arithmetic."""
+    multiply = tree.nodes.new("ShaderNodeVectorMath")
+    multiply.operation = "MULTIPLY"
+    tree.links.new(value, multiply.inputs[0])
+    multiply.inputs[1].default_value = (1, -1, 1)
+    add = tree.nodes.new("ShaderNodeVectorMath")
+    add.operation = "ADD"
+    tree.links.new(multiply.outputs[0], add.inputs[0])
+    add.inputs[1].default_value = (0, 1, 0)
+    return add.outputs[0]
+
+
+def build_heat_uv_group(*, authored_uv=False) -> bpy.types.ShaderNodeTree:
     """The two counter-scrolling noise coordinates.
 
     `uv' = (uv +/- speed * time) * size`. The taps scroll in OPPOSITE
@@ -1666,20 +1690,25 @@ def build_heat_uv_group() -> bpy.types.ShaderNodeTree:
     past.
     """
 
-    existing = bpy.data.node_groups.get(HEAT_UV_GROUP)
-    if existing is not None:
+    name = HEAT_UV_GROUP + (" Authored UV" if authored_uv else "")
+    existing = bpy.data.node_groups.get(name)
+    if existing is not None and existing.get("carbon_heat_uv_version") == 2:
         return existing
 
-    tree = _new_group(HEAT_UV_GROUP)
+    tree = existing or _new_group(name)
+    tree.nodes.clear()
     nodes, links = tree.nodes, tree.links
-    tree.interface.new_socket(name="MaterialMap", in_out="INPUT", socket_type="NodeSocketFloat")
+    def socket(name, direction, kind):
+        return next((item for item in tree.interface.items_tree
+                     if item.item_type == "SOCKET" and item.name == name and item.in_out == direction), None) or tree.interface.new_socket(name=name, in_out=direction, socket_type=kind)
+    socket("MaterialMap", "INPUT", "NodeSocketFloat")
     for layer in range(1, 5):
         for lane in ("Shimmer speed", "Shimmer size"):
-            socket = tree.interface.new_socket(
-                name=f"Mtl{layer}HeatGlow {lane}", in_out="INPUT", socket_type="NodeSocketFloat")
-            socket.default_value = 1.0 if lane == "Shimmer size" else 0.0
-    tree.interface.new_socket(name="Noise UV 1", in_out="OUTPUT", socket_type="NodeSocketVector")
-    tree.interface.new_socket(name="Noise UV 2", in_out="OUTPUT", socket_type="NodeSocketVector")
+            item = socket(f"Mtl{layer}HeatGlow {lane}", "INPUT", "NodeSocketFloat")
+            if existing is None:
+                item.default_value = 1.0 if lane == "Shimmer size" else 0.0
+    socket("Noise UV 1", "OUTPUT", "NodeSocketVector")
+    socket("Noise UV 2", "OUTPUT", "NodeSocketVector")
 
     group_in = nodes.new("NodeGroupInput")
     group_in.location = (-1200, 0)
@@ -1694,7 +1723,9 @@ def build_heat_uv_group() -> bpy.types.ShaderNodeTree:
                         [group_in.outputs[f"Mtl{n}HeatGlow Shimmer size"] for n in range(1, 5)],
                         -300, -100)
 
-    coordinate = nodes.new("ShaderNodeTexCoord")
+    coordinate = nodes.new("ShaderNodeAttribute" if authored_uv else "ShaderNodeTexCoord")
+    if authored_uv:
+        coordinate.attribute_name = "gr2_texcoord0"
     coordinate.location = (-1200, -300)
     scroll = nodes.new("ShaderNodeMath")
     scroll.operation = "MULTIPLY"
@@ -1702,12 +1733,18 @@ def build_heat_uv_group() -> bpy.types.ShaderNodeTree:
     scroll.label = "speed x time"
     links.new(speed, scroll.inputs[0])
     links.new(time_value(tree), scroll.inputs[1])
+    # Both EVE and Frontier sm_depth multiply AFTER the scroll: Mapping POINT
+    # applies scale first, so its translation must include the same size.
+    phase = nodes.new("ShaderNodeMath")
+    phase.operation = "MULTIPLY"
+    links.new(scroll.outputs[0], phase.inputs[0])
+    links.new(size, phase.inputs[1])
 
     for index, sign in ((1, 1.0), (2, -1.0)):
         signed = nodes.new("ShaderNodeMath")
         signed.operation = "MULTIPLY"
         signed.location = (250, -300 - index * 120)
-        links.new(scroll.outputs[0], signed.inputs[0])
+        links.new(phase.outputs[0], signed.inputs[0])
         signed.inputs[1].default_value = sign
 
         offset = nodes.new("ShaderNodeCombineXYZ")
@@ -1719,7 +1756,7 @@ def build_heat_uv_group() -> bpy.types.ShaderNodeTree:
         mapping.vector_type = "POINT"
         mapping.location = (520, 200 - index * 260)
         mapping.label = f"tap {index}"
-        links.new(coordinate.outputs["UV"], mapping.inputs["Vector"])
+        links.new(coordinate.outputs["Vector" if authored_uv else "UV"], mapping.inputs["Vector"])
         links.new(offset.outputs[0], mapping.inputs["Location"])
         scale = nodes.new("ShaderNodeCombineXYZ")
         scale.location = (380, 100 - index * 260)
@@ -1727,12 +1764,14 @@ def build_heat_uv_group() -> bpy.types.ShaderNodeTree:
         links.new(size, scale.inputs["X"])
         links.new(size, scale.inputs["Y"])
         links.new(scale.outputs[0], mapping.inputs["Scale"])
-        links.new(mapping.outputs["Vector"], group_out.inputs[f"Noise UV {index}"])
+        value = _image_uv(tree, mapping.outputs["Vector"]) if authored_uv else mapping.outputs["Vector"]
+        links.new(value, group_out.inputs[f"Noise UV {index}"])
 
+    tree["carbon_heat_uv_version"] = 2
     return tree
 
 
-def build_heat_displace_group() -> bpy.types.ShaderNodeTree:
+def build_heat_displace_group(*, authored_uv=False) -> bpy.types.ShaderNodeTree:
     """Turns the two noise samples into the displaced glow coordinate.
 
     `glowUv = uv + strength * amount * (n1 * n2 - 0.5)`. The product is centred
@@ -1744,11 +1783,12 @@ def build_heat_displace_group() -> bpy.types.ShaderNodeTree:
     the chain. Both read the same property, so they cannot disagree.
     """
 
-    existing = bpy.data.node_groups.get(HEAT_DISPLACE_GROUP)
+    name = HEAT_DISPLACE_GROUP + (" Authored UV" if authored_uv else "")
+    existing = bpy.data.node_groups.get(name)
     if existing is not None:
         return existing
 
-    tree = _new_group(HEAT_DISPLACE_GROUP)
+    tree = _new_group(name)
     nodes, links = tree.nodes, tree.links
     tree.interface.new_socket(name="MaterialMap", in_out="INPUT", socket_type="NodeSocketFloat")
     tree.interface.new_socket(name="Noise 1", in_out="INPUT", socket_type="NodeSocketColor")
@@ -1824,13 +1864,16 @@ def build_heat_displace_group() -> bpy.types.ShaderNodeTree:
     links.new(centred.outputs[0], displaced.inputs[0])
     links.new(push, displaced.inputs["Scale"])
 
-    coordinate = nodes.new("ShaderNodeTexCoord")
+    coordinate = nodes.new("ShaderNodeAttribute" if authored_uv else "ShaderNodeTexCoord")
+    if authored_uv:
+        coordinate.attribute_name = "gr2_texcoord0"
     coordinate.location = (560, 500)
     total = nodes.new("ShaderNodeVectorMath")
     total.operation = "ADD"
     total.location = (720, 400)
     total.label = "uv + shimmer"
-    links.new(coordinate.outputs["UV"], total.inputs[0])
+    links.new(coordinate.outputs["Vector" if authored_uv else "UV"], total.inputs[0])
     links.new(displaced.outputs[0], total.inputs[1])
-    links.new(total.outputs[0], group_out.inputs["Glow UV"])
+    value = _image_uv(tree, total.outputs[0]) if authored_uv else total.outputs[0]
+    links.new(value, group_out.inputs["Glow UV"])
     return tree

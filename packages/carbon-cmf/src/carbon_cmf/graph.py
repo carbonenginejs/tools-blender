@@ -120,6 +120,7 @@ def _shared_mesh(mesh: dict, lod: dict, lod_index: int, flatten_lods: bool) -> d
             if isinstance(binding, dict)
         ],
         "vertex": lod.get("vertex") or mesh.get("vertex") or {},
+        "vertexCount": (lod.get("vb") or {}).get("size", 0) // ((lod.get("vb") or {}).get("stride") or 1),
         "indices": lod.get("indices") or mesh.get("indices") or [],
         "lods": [],
         "topology": mesh.get("topology") or "TriangleList",
@@ -198,11 +199,12 @@ def _build_mesh(mesh: dict) -> dict:
 
 
 def _build_lod_mesh(mesh: dict) -> dict:
-    vertex = _normalize_vertex(mesh.get("vertex") or {})
-    if len(vertex.get("position") or []) % 3:
-        raise CmfError("CMF position channel must contain complete vec3 values")
-    position_count = len(vertex.get("position") or []) // 3
-    decl = _build_decl(vertex)
+    positions = (mesh.get("vertex") or {}).get("position") or []
+    position_count = mesh.get("vertexCount", len(positions) // 3)
+    if positions and (type(position_count) is not int or position_count <= 0 or len(positions) % position_count or len(positions) // position_count not in (3, 4)):
+        raise CmfError("CMF position channel must contain complete vec3 or vec4 values")
+    vertex = _normalize_vertex(mesh.get("vertex") or {}, position_count)
+    decl = _build_decl(vertex, position_count)
     stride = _stride(decl)
     indices = list(mesh.get("indices") or [])
     topology = mesh.get("topology") or "TriangleList"
@@ -292,9 +294,9 @@ def _build_lod_mesh(mesh: dict) -> dict:
     }
 
 
-def _normalize_vertex(vertex: dict) -> dict:
+def _normalize_vertex(vertex: dict, vertex_count=None) -> dict:
     output = {key: list(value or []) for key, value in vertex.items()}
-    count = len(output.get("position") or []) // 3
+    count = vertex_count if vertex_count is not None else len(output.get("position") or []) // 3
     bone_indices = output.get("blendIndice") or []
     if count and len(bone_indices) == count * 4 and not output.get("blendWeight"):
         output["blendWeight"] = [value for _ in range(count) for value in (1.0, 0.0, 0.0, 0.0)]
@@ -310,10 +312,10 @@ def _normalize_vertex(vertex: dict) -> dict:
     return output
 
 
-def _build_decl(vertex: dict) -> list[dict]:
+def _build_decl(vertex: dict, vertex_count=None) -> list[dict]:
     declaration = []
     offset = 0
-    vertex_count = len(vertex.get("position") or []) // 3
+    vertex_count = vertex_count if vertex_count is not None else len(vertex.get("position") or []) // 3
     specs = list(VERTEX_CHANNELS)
     known = {spec[0] for spec in specs}
     for name in vertex:
@@ -400,26 +402,28 @@ def _build_morph_targets(mesh: dict, base_vertex: dict) -> dict:
         channel_names.update(name for name, values in (target.get("vertex") or {}).items() if values)
     if any(not base_vertex.get(name) for name in channel_names):
         raise CmfError("CMF morph channel is absent from the base vertex declaration")
-    vertex_count = len(base_vertex["position"]) // 3
+    vertex_count = mesh.get("vertexCount", len(base_vertex["position"]) // 3)
     widths = {name: len(base_vertex[name]) // vertex_count for name in channel_names}
     for name in channel_names:
-        if re.fullmatch(r"(?:tangent|binormal)(?:[1-9][0-9]*)?", name):
+        if name == "position" or re.fullmatch(r"(?:tangent|binormal)(?:[1-9][0-9]*)?", name):
             for target in source_targets:
                 values = (target.get("vertex") or {}).get(name) or []
-                count = _morph_source_count(target, vertex_count)
+                count = _morph_source_count(target, vertex_count, len(base_vertex["position"]) // vertex_count)
                 if values and count and len(values) % count == 0 and len(values) // count in (3, 4):
                     widths[name] = len(values) // count
                     break
     # Only one prototype vertex is needed to describe the morph layout.
     prototype = {name: [0] * widths[name] for name in channel_names}
-    declaration = _build_decl(prototype)
+    declaration = _build_decl(prototype, 1)
     stride = _stride(declaration)
     targets = []
     lods = []
     for source in source_targets:
         vertex = {}
         indices = source.get("vertexIndices")
-        source_count = _morph_source_count(source, vertex_count)
+        source_count = _morph_source_count(source, vertex_count, len(base_vertex["position"]) // vertex_count)
+        if type(source_count) is not int or source_count < 0:
+            raise CmfError("CMF morph vertex count must be a non-negative integer")
         for name in channel_names:
             values = list((source.get("vertex") or {}).get(name) or [])
             base = base_vertex[name]
@@ -431,7 +435,7 @@ def _build_morph_targets(mesh: dict, base_vertex: dict) -> dict:
                 raise CmfError(f"CMF morph {name} length does not match its vertex count")
             for row in range(source_count if values else 0):
                 index = indices[row] if indices is not None else row
-                if not isinstance(index, int) or not 0 <= index < vertex_count:
+                if type(index) is not int or not 0 <= index < vertex_count:
                     raise CmfError(f"CMF morph {name} vertex index is outside the base vertex range")
                 for component in range(width):
                     offset = index * width + component
@@ -442,8 +446,8 @@ def _build_morph_targets(mesh: dict, base_vertex: dict) -> dict:
         position = vertex.get("position") or []
         maximum = max(
             (
-                math.sqrt(sum((position[index + component] - base_vertex["position"][index + component]) ** 2 for component in range(3)))
-                for index in range(0, len(position) - 2, 3)
+                math.sqrt(sum((position[row * widths["position"] + component] - base_vertex["position"][row * (len(base_vertex["position"]) // vertex_count) + component]) ** 2 for component in range(3)))
+                for row in range(vertex_count)
             ),
             default=0.0,
         )
@@ -463,13 +467,34 @@ def _build_morph_targets(mesh: dict, base_vertex: dict) -> dict:
     return {"decl": declaration, "targets": targets, "lods": lods, "stride": stride}
 
 
-def _morph_source_count(target, fallback):
+def _morph_source_count(target, fallback, position_width=3):
     if target.get("vertexIndices") is not None:
         return len(target["vertexIndices"])
+    if "vertexCount" in target:
+        count = target["vertexCount"]
+        if type(count) is not int or count < 0:
+            raise CmfError("CMF morph vertex count must be a non-negative integer")
+        return count
     vertex = target.get("vertex") or {}
+    # Dense targets commonly omit their count. Prefer the base count when a
+    # complete vec3/vec4 declaration fits, rather than interpreting a fourth
+    # tangent lane as another vertex. Reflected GR2 targets carry a count.
+    def fits(name, values):
+        if len(values) % fallback:
+            return False
+        width = len(values) // fallback
+        if name.startswith("normal"):
+            return width == 3
+        if name.startswith("texcoord"):
+            return 1 <= width <= 4
+        if name == "position" or name.startswith(("tangent", "binormal", "color")):
+            return width in (3, 4)
+        return width == 4
+    if fallback and all(fits(name, values) for name, values in vertex.items() if values):
+        return fallback
     for name, _, width, _, _ in VERTEX_CHANNELS:
         if vertex.get(name):
-            return len(vertex[name]) // width or fallback
+            return len(vertex[name]) // (position_width if name == "position" else width) or fallback
     return fallback
 
 
