@@ -58,7 +58,7 @@ Step-by-step, with troubleshooting: [docs/setup.md](docs/setup.md).
 
 Current download:
 
-- [CarbonEngineJS Blender Tools 0.7.2](https://github.com/carbonenginejs/tools-blender/releases/download/v0.7.2/carbon_eve_resources-0.7.2.zip)
+- [CarbonEngineJS Blender Tools 0.8.0](https://github.com/carbonenginejs/tools-blender/releases/download/v0.8.0/carbon_eve_resources-0.8.0.zip)
   — EVE resource browsing and ship loading, with GR2 and CMF importers.
 
 The readers can also be installed without Blender:

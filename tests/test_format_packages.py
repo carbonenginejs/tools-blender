@@ -74,6 +74,8 @@ class FormatPackageTests(unittest.TestCase):
             )
             with zipfile.ZipFile(archive_path) as archive:
                 names = set(archive.namelist())
+                self.assertIn("carbon_eve_resources/docs/setup.md", names)
+                self.assertIn("carbon_eve_resources/docs/sources-and-frontier.md", names)
                 for import_name in PACKAGES.values():
                     self.assertIn(f"{import_name}/__init__.py", names)
                     self.assertIn(f"{import_name}/README.md", names)

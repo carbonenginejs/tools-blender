@@ -10,7 +10,7 @@ ADDONS = ROOT / "addons"
 #: installed and enabled before this add-on could load anything; it is a
 #: component of this one, so there is a single thing to download.
 PACKAGES = (
-    ("carbon_eve_resources", "0.7.2"),
+    ("carbon_eve_resources", "0.8.0"),
 )
 BUNDLED_LIBRARIES = {
     "carbon_cmf": ROOT / "packages" / "carbon-cmf" / "src" / "carbon_cmf",
@@ -63,6 +63,9 @@ def build_package(
             package_documents += ("EVE-CREATOR-LICENSE.md",)
         for name in package_documents:
             archive.write(ROOT / name, Path(package.name) / name)
+        for path in sorted((ROOT / "docs").rglob("*")):
+            if path.is_file():
+                archive.write(path, Path(package.name) / path.relative_to(ROOT))
     return output
 
 

@@ -129,3 +129,20 @@ Atomic Gas and Infrared reference textures absent from that build's resource
 index; they cannot load. Near Infrared is a separate, available scene.
 Applying a nebula enables the scene world in Material Preview and rendered
 viewports. Switching sources during a fetch discards its pending world change.
+
+
+Turret parameters follow Carbon's `SetupTurretMaterialFromDNA` path for both
+EVE and Frontier. Constants take precedence over vector parameters. Material
+prefixes and `turretAreaType` come from the selected source's generic data;
+material slots are remapped through the ship faction's usage list. DNA material
+overrides, applicable race values, faction materials and named colour values
+are resolved before building the shader. Unmatched values retain the turret
+resource defaults; there is no fixed list of colour fields or glow multiplier.
+Frontier uses its turret area (10), while EVE defaults to primary (0).
+The hull's `sof6` flag controls the second default pattern layer, as in Carbon.
+Turrets share geometry but keep material bindings per object and material
+drivers per owning ship. Each copied turret mesh follows its own armature.
+
+The service must return turret constants as named values rather than opaque
+structure-list bytes, and expose the selected source's weapons catalogue.
+Update the service before deploying this addon against an older installation.

@@ -212,34 +212,28 @@ def ship_of(locator):
     return ship_module.ship_anchor(list(descendants(root)))
 
 
-def faction_of(locator) -> str:
-    """The faction of the ship THIS locator belongs to, from its own DNA.
-
-    A slot defaults its faction to its parent's, and the parent's is the
-    SECOND field of that hull's DNA -- `hull:faction:race`.
-
-    Per LOCATOR, not per fit. Fitting across a scene with more than one hull
-    in it used the first ship's faction for all of them, so a Duvolle Arazu
-    and a Roden Lachesis both came out in Gallente Navy colours. A hull whose
-    DNA names no faction keeps the colours its turrets shipped with, which is
-    what the engine does when either faction fails to resolve.
-    """
+def dna_of(locator) -> str:
+    """The owning ship's DNA, retaining race and material overrides per hull."""
 
     node = locator
     while node is not None:
         dna = str(getattr(getattr(node, "carbon_sof", None), "dna", "")
                   or node.get("carbon_sof_dna") or "")
         if dna:
-            parts = dna.split(":")
-            return parts[1] if len(parts) > 1 else ""
+            return dna
         node = node.parent
     return ""
 
 
-def factions_for(locators) -> list:
-    """Every distinct faction across the hulls being fitted."""
+def faction_of(locator) -> str:
+    parts = dna_of(locator).split(":")
+    return parts[1] if len(parts) > 1 else ""
 
-    return sorted({faction_of(locator) for locator in locators})
+
+def factions_for(locators) -> list:
+    """Distinct ship DNAs for resolving turret parameters independently."""
+
+    return sorted({dna_of(locator) for locator in locators if dna_of(locator)})
 
 
 def fetch_turret(client, res_path: str, cache_root, *, progress=None,
@@ -290,14 +284,18 @@ def fetch_turret(client, res_path: str, cache_root, *, progress=None,
     # its faction to the parent's, off the hull's own DNA.
     from .core import sof_materials
 
+    from .core import turret_materials, sof_resolution
     colours = {}
-    for faction in factions:
-        if not faction or faction in colours:
-            continue
-        if progress is not None:
-            progress(f"Reading {faction}")
-        colours[faction] = faction_colours(
-            sof_materials.faction(faction, client, **source.resources()), client, selected_source=source)
+    if factions:
+        generic = client.request_json("GET", f"/{source.target}/{source.resource_build}/res/dx9/model/spaceobjectfactory/generic.black?format=json")["object"]
+        for dna in factions:
+            parsed = sof_resolution.parse(dna)
+            faction = sof_materials.faction(parsed.faction, client, **source.resources())
+            race = client.request_json("GET", f"/{source.target}/{source.resource_build}/sof/races/{parsed.race}")
+            hull = client.request_json("GET", f"/{source.target}/{source.resource_build}/sof/hulls/{parsed.hull}")
+            colours[dna] = turret_materials.resolve(effect, generic, faction,
+                lambda name: sof_materials.material(name, client, **source.resources()),
+                race=race, dna=dna, sof6=bool(hull.get("sof6", False)))
     return document, resources, colours
 
 
@@ -343,47 +341,7 @@ def _turret_material(document, resources, name, target="eve"):
         {"name": name, "effect": effect}, family, resources, 0)
     if problem:
         print(f"  ! {problem}")
-    strip_patterns(material)
     return material
-
-
-def strip_patterns(material):
-    """A turret has no pattern. Say so, rather than relying on the mask.
-
-    A turret's shader IS the hull's -- the same `quadv5` group, the same maps
-    -- minus the pattern layers: nothing paints a SKIN onto a gun. The mask
-    textures come back unauthored and are filled with black, which makes the
-    pattern blend contribute nothing already, but the pattern MATERIALS were
-    then left at white while a hull's sit at black.
-
-    Zeroing both the materials and the targets makes it true by construction
-    rather than by the mask happening to be black -- and the hull's pattern
-    targets are driven onto this material along with its dirt, so "happens to
-    be" is doing real work there.
-    """
-
-    if material is None:
-        return 0
-    group = next((node for node in material.node_tree.nodes
-                  if node.type == "GROUP"), None)
-    if group is None:
-        return 0
-
-    cleared = 0
-    for socket in group.inputs:
-        name = socket.name
-        if not (name.startswith("PMtl") or "attern" in name):
-            continue
-        try:
-            if hasattr(socket.default_value, "__len__"):
-                socket.default_value = tuple(
-                    0.0 for _ in socket.default_value[:-1]) + (1.0,)
-            else:
-                socket.default_value = 0.0
-        except (TypeError, AttributeError):
-            continue
-        cleared += 1
-    return cleared
 
 
 def self_name(name: str) -> str:
@@ -433,23 +391,26 @@ def fit(context, document, resources, res_path: str, name: str,
     if not imported:
         raise RuntimeError(f"{Path(local).name} imported nothing")
 
-    # ONE material per faction, not one per fit. Two hulls of different
-    # factions carrying the same gun are two different paint jobs, and a
-    # single shared material can only be one of them.
+    # Materials contain drivers targeting their owning hull. Share across
+    # that hull's hardpoints, never across separate ships with identical DNA.
     colours = colours or {}
     by_faction = {}
 
-    def material_for(faction: str):
-        if faction not in by_faction:
-            made = _turret_material(document, resources, name, target)
-            written = apply_faction_colours(made, colours.get(faction))
+    def material_for(locator):
+        faction = dna_of(locator)
+        key = (ship_of(locator), faction)
+        if key not in by_faction:
+            from .core import turret_materials
+            values = colours.get(faction) or {}
+            made = _turret_material(turret_materials.apply(document, values), resources, name, target)
+            written = len(values)
             if made is not None:
                 made.name = f"{made.name} {faction}" if faction else made.name
                 made["carbon_turret_faction"] = faction
             if faction:
                 print(f"    {faction}: {written} faction value(s)")
-            by_faction[faction] = made
-        return by_faction[faction]
+            by_faction[key] = made
+        return by_faction[key]
 
     # The model's OWN base transform, taken off its first root before anything
     # is reparented.
@@ -485,6 +446,11 @@ def fit(context, document, resources, res_path: str, name: str,
                 origin[clone] = obj
                 copies.append(clone)
             for obj, clone in mapping.items():
+                # Object.copy retains modifier targets; each turret must be
+                # deformed by its own copied rig, not the first hardpoint's.
+                for modifier in clone.modifiers:
+                    if modifier.type == "ARMATURE" and modifier.object in mapping:
+                        modifier.object = mapping[modifier.object]
                 if obj.parent in mapping:
                     # Keep the model's OWN hierarchy, and its own local
                     # transform with it.
@@ -528,14 +494,19 @@ def fit(context, document, resources, res_path: str, name: str,
                 source, mathutils.Matrix.Identity(4))
 
         copies = copies + [holder]
-        material = material_for(faction_of(locator))
+        material = material_for(locator)
         for obj in copies:
             obj[FITTED] = res_path
             obj["carbon_turret_locator"] = locator.name
             obj["carbon_turret_name"] = name
             if material is not None and obj.type == "MESH":
-                obj.data.materials.clear()
-                obj.data.materials.append(material)
+                if not obj.data.materials:
+                    obj.data.materials.append(material)
+                # Geometry is shared across hardpoints; material bindings are
+                # per object so another hull cannot repaint existing turrets.
+                for slot in obj.material_slots:
+                    slot.link = "OBJECT"
+                    slot.material = material
 
         # A turret's DIRT is the ship's. It is bolted to the hull, so a dirty
         # ship has dirty guns and moving the ship's age has to move both --
@@ -553,133 +524,6 @@ def fit(context, document, resources, res_path: str, name: str,
     print(f"  fitted {name} to {len(locators)} hardpoint(s), "
           f"{len(fitted)} object(s), {len(by_faction)} faction(s)")
     return len(locators), by_faction
-
-
-#: Which area type a turret takes its materials from.
-#:
-#: Zero, which is primary. Carbon asks the faction for `GetAreaType(0)` on both
-#: the hull and the turret and uses that one alone -- a turret has no areas of
-#: its own to match up.
-TURRET_AREA_TYPE = 0
-
-#: What the glow is multiplied by after it is resolved.
-#:
-#: Half. The engine dims a turret's glow relative to the hull's deliberately,
-#: so a hardpoint does not out-shine the ship it sits on.
-GLOW_DIM = 0.5
-
-
-def faction_colours(faction_record, client, selected_source=None):
-    """The four materials and the glow a faction gives a turret.
-
-    This is `SetupTurretMaterial`'s rule, and its shape is worth stating
-    because it is not obvious: a turret does not carry the ship's colours, it
-    carries the ship's faction's MATERIAL NAMES, resolved to values.
-
-    The names come from the parent faction's area type 0, through the reroute
-    the faction publishes -- `materialUsageList` says which authored slot each
-    of the shader's four material slots actually reads, and it is not the
-    identity: Gallente base swaps the first two.
-
-    Runs on the JOB thread: it fetches, and touches nothing in the scene.
-    """
-
-    from .core import sof_materials
-
-    if not faction_record:
-        return {}
-
-    names = sof_materials.faction_material_names(faction_record)
-    usage = faction_record.get("materialUsageList") or [0, 1, 2, 3]
-    found = {"materials": {}, "glow": None}
-
-    for slot in range(1, 5):
-        try:
-            source = int(usage[slot - 1]) + 1
-        except (IndexError, TypeError, ValueError):
-            source = slot
-        name = sof_materials.material_name_for(names, TURRET_AREA_TYPE, source)
-        if not name:
-            continue
-        record = sof_materials.material(name, client,
-            **(selected_source.resources() if selected_source else {}))
-        values = sof_materials.material_values(record)
-        # `AssignParameters` assigns EVERY parameter a material carries, not a
-        # chosen three, and `DustDiffuseColor` is one of them -- the colour the
-        # material goes when it is dirty. Left out, a dirty turret goes white
-        # while the hull beside it goes brown.
-        dust = ((record or {}).get("parameters") or {}).get("DustDiffuseColor")
-        if dust:
-            values = dict(values, dust=tuple(float(v) for v in dust[:3]))
-        if values:
-            found["materials"][slot] = {"name": name, **values}
-
-    # The glow is named by INDEX into the faction's colour types, and the
-    # colour set answers by NAME -- so the enum is the bridge between them.
-    table = ((faction_record.get("areaMaterials") or {}).get("glowColor")
-             or {})
-    index = table.get(f"{TURRET_AREA_TYPE}:GeneralGlowColor")
-    colours = ((faction_record.get("colorSet") or {}).get("colors") or {})
-    if index is not None:
-        from . import sof_faction_nodes
-
-        types = sof_faction_nodes.COLOUR_TYPES
-        if 0 <= int(index) < len(types):
-            value = colours.get(types[int(index)])
-            if value:
-                found["glow"] = tuple(float(v) for v in value[:3])
-    return found
-
-
-def apply_faction_colours(material, colours):
-    """Puts a faction's materials and glow onto a fitted turret. MAIN thread.
-
-    A turret whose faction does not resolve keeps the colours it shipped with,
-    which is what the engine does too -- `SetupTurretMaterial` returns early
-    unless BOTH the hull's faction and the turret's resolve.
-    """
-
-    if material is None or not colours:
-        return 0
-
-    group = next((node for node in material.node_tree.nodes
-                  if node.type == "GROUP"), None)
-    if group is None:
-        return 0
-
-    written = 0
-    for slot, values in (colours.get("materials") or {}).items():
-        for field, socket in (("diffuse", f"Mtl{slot}DiffuseColor"),
-                              ("fresnel", f"Mtl{slot}FresnelColor"),
-                              ("dust", f"Mtl{slot}DustDiffuseColor"),
-                              ("gloss", f"Mtl{slot}Gloss")):
-            value = values.get(field)
-            target = group.inputs.get(socket)
-            if value is None or target is None:
-                continue
-            if field == "gloss":
-                # Gloss is a vec4 in the SOF and x is the only part read. The
-                # socket may be either -- a float on some members, a vector on
-                # others -- so which one it is decides, not which one it
-                # usually is.
-                if hasattr(target.default_value, "__len__"):
-                    current = list(target.default_value)
-                    current[0] = float(value)
-                    target.default_value = current
-                else:
-                    target.default_value = float(value)
-            else:
-                target.default_value = tuple(value[:3]) + (1.0,)
-            written += 1
-        material[f"carbon_turret_material{slot}"] = values.get("name", "")
-
-    glow = colours.get("glow")
-    target = group.inputs.get("GeneralGlowColor")
-    if glow is not None and target is not None:
-        target.default_value = tuple(channel * GLOW_DIM
-                                     for channel in glow) + (1.0,)
-        written += 1
-    return written
 
 
 class CARBON_OT_fit_turrets(Operator):
@@ -728,9 +572,11 @@ class CARBON_OT_fit_turrets(Operator):
             return {"CANCELLED"}
         res_path, name = chosen["resPath"], chosen["name"]
         cache_root = _cache_root(context)
-        factions = factions_for(locators) if source.target != "frontier" else []
+        factions = factions_for(locators)
         from .core.source import resfiles_directory
         resfiles_root = resfiles_directory(addon._prefs(context), source.target)
+        if resfiles_root:
+            resfiles_root = bpy.path.abspath(resfiles_root)
 
         def work():
             document, resources, colours = fetch_turret(
