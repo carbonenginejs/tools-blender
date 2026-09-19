@@ -1625,6 +1625,7 @@ def import_animations(
 
         action = bpy.data.actions.new(name=full_action_name)
         action["carbon_animation_target"] = "ARMATURE"
+        action["carbon_animation_rig"] = arm_obj.data
         action["carbon_animation_clip"] = anim_name_raw
         actions.append(action)
         arm_obj.animation_data.action = action

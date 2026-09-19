@@ -30,6 +30,13 @@ _ITEMS: list = []
 def armature_of(context):
     """The armature of whatever is selected, or the only one in the file."""
 
+    # An explicitly selected turret rig/mesh takes precedence over its hull.
+    node = getattr(context, "active_object", None)
+    if node in (context.selected_objects or []):
+        while node is not None:
+            if node.type == "ARMATURE":
+                return node
+            node = node.parent
     found = []
     for obj in (context.selected_objects or []):
         node = obj
@@ -58,13 +65,23 @@ def actions_for(armature):
 
     if armature is None:
         return []
+    owned = [act for act in bpy.data.actions
+             if act.get("carbon_animation_rig") == armature.data]
+    if owned:
+        return sorted(owned, key=lambda act: act.name)
+    # Older saved imports have no rig metadata. Only an assigned action can
+    # establish their model prefix; an unanimated hull must not list all actions.
     current = getattr(getattr(armature, "animation_data", None), "action", None)
-    stem = current.name.rsplit(".", 1)[0] if current and "." in current.name else ""
+    if current is None or current.get("carbon_animation_rig") is not None:
+        return []
+    stem = current.name.rsplit(".", 1)[0] if "." in current.name else ""
     if not stem:
-        return sorted(bpy.data.actions, key=lambda act: act.name)
+        return [current]
     return sorted((act for act in bpy.data.actions
-                   if act.name.rsplit(".", 1)[0] == stem),
-                  key=lambda act: act.name)
+                   if act.get("carbon_animation_rig") is None
+                   and act.get("carbon_animation_target") != "SHAPE_KEYS"
+                   and act.name.rsplit(".", 1)[0] == stem), key=lambda act: act.name)
+
 
 
 def key_range(action):
@@ -162,7 +179,7 @@ class CARBON_OT_play_animation(Operator):
     def execute(self, context):
         armature = armature_of(context)
         act = bpy.data.actions.get(self.action)
-        if armature is None or act is None:
+        if armature is None or act is None or act not in actions_for(armature):
             self.report({"ERROR"}, "No hull rig to animate")
             return {"CANCELLED"}
 

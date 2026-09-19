@@ -74,3 +74,21 @@ class ResourceBrowserTests(unittest.TestCase):
         for a, b in zip(actual, expected):
             for x, y in zip(a, b):
                 self.assertAlmostEqual(x, y, places=5)
+
+    def test_animation_picker_keeps_actions_with_their_rig(self):
+        from carbon_eve_resources.animation import actions_for
+        rig = bpy.data.armatures.new("PickerRig")
+        arm = bpy.data.objects.new("PickerRig", rig)
+        action = bpy.data.actions.new("OldTurret.Fire")
+        clone = arm.copy()
+        try:
+            self.assertEqual(actions_for(arm), [])
+            action["carbon_animation_rig"] = rig
+            action.name = "Renamed.Deploy.001"
+            self.assertEqual(actions_for(arm), [action])
+            self.assertEqual(actions_for(clone), [action])
+        finally:
+            bpy.data.objects.remove(clone)
+            bpy.data.objects.remove(arm)
+            bpy.data.actions.remove(action)
+            bpy.data.armatures.remove(rig)
