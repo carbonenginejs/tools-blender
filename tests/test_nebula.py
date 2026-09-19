@@ -59,6 +59,18 @@ class NebulaSceneTests(unittest.TestCase):
         self.assertEqual(nebula.scenes(client, target="frontier", build="3512930"), client.request_json.return_value)
         client.request_json.assert_called_once()
 
+    def test_source_change_does_not_replace_world(self):
+        try:
+            from carbon_eve_resources import skybox
+        except ImportError:
+            self.skipTest("Blender is required")
+        with patch.object(skybox.service_access, "source", return_value=source.Source()), \
+             patch.object(skybox, "apply_world") as apply:
+            message = skybox.finish_job(None, ("Sky", (Path("sky.hdr"), "res:/sky.dds"),
+                                               source.Source("frontier")))
+            self.assertIn("Source changed", message)
+            apply.assert_not_called()
+
     def test_environment_fetch_retains_source_and_optional_frontier_root(self):
         try:
             from carbon_eve_resources import skybox

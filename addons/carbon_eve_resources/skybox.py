@@ -194,8 +194,11 @@ def build_environment(client, nebula_id: int, cache_root, *, progress=None, sour
         progress(f"Fetching {Path(path).name}")
     build = source.resource_build
     index = resindex.load(cache_root, build) if source.target == "eve" else None
-    local = sof_fetch.fetch_resource(path, client, cache_root, **source.resources(),
-                                     index=index, local_root=local_root, resfiles_root=resfiles_root)
+    try:
+        local = sof_fetch.fetch_resource(path, client, cache_root, **source.resources(),
+                                         index=index, local_root=local_root, resfiles_root=resfiles_root)
+    except Exception as exc:
+        raise RuntimeError(f"Could not load {source.target} nebula texture {path}: {exc}") from exc
 
     # Beside the cube in our cache, addressed by the cube's CONTENT, so the
     # regions that share a nebula share the conversion too.
@@ -268,12 +271,20 @@ def finish_job(context, result) -> str:
 
     from .dds import environment as cube
 
-    name, (destination, path) = result
+    name, (destination, path), source = result
+    if source != service_access.source(context):
+        return "Source changed; fetched nebula was not applied"
     state = context.window_manager.carbon_eve_skybox
     image = bpy.data.images.get(destination.name)
     if image is None:
         image = bpy.data.images.load(str(destination))
     apply_world(context.scene, image)
+    # Material Preview otherwise keeps its studio HDRI after a world is assigned.
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            if area.type == "VIEW_3D":
+                area.spaces.active.shading.use_scene_world = True
+                area.spaces.active.shading.use_scene_world_render = True
 
     sun = cube.read_sun(destination)
     if sun is not None and state.use_sun:
@@ -331,7 +342,7 @@ class CARBON_OT_apply_skybox(Operator):
             return name, build_environment(client, nebula_id, cache_root,
                                            progress=addon._set_progress, source=source,
                                            scene_path=scene_path, local_root=local_root,
-                                           resfiles_root=resfiles_root)
+                                           resfiles_root=resfiles_root), source
 
         try:
             # The same background job the ships use. A nebula is six faces of

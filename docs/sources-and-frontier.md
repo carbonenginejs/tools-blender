@@ -121,3 +121,11 @@ variants have separate toggles. A capped result list reports that more matches
 exist. Changing Source during a job prevents the old result from loading into
 the new selection. Direct geometry loading does not assemble a SOF ship or its
 materials.
+
+
+Frontier nebula verification (build 3512930): eleven scene references resolve
+supported BC6H cubemaps. Hydrogen Alpha was rendered as a Blender world.
+Atomic Gas and Infrared reference textures absent from that build's resource
+index; they cannot load. Near Infrared is a separate, available scene.
+Applying a nebula enables the scene world in Material Preview and rendered
+viewports. Switching sources during a fetch discards its pending world change.
