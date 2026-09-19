@@ -60,3 +60,17 @@ class ResourceBrowserTests(unittest.TestCase):
             self.assertIn("Source changed", turrets.finish_job(context, result))
             clear.assert_not_called()
             fit.assert_not_called()
+
+    def test_turret_mount_removes_locator_scale_but_keeps_ship_scale(self):
+        from carbon_eve_resources import turrets
+        from mathutils import Matrix, Euler, Vector
+        ship = Matrix.Translation((7, 8, 9)) @ Euler((.2, .4, .6)).to_matrix().to_4x4() @ Matrix.Diagonal((.01, .02, .03, 1))
+        rotation = Euler((.3, -.2, .7)).to_matrix().to_4x4()
+        position = Matrix.Translation((10, 20, 30))
+        locator = position @ rotation @ Matrix.Diagonal((1000, 500, 2000, 1))
+        world = ship @ locator
+        actual = world @ turrets.turret_mount_matrix(SimpleNamespace(matrix_world=world), SimpleNamespace(matrix_world=ship))
+        expected = ship @ position @ rotation
+        for a, b in zip(actual, expected):
+            for x, y in zip(a, b):
+                self.assertAlmostEqual(x, y, places=5)

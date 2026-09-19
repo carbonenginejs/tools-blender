@@ -392,6 +392,25 @@ def self_name(name: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in str(name)).strip("_")
 
 
+def turret_mount_matrix(locator, hull):
+    """Cancel authored locator scale while retaining the hull's world transform."""
+    # Carbon: EveTurretSet.cpp SetLocalTransform (1771-1779) removes locator
+    # scale before UpdateTransform (1520) composes local * ship (row vectors).
+    # Blender uses column vectors: ship @ normalized locator. The holder stays
+    # parented to the locator so animated hardpoint movement is retained.
+    parent = hull.matrix_world if hull is not None else mathutils.Matrix.Identity(4)
+    local = parent.inverted() @ locator.matrix_world
+    unscaled = local.copy()
+    for axis in range(3):
+        column = local.col[axis].to_3d()
+        if column.length == 0.0:
+            raise ValueError("Cannot fit a turret to a zero-scale locator")
+        column.normalize()
+        for row in range(3):
+            unscaled[row][axis] = column[row]
+    return local.inverted() @ unscaled
+
+
 def fit(context, document, resources, res_path: str, name: str,
         locators=None, colours=None, source=None):
     """Places one turret on every hardpoint. MAIN thread only."""
@@ -497,7 +516,7 @@ def fit(context, document, resources, res_path: str, name: str,
             collection.objects.link(holder)
         holder.parent = locator
         holder.matrix_parent_inverse.identity()
-        holder.matrix_local = mathutils.Matrix.Identity(4)
+        holder.matrix_local = turret_mount_matrix(locator, ship_of(locator))
 
         for obj in copies:
             if obj.parent is not None and obj.parent in copies:
