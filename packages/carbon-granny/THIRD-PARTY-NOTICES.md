@@ -32,7 +32,9 @@ DEALINGS IN THE SOFTWARE.
 
 ## BitKnit / BitKnit2 decompressor
 
-The decoder is a Python port of CarbonEngineJS's MIT-licensed clean-room
-BitKnit2 decoder and its published format specification. It contains no code
+BitKnit2 is RAD Game Tools' compression format; the format and algorithm are
+RAD's, and this is not RAD code. The decoder source is a Python port of
+CarbonEngineJS's MIT-licensed clean-room BitKnit2 decoder and its published
+facts-only format specification. It contains no code
 from Knit, pybg3, ooz, or the former EUPL-derived Python implementation. The
 port was validated byte-exact against the available GR2 codec corpus.

@@ -51,11 +51,14 @@ DEALINGS IN THE SOFTWARE.
 
 ## BitKnit / BitKnit2 decompressor - `packages/carbon-granny/src/carbon_granny/codecs.py`
 
-**CarbonEngineJS code (MIT).** On 2026-07-24 the previous EUPL-derived Python
-translation was replaced with a Python port of the MIT clean-room decoder in
-`@carbonenginejs/format-gr2`. The upstream decoder was written solely from its
-published facts-only specification (`docs/formats/bitknit2.md`) and contains no
-code from Knit, pybg3, ooz, or any other BitKnit implementation.
+**BitKnit2 is RAD Game Tools' compression format; the format and algorithm are
+RAD's.** The decoder *source* in `codecs.py` is CarbonEngineJS code (MIT), not
+RAD code. On 2026-07-24 the previous EUPL-derived Python translation was
+replaced with a Python port of the MIT clean-room decoder originally published
+in `@carbonenginejs/format-gr2` (now the GR2 reader in `@carbonenginejs/runtime`).
+The upstream decoder was written solely from a facts-only specification
+(`docs/resource/formats/bitknit2.md` in `@carbonenginejs/runtime`) and contains
+no code from Knit, pybg3, ooz, or any other BitKnit implementation.
 
 The Python port follows that clean implementation and specification and was
 validated against the expected output SHA-256 for all 539 streams in the local

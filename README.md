@@ -228,8 +228,9 @@ py -3 -m unittest discover -s tests -v
 
 ## License
 
-MIT. The BitKnit2 decoder is a Python port of CarbonEngineJS's MIT clean-room
-implementation and has been validated byte-exact against the available GR2
+MIT. BitKnit2 is RAD Game Tools' compression format, not ours; our BitKnit2
+decoder is a Python port of CarbonEngineJS's MIT clean-room implementation and
+has been validated byte-exact against the available GR2
 codec corpus. See `LICENSE`, `NOTICE`, and `THIRD-PARTY-NOTICES.md`. EVE content
 remains subject to CCP Games' separate terms in `EVE-CREATOR-LICENSE.md`.
 

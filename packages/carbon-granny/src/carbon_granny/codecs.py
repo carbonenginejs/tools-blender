@@ -1,10 +1,10 @@
 """Pure-Python section decompressors used by Granny 2 files.
 
 The Oodle1 implementation is a translation of the Boost-licensed decoder used
-by ``@carbonenginejs/format-gr2``.  The BitKnit2 implementation is an MIT-
-licensed Python port of CarbonEngineJS's clean-room decoder, following its
-published format specification.  See the repository notices for complete
-provenance.
+by ``@carbonenginejs/format-gr2``.  BitKnit2 is RAD Game Tools' format; the
+decoder below is not RAD code but an MIT-licensed Python port of
+CarbonEngineJS's clean-room decoder, following its published facts-only format
+specification.  See the repository notices for complete provenance.
 """
 
 from __future__ import annotations

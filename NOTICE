@@ -14,9 +14,11 @@ and EVE-related data remain copyright their original holders.
 
 Current repository license: MIT. See LICENSE.
 
-The former EUPL-derived BitKnit2 translation was replaced on 2026-07-24 by a
-Python port of CarbonEngineJS's MIT clean-room decoder. No EUPL-derived code
-remains in the current BitKnit2 implementation.
+BitKnit/BitKnit2 is RAD Game Tools' compression format, used by Granny. The
+format and its algorithm are RAD's; only the decoder source here is ours. The
+former EUPL-derived BitKnit2 translation was replaced on 2026-07-24 by a Python
+port of CarbonEngineJS's MIT clean-room decoder. No EUPL-derived code remains
+in the current BitKnit2 implementation.
 
 Provenance and legal requirements
 ---------------------------------
@@ -42,9 +44,11 @@ Oodle1 / Oodle0 section decompressor (packages/carbon-granny/src/carbon_granny/c
   This is Granny's own legacy codec, not RAD's modern Oodle (Kraken/BitKnit families).
 
 BitKnit / BitKnit2 section decompressor (packages/carbon-granny/src/carbon_granny/codecs.py)
-  MIT-licensed Python port of the CarbonEngineJS clean-room decoder in
-  @carbonenginejs/format-gr2, following that package's published BitKnit2
-  format specification and validated byte-exact against the available GR2
+  BitKnit2 is RAD Game Tools' format; this is not RAD code and RAD does not
+  endorse it. The decoder source is an MIT-licensed Python port of the
+  CarbonEngineJS clean-room decoder (now the GR2 reader in
+  @carbonenginejs/runtime), following its published facts-only BitKnit2
+  format specification, and validated byte-exact against the available GR2
   codec corpus. The implementation contains no code from Knit, pybg3, ooz, or
   the former EUPL-derived Python translation.
 
