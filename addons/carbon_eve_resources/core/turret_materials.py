@@ -1,4 +1,15 @@
-"""Carbon's turret parameter lookup, before Blender material construction."""
+"""Carbon's turret parameter lookup, before Blender material construction.
+
+Follows `SetupTurretMaterialFromDNA` for every source. Material and pattern
+prefixes and `turretAreaType` come from the source's generic data (Frontier
+uses its turret area, 10; EVE's generic data omits it, so primary, 0), and
+material slots are remapped through the ship faction's `materialUsageList`.
+Each parameter tries the DNA's material override, then pattern layers, then
+race values (primary and reactor areas only), then the faction's area
+materials and named glow colours, falling back to the primary area. Every
+effect parameter is looked up, so there is no fixed list of colour fields;
+unmatched ones keep the turret resource's defaults.
+"""
 from copy import deepcopy
 from .sof_resolution import parse
 

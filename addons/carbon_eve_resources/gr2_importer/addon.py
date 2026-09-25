@@ -1587,6 +1587,17 @@ def import_animations(
     clamp_keys_to_duration: bool,
     action_end_padding_frames: int,
 ) -> List[bpy.types.Action]:
+    """Bake each animation into one armature Action, tagged with rig and clip.
+
+    Native CMF graphs go through `carbon_cmf.build_gr2_animations` first.
+    Each bone is keyed as its local delta from the rest pose; a component
+    with no curve keeps the rest value. Step (degree 0) channels get CONSTANT
+    keys, including every authored Step knot between sample frames; other
+    channels get LINEAR keys. Quaternion signs stay continuous across samples
+    after matrix decomposition. Baked keys match the sampled poses, not the
+    donor's SLERP between them, and animated shear is not representable in
+    Blender pose TRS. Actions are left unassigned.
+    """
     actions: List[bpy.types.Action] = []
     anims = gr2.get("animations", [])
     if "cmfVersion" in gr2:
@@ -1803,6 +1814,13 @@ def import_morph_animations(graph, mesh_pairs, instance_name, *, clamp_keys_to_d
 
     Native CMF channel targets stay exact, as in Carbon's scene morph binding;
     the separate glTF export convention that strips 'Shape' is not used here.
+    Binding uses the authored names kept in `carbon_morph_names`, not the
+    sanitized key names.
+
+    Runs whether or not the model has a skeleton. Each mesh gets its own
+    Action per clip, tagged `SHAPE_KEYS` with its clip and owning Key and
+    given a fake user; armature action lists exclude it. Weights
+    outside Blender's [-10, 10] shape-key range raise rather than clamp.
     """
     is_cmf = "cmfVersion" in graph
     if is_cmf:

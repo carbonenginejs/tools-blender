@@ -59,7 +59,22 @@ def _curve(curve, dimension, *, scale=False, rotation=False):
 
 
 def build_gr2_animations(graph):
-    """Convert native CMF channels into the importer's GR2 track-group view."""
+    """Convert native CMF channels into the importer's GR2 track-group view.
+
+    Knot and value arrays are decoded by their declared element types and
+    must be finite, ascending, and of the declared count and dimension.
+    `Step` becomes degree 0 (the consumer holds each value until the next
+    knot) and `Linear` degree 1. Rotations are normalised and sign-flipped
+    into one continuous hemisphere; scale becomes a diagonal 3x3
+    `scaleShear`.
+
+    A bone component with no channel is emitted as an empty curve ("no curve
+    data"), so the importer uses that bone's rest value for it. Each bone
+    target must resolve to exactly one skeleton, and each (target type,
+    target) pair may appear once. Bone tracks are grouped per skeleton;
+    scalar `MorphTarget` channels go into one trailing `root` group of vector
+    tracks, named by their authored targets.
+    """
     skeletons = graph.get("skeletons", [])
     result = []
     for animation in graph.get("animations", []):

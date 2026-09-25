@@ -1,3 +1,33 @@
+"""Preferences, the EVE creator-terms gate, the resource browser and its jobs.
+
+Access to EVE data requires accepting CCP's content creation terms. The gate
+is checked independently at each layer rather than once:
+
+* every gated operator's ``poll``;
+* inside the workers: `_start_catalog_job` and `_populate_results` re-check;
+* at the network boundary: acceptance is passed into `core.resource_index`,
+  whose catalog and resource fetches refuse without it.
+
+The sidebar's first panel shows the acceptance state and the Accept button.
+Acceptance is stored as `CREATOR_TERMS_ACCEPTANCE_ID`, an exact id rather than
+a boolean, so a new terms revision invalidates every stored acceptance. Accept
+and revoke restore both preferences if saving them fails. Revoking clears the
+catalog, results, build and preview. Cache statistics, prune and clear-cache
+are deliberately ungated, so someone who has revoked can still delete what
+they downloaded.
+
+One background job runs at a time; a second launch raises instead of
+queuing. A worker writes only its plain progress string; the main-thread
+timer `_poll_job` copies it into Blender data and redraws. Worker exceptions
+are caught as `BaseException` and shown in the status line.
+
+The result list is a capped projection (`result_limit`): absence from the
+list is not absence from the index, and the summary says when it truncated.
+`_lowdetail`/`_mediumdetail` variants are hidden by default and the hidden
+count is reported. Repopulating keeps the selection by logical path and
+suppresses selection callbacks while it runs.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

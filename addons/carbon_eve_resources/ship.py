@@ -331,6 +331,10 @@ def keep_actions(actions, armatures):
     So each gets a fake user, and the armature is given the idle one, because a
     dope sheet with no action assigned shows nothing at all and reads as an
     import that failed.
+
+    Shape-key actions are never the armature's candidate; each shape-key
+    action of the chosen idle clip is assigned to its owning Key, so rig and
+    morphs play the same clip.
     """
 
     for action in actions:

@@ -2,6 +2,19 @@
 
 This module deliberately has no Blender dependency so its parser, cache, and
 network behavior can be tested with the standard Python runtime.
+
+The cache root is always normalised through `expanduser` and `resolve` (the
+add-on applies Blender's `abspath` first; its default is DATAFILES
+`carbonenginejs/tool-core`). Payloads live under `ResFiles/` and preview
+copies under `Previews/`; clearing removes only those two, keeping indexes
+and exported files. Every cache path is built with `safe_join`, which
+refuses any path that escapes the root: that is traversal containment, not
+tidiness.
+
+`ensure_latest_catalog` is offline-first: with a cached catalog it touches
+no network unless asked to refresh. Latest-build checks are rate-limited per
+cache root and channel, and the catalog reports the remaining wait.
+Catalog loads and resource fetches refuse without creator-terms acceptance.
 """
 
 from __future__ import annotations

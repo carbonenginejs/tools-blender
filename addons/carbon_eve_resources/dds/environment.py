@@ -11,6 +11,13 @@ Three things have to happen to a nebula before Blender will take it:
   bright detail an environment map exists to provide, so it is written as
   Radiance `.hdr`, which is the simplest format that keeps it.
 
+The cube is addressed in DDS subresource order: each face's complete mip
+chain precedes the next face, so one face's stride is its whole chain, not
+just mip zero. A DX10 array size above one (some files count faces there) is
+accepted only when exactly one six-face cube accounts for the payload; real
+cube arrays are rejected. Only this cube becomes the environment: a nebula's
+separate alpha, star and volume-noise layers are not reproduced.
+
 There is no `bpy` in here on purpose. The decode is the expensive part and this
 runs in the fetch pool's child process, the same way the BC7 textures do, so
 the window keeps drawing while it works.

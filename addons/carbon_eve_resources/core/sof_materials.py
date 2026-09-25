@@ -49,6 +49,11 @@ def material_name_for(names: Mapping[str, str], area_type: int, index: int) -> s
 
     Falls back to PRIMARY as the runtime does. mde3_t3's sails name only slot
     4, so their other three are primary's. Returns "" when neither names it.
+
+    The same slot number differs by area type. On `mde3_t3:legion_minmatar`
+    slot 4 is `brown_dust_matt` on primary (DiffuseColor 0.076, 0.065, 0.047)
+    and `sails_minmatar` on sails (0.002, 0.003, 0.004); pushing one set of
+    values into every area's material overwrites one with the other.
     """
 
     key = f"{int(area_type)}:{int(index) - 1}"
