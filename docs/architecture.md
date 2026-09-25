@@ -29,18 +29,18 @@ keeps one source of truth, and it is the reason the driven sockets hide their
 value widgets -- a slider that takes an edit and then discards it is worse than
 no slider at all.
 
-## The four tools
+## The tools
 
 | Tool | Owns |
 | --- | --- |
-| **SOF Editor** | SOF elements: hull, race, faction, pattern |
-| **SOF DNA Builder** | Composing a DNA, and loading ships from one |
-| **Type Browser** | Items, skins, and the rest of the type data |
-| **Attribute Editor** | Values shared across a hull -- speed, lights, dirt -- passed into the Blender constant buffers |
+| **SOF DNA Builder** (sidebar) | Composing a DNA and loading ships from one. It names SOF records; it does not edit them. |
+| **Attribute Editor** (sidebar) | Values shared across a hull -- speed, lights, dirt -- passed into the Blender constant buffers |
+| **Carbon SOF** panel | The SOF source and components driving a ship: apply to ship, rebuild from SOF, export a custom material (`sof_panels.py`) |
+| **Resource browser** | Browsing and fetching resources (`resource_browser.py`) |
 
-Each owns one job. The Attribute Editor generalises what already works: age,
-activation, booster gain and the kill count are per-ship values driven into
-constant-buffer sockets from the object.
+There is no SOF editor and no type browser. The Attribute Editor generalises
+what already works: age, activation, booster gain and the kill count are
+per-ship values driven into constant-buffer sockets from the object.
 
 ## What the tools are built on
 
@@ -56,8 +56,8 @@ designed:
   per-ship values and the SOF that drives them. The panel and the command line
   MUST build the same ship. When they did not, decals came through on one path
   and not the other, and two hulls in one scene looked like different games.
-- **the readers** -- `sof_document` (bundle and document), `sof_builder` (DNA
-  validation), `tools_remote`/`sof_fetch` (hosted service), `resource_index`.
+- **the readers** -- `sof_builder` (DNA validation), `tools_remote`/`sof_fetch`
+  (hosted service), `resource_index`, all under `core/`.
 
 ## Names come from Carbon
 
