@@ -1237,7 +1237,7 @@ def build_all() -> list:
     """Builds a group for every measured quad member.
 
     `fxv5` and `fxdistortionv5` are in the family too: fxv5 is drawn by the
-    fx graph in `frontier.py`, fxdistortionv5 by `materials`.
+    fx graph in `fx`, fxdistortionv5 by `materials`.
     """
 
     family = load_family()

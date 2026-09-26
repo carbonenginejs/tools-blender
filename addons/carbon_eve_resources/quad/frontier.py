@@ -8,6 +8,7 @@ import hashlib
 import bpy
 
 from . import nodes
+from .graph import Graph as _Graph, constant_sockets
 
 
 VERSION = 1
@@ -16,7 +17,7 @@ VERSION = 1
 # skinned_quadheatv5 has a static VS while unpackedskinned_quadheatv5 is rigid.
 RIGID_VERTEX_SHA256 = "0af988abdfcd7d16c6a028563fecabf57b32286adf8bede905362babfcbebe8d"
 SUPPORTED = {"turret", "simplepbr", "standardpbr", "ship", "structure", "quadv5", "quaddetailv5", "quadheatv5",
-             "quadenvironmentv5", "quadsailsv5", "asteroidv5", "quadtriplanarv5", "fxv5", "asteroid"}
+             "quadenvironmentv5", "quadsailsv5", "asteroidv5", "quadtriplanarv5", "asteroid"}
 
 
 def mip0_first_row(image, *, srgb=False):
@@ -39,87 +40,8 @@ def mip0_first_row(image, *, srgb=False):
                        for lane in range(4)) for index in range(0, len(pixels), 4))
 
 
-def constant_sockets(member, name):
-    constant = member.constants[name]
-    if member.annotation(name).is_color or name.endswith("Color"):
-        return [(name, "NodeSocketColor", tuple(constant.default[:3]) + (1.0,))]
-    if len(constant.default) == 1:
-        return [(name, "NodeSocketFloat", constant.default[0])]
-    return [(f"{name}.{lane}", "NodeSocketFloat", value)
-            for lane, value in zip("xyzw", constant.default)]
-
-
-class Graph:
-    """Small Blender node construction helpers; operations remain explicit."""
-
-    def __init__(self, tree, member, create_io=True):
-        self.tree, self.member = tree, member
-        self.nodes, self.links = tree.nodes, tree.links
-        self.input = self.nodes.new("NodeGroupInput") if create_io else None
-        self.output = self.nodes.new("NodeGroupOutput") if create_io else None
-
-    def bind(self, value, socket):
-        if hasattr(value, "node"):
-            self.links.new(value, socket)
-        else:
-            if socket.type == "RGBA" and isinstance(value, (tuple, list)) and len(value) == 3:
-                value = tuple(value) + (1.0,)
-            socket.default_value = value
-
-    def math(self, operation, *values):
-        node = self.nodes.new("ShaderNodeMath")
-        node.operation = operation
-        for value, socket in zip(values, node.inputs):
-            self.bind(value, socket)
-        return node.outputs[0]
-
-    def vector(self, operation, a, b=None):
-        node = self.nodes.new("ShaderNodeVectorMath")
-        node.operation = operation
-        self.bind(a, node.inputs[0])
-        if b is not None:
-            self.bind(b, node.inputs["Scale"] if operation == "SCALE" else node.inputs[1])
-        return node.outputs["Value"] if operation in ("DOT_PRODUCT", "LENGTH", "DISTANCE") else node.outputs["Vector"]
-
-    def split(self, value):
-        node = self.nodes.new("ShaderNodeSeparateXYZ")
-        self.bind(value, node.inputs[0])
-        return tuple(node.outputs)
-
-    def combine(self, x, y, z):
-        node = self.nodes.new("ShaderNodeCombineXYZ")
-        for v, socket in zip((x, y, z), node.inputs):
-            self.bind(v, socket)
-        return node.outputs[0]
-
-    def sat(self, value):
-        return self.math("MINIMUM", self.math("MAXIMUM", value, 0), 1)
-
-    def satv(self, value):
-        return self.vector("MINIMUM", self.vector("MAXIMUM", value, (0, 0, 0)), (1, 1, 1))
-
-    def mix(self, a, b, factor):
-        return self.math("ADD", a, self.math("MULTIPLY", self.math("SUBTRACT", b, a), factor))
-
-    def mixv(self, a, b, factor):
-        return self.vector("ADD", a, self.vector("SCALE", self.vector("SUBTRACT", b, a), factor))
-
-    def c(self, name, lane=0):
-        outputs = self.input.outputs
-        if f"{name}.{'xyzw'[lane]}" in outputs:
-            return outputs[f"{name}.{'xyzw'[lane]}"]
-        if outputs[name].type == "RGBA":
-            return self.split(outputs[name])[lane]
-        return outputs[name]
-
-    def color(self, name):
-        return self.input.outputs[name]
-
-    def tex(self, name):
-        return self.input.outputs[name]
-
-    def red(self, name):
-        return self.split(self.tex(name))[0]
+class Graph(_Graph):
+    """Frontier's surfaces over the shared node helpers."""
 
     def decoded_normal(self, texture="NormalMap", pbr=True):
         r, g, _ = self.split(self.tex(texture))
@@ -427,21 +349,6 @@ class Graph:
         if self.member.selected_options.get("SPACE_OBJECT_TRANSPARENCY") == "SOT_CLIP":
             alpha = self.math("GREATER_THAN", self.math("SUBTRACT", 1, self.red("PaintClipMap")), 127 / 255)
         self.surface(base, properties[0], properties[1], normal=normal, alpha=alpha)
-
-    def frame(self, index, negate=False):
-        basis = []
-        for channel in ("tangent", "binormal", "normal"):
-            attribute = self.nodes.new("ShaderNodeAttribute")
-            suffix = str(index) if index and channel != "normal" else ""
-            attribute.attribute_name = f"gr2_{channel}{suffix}"
-            transform = self.nodes.new("ShaderNodeVectorTransform")
-            transform.vector_type = "VECTOR"
-            transform.convert_from, transform.convert_to = "OBJECT", "WORLD"
-            self.bind(attribute.outputs["Vector"], transform.inputs[0])
-            # The static donor vertex stage uses direct world3x3, without
-            # normalizing individual axes. Structure negates only T and B.
-            basis.append(self.vector("SCALE", transform.outputs[0], -1 if negate and channel != "normal" else 1))
-        return basis
 
     def frame_vector(self, frame, vector):
         return self.weighted(self.split(vector), frame, True)
@@ -767,36 +674,6 @@ class Graph:
         # Growth <= 0 still samples GradientMap at zero; never skip its emission.
         return m("MULTIPLY", self.sat(heat), m("GREATER_THAN", growth, 0))
 
-    def fx(self):
-        # Frontier 3512930 depth PS0-29; the pass blends ONE+ONE.
-        view = self.nodes.new("ShaderNodeAttribute")
-        view.attribute_name = "carbon_fx_vertex_view"
-        normal = self.vector("NORMALIZE", self.frame(0)[2])
-        facing = self.sat(self.math("SUBTRACT", self.vector("DOT_PRODUCT", view.outputs["Vector"], normal), self.c("FresnelFactors", 2)))
-        fresnel = self.math("POWER", self.math("SUBTRACT", 1, facing), self.c("FresnelFactors", 0))
-        strength = self.c("FresnelFactors", 1)
-        positive = self.math("MULTIPLY", fresnel, self.math("MAXIMUM", strength, 0))
-        negative = self.math("MULTIPLY", self.math("SUBTRACT", 1, self.math("MINIMUM", fresnel, 1)),
-                             self.math("MAXIMUM", self.math("MULTIPLY", strength, -1), 0))
-        color = self.color("BaseColor")
-        alpha = self.input.outputs["BaseColorAlpha"]
-        for texture in ("Layer1Map", "Layer2Map", "LayerMaskMap"):
-            color = self.vector("MULTIPLY", color, self.tex(texture))
-            alpha = self.math("MULTIPLY", alpha, self.input.outputs[texture + "Alpha"])
-        activation = self.input.outputs["activationStrength"]
-        alpha = self.math("MULTIPLY", alpha, activation)
-        emission = self.vector("SCALE", color, self.math("MULTIPLY", activation, self.math("ADD", positive, negative)))
-        transparent = self.nodes.new("ShaderNodeBsdfTransparent")
-        emit = self.nodes.new("ShaderNodeEmission")
-        self.bind(emission, emit.inputs["Color"])
-        add = self.nodes.new("ShaderNodeAddShader")
-        self.bind(transparent.outputs[0], add.inputs[0])
-        self.bind(emit.outputs[0], add.inputs[1])
-        self.bind(add.outputs[0], self.output.inputs["BSDF"])
-        self.bind(emission, self.output.inputs["Emission"])
-        self.bind(alpha, self.output.inputs["Alpha"])
-        self.bind(normal, self.output.inputs["Normal"])
-
     def triplanar(self):
         # Frontier 3512930 depth PS0-111: projection-space normal offsets,
         # followed by inverse-transpose world transform (not the quad TBN).
@@ -1014,7 +891,7 @@ def wire_heat_inputs(member, effect, material, group, resources, *, radius, sun_
                         ("AtlasCurvature", graph.split(sample("AtlasCurvatureMap", uv))[0]),
                         ("Grunge", grunge)):
         graph.bind(value, group.inputs[name])
-    material["carbon_frontier_vertex_view"] = True
+    material["carbon_fx_vertex_view"] = True
     material["carbon_heat_noise_contract"] = "runtime-null-texture"
     material["carbon_heat_sampler_limit"] = "Blender 2D filtering; Carbon anisotropy and scene mip bias are not reproduced"
     if hasattr(material, "surface_render_method"):
@@ -1044,11 +921,6 @@ def build_group(member, lookup_samples=None):
         tree.interface.new_socket(name=label, in_out="OUTPUT", socket_type="NodeSocketFloat")
     for texture in member.textures:
         nodes._socket(tree, texture, "NodeSocketColor", default=(0, 0, 0, 1))
-    if member.name == "fxv5":
-        nodes._socket(tree, "BaseColorAlpha", "NodeSocketFloat", default=member.constants["BaseColor"].default[3])
-        nodes._socket(tree, "activationStrength", "NodeSocketFloat", default=1.0)
-        for texture in member.textures:
-            nodes._socket(tree, texture + "Alpha", "NodeSocketFloat", default=1.0)
     if member.name in ("ship", "turret"):
         for texture in ("DirtGrunge1", "DirtGrunge2", "CurvatureGrunge", "GlobalGrunge"):
             nodes._socket(tree, texture, "NodeSocketColor", default=(0, 0, 0, 1))
@@ -1109,8 +981,6 @@ def build_group(member, lookup_samples=None):
         graph.structure()
     elif member.name == "quadtriplanarv5":
         graph.triplanar()
-    elif member.name == "fxv5":
-        graph.fx()
     elif member.name == "asteroid":
         graph.asteroid(lookup_samples)
     else:
@@ -1137,13 +1007,6 @@ def wire_coordinates(member, effect, material):
         node.label = f"Authored UV{index}"
         uv.append(node.outputs["Vector"])
     assignments = {}
-    if member.name == "fxv5":
-        time = nodes.time_value(material.node_tree)
-        for index in (1, 2):
-            transform, scroll = values[f"Layer{index}Transform"], values[f"Layer{index}Scroll"]
-            moved = graph.vector("ADD", graph.vector("MULTIPLY", uv[0], (*transform[:2], 0)), (*transform[2:], 0))
-            moved = graph.vector("ADD", moved, graph.vector("SCALE", (*scroll[:2], 0), time))
-            assignments[f"Layer{index}Map"] = graph.vector("ADD", moved, (*scroll[2:], 0))
     assignments["DustNoiseMap"] = graph.vector("SCALE", uv[0], 20)
     extra_samples = {}
     if member.name == "asteroid":
@@ -1271,66 +1134,3 @@ def wire_triplanar(graph, values):
         if alpha in group.inputs:
             graph.bind(graph.weighted(weights, [s.outputs["Alpha"] for s in samples]), group.inputs[alpha])
 
-
-def attach_fx_vertex_view(obj, scene):
-    """Preserve FX vertex-normalized view and heat vertex camera distance.
-
-    Blender adapter: shader Incoming normalizes per fragment. A point-domain
-    attribute instead preserves the depth VS normalization before interpolation.
-    Matrix coefficient drivers retain parent shear and work without 4.2 nodes.
-    """
-    modifier = next((m for m in obj.modifiers if m.type == "NODES" and m.node_group
-                     and m.node_group.get("carbon_fx_vertex_view")), None)
-    if (modifier and modifier.node_group.get("carbon_fx_owner") == obj
-            and modifier.node_group.get("carbon_fx_vertex_version", 1) == 2):
-        return modifier
-    previous = modifier.node_group if modifier else None
-    tree = bpy.data.node_groups.new("Carbon FX Vertex View " + obj.name, "GeometryNodeTree")
-    tree["carbon_fx_vertex_view"] = True
-    tree["carbon_fx_vertex_version"] = 2
-    tree["carbon_fx_owner"] = obj
-    tree.interface.new_socket(name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
-    tree.interface.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
-    graph = Graph(tree, None, False)
-    incoming = tree.nodes.new("NodeGroupInput")
-    outgoing = tree.nodes.new("NodeGroupOutput")
-    position = tree.nodes.new("GeometryNodeInputPosition").outputs["Position"]
-
-    def driven(owner, path):
-        node = tree.nodes.new("ShaderNodeValue")
-        node.label = path
-        driver = node.outputs[0].driver_add("default_value").driver
-        driver.type = "AVERAGE"
-        variable = driver.variables.new()
-        variable.type = "SINGLE_PROP"
-        variable.targets[0].id_type = "SCENE" if owner == scene else "OBJECT"
-        variable.targets[0].id = owner
-        variable.targets[0].data_path = path
-        return node.outputs[0]
-
-    world = []
-    for row in range(3):
-        # RNA indexes matrix columns first; mathutils indexes rows first.
-        basis = graph.combine(*(driven(obj, f"matrix_world[{column}][{row}]") for column in range(3)))
-        world.append(graph.math("ADD", graph.vector("DOT_PRODUCT", basis, position),
-                                driven(obj, f"matrix_world[3][{row}]")))
-    camera = graph.combine(*(driven(scene, f"camera.matrix_world[3][{axis}]") for axis in range(3)))
-    delta = graph.vector("SUBTRACT", camera, graph.combine(*world))
-    view = graph.vector("NORMALIZE", delta)
-    store = tree.nodes.new("GeometryNodeStoreNamedAttribute")
-    store.data_type, store.domain = "FLOAT_VECTOR", "POINT"
-    store.inputs["Name"].default_value = "carbon_fx_vertex_view"
-    graph.bind(incoming.outputs["Geometry"], store.inputs["Geometry"])
-    graph.bind(view, store.inputs["Value"])
-    distance = tree.nodes.new("GeometryNodeStoreNamedAttribute")
-    distance.data_type, distance.domain = "FLOAT", "POINT"
-    distance.inputs["Name"].default_value = "carbon_fx_vertex_distance"
-    graph.bind(store.outputs["Geometry"], distance.inputs["Geometry"])
-    graph.bind(graph.vector("LENGTH", delta), distance.inputs["Value"])
-    graph.bind(distance.outputs["Geometry"], outgoing.inputs["Geometry"])
-    if modifier is None:
-        modifier = obj.modifiers.new("Carbon FX Vertex View", "NODES")
-    modifier.node_group = tree
-    if previous and previous.users == 0 and previous.get("carbon_fx_owner") == obj:
-        bpy.data.node_groups.remove(previous)
-    return modifier

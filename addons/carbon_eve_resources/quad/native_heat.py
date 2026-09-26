@@ -129,7 +129,7 @@ def material(area, member, resources, owner, radius):
     result["carbon_effect_path"] = effect.get("effectFilePath", "")
     result["carbon_effect_identity"] = member.identity
     result["carbon_source"] = "frontier"
-    del result["carbon_frontier_vertex_view"]
+    del result["carbon_fx_vertex_view"]
     return result
 
 

@@ -603,18 +603,18 @@ def assemble(document_path, resources_directory, *, clear=True,
                 try:
                     attach_rigid_frame(target)
                     for material in materials:
-                        if "carbon_frontier_normal_limit" in material:
-                            del material["carbon_frontier_normal_limit"]
+                        if "carbon_normal_limit" in material:
+                            del material["carbon_normal_limit"]
                 except ValueError as error:
                     warnings.append(f"{target.name}: {error}")
             else:
                 warnings.append(f"{target.name}: mixed vertex deformation paths need separate geometry")
         for material in materials:
-            if material.get("carbon_frontier_normal_limit"):
-                warnings.append(f"{material.name}: {material['carbon_frontier_normal_limit']}")
-        if any(material and material.get("carbon_frontier_vertex_view") for material in target.data.materials):
-            from .quad.frontier import attach_fx_vertex_view
-            attach_fx_vertex_view(target, bpy.context.scene)
+            if material.get("carbon_normal_limit"):
+                warnings.append(f"{material.name}: {material['carbon_normal_limit']}")
+        if any(material and material.get("carbon_fx_vertex_view") for material in target.data.materials):
+            from .quad.fx import attach_vertex_view
+            attach_vertex_view(target, bpy.context.scene)
 
         # User-approved native approximation: derive a refractive shell from
         # the evaluated hull after its deformation modifiers. Never replace

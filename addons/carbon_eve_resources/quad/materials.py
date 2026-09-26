@@ -383,7 +383,12 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
     if member.name == "fxdistortionv5":
         return build_distortion_area_material(area, member, shader, index), None
 
-    if member.target == "frontier":
+    if member.name == "fxv5":
+        # EVE's shader; Frontier's fxv5 is an inherited copy. Both targets'
+        # members build the one graph in `fx`.
+        from . import fx
+        tree = fx.build_group(member)
+    elif member.target == "frontier":
         from . import frontier
         if member.name == "fxheatv5":
             return build_heat_area_material(area, member, resources, index, heat_context)
@@ -405,13 +410,6 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
             if lookup_samples is None:
                 print(f"  ! {area.get('name')}: MaterialLookupGradient unavailable; using the unbound black lookup")
         tree = frontier.build_group(member, lookup_samples=lookup_samples)
-    elif member.name == "fxv5":
-        # fxv5 is EVE's shader, and Frontier inherited it. TQ 3542233's depth
-        # PS0-29 is `Graph.fx` instruction for instruction, with the same
-        # ONE+ONE pass, so EVE's areas are drawn by that graph. It sits in
-        # frontier.py only because Frontier's support was written first.
-        from . import frontier
-        tree = frontier.build_group(member)
     else:
         tree = nodes.build_group(member)
     material = bpy.data.materials.new(f"{index:02d} {area.get('name') or member.name}")
@@ -419,7 +417,7 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
     material["carbon_effect_path"] = shader
     material["carbon_effect_identity"] = member.identity
     if member.name == "fxv5":
-        material["carbon_frontier_vertex_view"] = True
+        material["carbon_fx_vertex_view"] = True
         # Eevee's dithered path discards the fully transparent closure and
         # loses its additive emission. The blended path preserves ONE+ONE.
         if hasattr(material, "surface_render_method"):
@@ -430,14 +428,14 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
         # Blender's Armature modifier leaves imported generic vector
         # attributes in the rest pose; pixel-bytecode aliases do not prove
         # equivalent animated vertex frames.
-        material["carbon_frontier_normal_limit"] = "Authored tangent frame remains in the rest pose"
+        from .frontier import RIGID_VERTEX_SHA256
+        material["carbon_normal_limit"] = "Authored tangent frame remains in the rest pose"
         alias = member.aliases.get(shader.lower(), {})
-        material["carbon_rigid_frame_required"] = alias.get("vertexSha256") == frontier.RIGID_VERTEX_SHA256
+        material["carbon_rigid_frame_required"] = alias.get("vertexSha256") == RIGID_VERTEX_SHA256
     elif member.name == "fxv5" and "skinned_" in shader.rsplit("/", 1)[-1].lower():
         # The fx graph reads the imported normal attribute, which the Armature
-        # modifier leaves in the rest pose. The flag keeps its Frontier name
-        # until the graph moves out of frontier.py.
-        material["carbon_frontier_normal_limit"] = "Authored tangent frame remains in the rest pose"
+        # modifier leaves in the rest pose.
+        material["carbon_normal_limit"] = "Authored tangent frame remains in the rest pose"
     material.use_nodes = True
     mnodes, mlinks = material.node_tree.nodes, material.node_tree.links
     mnodes.clear()
@@ -526,13 +524,13 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
     if member.target != "frontier":
         wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources)
     fill_unbound_textures(member, group, mnodes, mlinks, row)
-    if member.target == "frontier":
+    if member.name == "fxv5":
+        from .fx import wire_coordinates
+        wire_coordinates(member, effect, material)
+    elif member.target == "frontier":
         from .frontier import wire_coordinates
         wire_coordinates(member, effect, material)
         wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources)
-    elif member.name == "fxv5":
-        from .frontier import wire_coordinates
-        wire_coordinates(member, effect, material)
 
     for constant in effect.get("constParameters", []):
         name, value = constant.get("name"), constant.get("value") or []
@@ -541,7 +539,7 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
                 continue
             if member.name == "fxv5" and name == "BaseColor" and len(value) > 3:
                 group.inputs["BaseColorAlpha"].default_value = float(value[3])
-            from .frontier import constant_sockets
+            from .graph import constant_sockets
             for lane, (label, kind, _) in enumerate(constant_sockets(member, name)):
                 socket = group.inputs.get(label)
                 if socket is not None:
