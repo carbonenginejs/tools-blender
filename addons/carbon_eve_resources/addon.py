@@ -161,6 +161,36 @@ def _sprite_scale_changed(self, context):
         obj.hide_render = wanted <= 0.0
 
 
+def _light_emitters_changed(self, context):
+    """Toggle generated attachment lights in the viewport and renders."""
+    from .ship import update_attachment_lights_enabled
+    update_attachment_lights_enabled(self.light_emitters)
+
+
+def _light_falloff_changed(self, context):
+    """Refit generated lights while retaining the brightness multiplier."""
+    from .ship import update_attachment_light_falloff
+    update_attachment_light_falloff(self.light_falloff, self.light_boost)
+
+
+def _light_boost_changed(self, context):
+    """Apply the preview multiplier to generated attachment lights."""
+    from .ship import update_attachment_light_boost
+    update_attachment_light_boost(self.light_boost)
+
+
+def _plane_boost_changed(self, context):
+    """Adjust only plane-set preview emission."""
+    from .quad.nodes import update_sprite_boost
+    update_sprite_boost(self.plane_boost, planes=True)
+
+
+def _sprite_boost_changed(self, context):
+    """Adjust preview emission without changing the authored colours."""
+    from .quad.nodes import update_sprite_boost
+    update_sprite_boost(self.sprite_boost)
+
+
 def _sprite_glow_changed(self, context):
     """Re-spreads the glow on sprites already in the scene.
 
@@ -367,6 +397,38 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         precision=3,
         update=_sprite_scale_changed,
     )
+    light_emitters: BoolProperty(
+        name="Enable light emitters",
+        description="Enable generated attachment lights in the viewport and renders",
+        default=True, update=_light_emitters_changed,
+    )
+    light_falloff: FloatProperty(
+        name="Light falloff",
+        description="Attachment light hotspot: lower is softer, higher is tighter; "
+                    "keeps half-range brightness fixed (also changes shadow softness)",
+        default=1.0, min=0.1, max=10.0, step=10, precision=2,
+        update=_light_falloff_changed,
+    )
+    light_boost: FloatProperty(
+        name="Light boost",
+        description="Brightness multiplier for generated attachment lights; "
+                    "zero is off, one preserves authored brightness",
+        default=1.0, min=0.0, max=10.0, step=10, precision=2,
+        update=_light_boost_changed,
+    )
+    plane_boost: FloatProperty(
+        name="Plane-set boost",
+        description="Plane-set brightness multiplier; zero is off, one is authored brightness",
+        default=1.0, min=0.0, max=10.0, step=10, precision=2,
+        update=_plane_boost_changed,
+    )
+    sprite_boost: FloatProperty(
+        name="Spotlight boost",
+        description="Brightness multiplier for spotlight cones and glows only. "
+                    "Zero turns emission off; one preserves authored brightness",
+        default=1.0, min=0.0, max=10.0, step=10, precision=2,
+        update=_sprite_boost_changed,
+    )
     #: How tightly a sprite's glow hugs its core.
     #:
     #: LOWER is MORE glow. It is the exponent on the distance from the centre,
@@ -426,6 +488,14 @@ class EVE_RESOURCE_Preferences(AddonPreferences):
         layout.prop(self, "view_transform_mode", expand=True)
         layout.prop(self, "sprite_scale")
         layout.prop(self, "sprite_glow")
+        layout.prop(self, "sprite_boost")
+        layout.prop(self, "plane_boost")
+        lights = layout.column(align=True)
+        lights.prop(self, "light_emitters", text="Light emitters")
+        light_controls = lights.row(align=True)
+        light_controls.enabled = self.light_emitters
+        light_controls.prop(self, "light_boost", text="Boost", slider=True)
+        light_controls.prop(self, "light_falloff", text="Falloff", slider=True)
         layout.prop(self, "haze_density")
         layout.prop(self, "haze_falloff")
 

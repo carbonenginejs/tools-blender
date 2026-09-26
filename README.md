@@ -58,7 +58,7 @@ Step-by-step, with troubleshooting: [docs/setup.md](docs/setup.md).
 
 Current download:
 
-- [CarbonEngineJS Blender Tools 0.8.0](https://github.com/carbonenginejs/tools-blender/releases/download/v0.8.0/carbon_eve_resources-0.8.0.zip)
+- [CarbonEngineJS Blender Tools 0.9.0](https://github.com/carbonenginejs/tools-blender/releases/download/v0.9.0/carbon_eve_resources-0.9.0.zip)
   — EVE resource browsing and ship loading, with GR2 and CMF importers.
 
 The readers can also be installed without Blender:
@@ -123,6 +123,23 @@ The add-on imports the hull geometry through the GR2 importer, maps each
 `Tr2MeshArea` onto the geometry index groups it names, and builds one material
 per area. Anything the bundle does not contain is fetched on demand, so a bare
 document still works.
+
+### Adjust attachment lighting
+
+**Spotlight boost** controls spotlight cones and glows; **Plane-set boost**
+controls glowing panels. Standalone sprites retain their own size and glow
+controls.
+
+**Light emitters** enables the separate attachment lights, including banner
+lights, in both the viewport and renders. Disable it for better performance on
+large ships. **Boost** changes brightness; **Falloff** adjusts the hotspot,
+with lower values softer and higher values tighter. Both default to 1, using
+each light's authored values as the baseline.
+
+The light conversion is calibrated against Blender 5.0. Cycles uses a radial
+shader; Eevee uses a fitted soft light with an outer-distance cutoff. These
+remain approximations, especially for specular response and Eevee's edge fade.
+Rebuild existing ships after upgrading to obtain the new light materials.
 
 ### Use your own shader as the material
 

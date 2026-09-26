@@ -1180,13 +1180,8 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
         if heat_amount is not None:
             scaled = math("MULTIPLY", scaled, heat_amount, location=(-800, -930),
                           label="gated by boosters")
-        # The engine's own boost, which is not in the authored colour: ten for
-        # a general glow and a hundred for a heat one.
-        boost = (reference.GENERAL_HEAT_GLOW_MULTIPLIER
-                 if glow_color == "GeneralHeatGlowColor"
-                 else reference.GENERAL_GLOW_MULTIPLIER)
-        scaled = math("MULTIPLY", scaled, boost, location=(-760, -900),
-                      label=f"boost lights x{boost:g}")
+        # Keep authored glow and activation/heat gates without an extra
+        # Blender brightness multiplier.
         emission = vector("SCALE", value(glow_color), None, location=(-680, -900))
         links.new(scaled, emission.node.inputs["Scale"])
 
@@ -1882,3 +1877,63 @@ def build_heat_displace_group(*, authored_uv=False) -> bpy.types.ShaderNodeTree:
     value = _image_uv(tree, total.outputs[0]) if authored_uv else total.outputs[0]
     links.new(value, group_out.inputs["Glow UV"])
     return tree
+
+
+# Blender preview adjustment, not a Carbon parameter. Kept outside the
+# measured RGB graphs so faction colour, activation and blink remain authored.
+SPRITE_BOOST_NODE = "Carbon preview sprite boost"
+
+
+def apply_sprite_boost(tree, emission, value=None):
+    """Multiply emission strength once, retaining any existing blink input."""
+    if value is None:
+        addon = bpy.context.preferences.addons.get("carbon_eve_resources")
+        key = "plane_boost" if tree.name.startswith("CarbonShader planeglow") else "sprite_boost"
+        value = getattr(addon.preferences, key, 1.0) if addon else 1.0
+    boost = tree.nodes.get(SPRITE_BOOST_NODE)
+    if boost is None:
+        strength = emission.inputs["Strength"]
+        boost = tree.nodes.new("ShaderNodeMath")
+        boost.name = SPRITE_BOOST_NODE
+        boost.label = "Plane-set boost" if tree.name.startswith("CarbonShader planeglow") else "Spotlight boost"
+        boost.operation = "MULTIPLY"
+        boost.location = (emission.location.x - 180, emission.location.y - 160)
+        if strength.is_linked:
+            tree.links.new(strength.links[0].from_socket, boost.inputs[0])
+        else:
+            boost.inputs[0].default_value = strength.default_value
+        tree.links.new(boost.outputs[0], strength)
+    boost.inputs[1].default_value = float(value)
+
+
+def update_sprite_boost(value, planes=False):
+    """Update only plane-set or spotlight-set groups.
+
+    The saved preference keeps its original sprite_boost key for compatibility;
+    standalone sprites use their own size/glow controls, not this multiplier.
+    """
+    if not planes:
+        # Undo the accidental multiplier in scenes built by the earlier preview.
+        # Restore the incoming falloff/blink link rather than baking its value.
+        for material in bpy.data.materials:
+            tree = material.node_tree
+            if tree is None or tree.nodes.get("carbon sprite falloff") is None:
+                continue
+            boost = tree.nodes.get(SPRITE_BOOST_NODE)
+            if boost is None:
+                continue
+            source = boost.inputs[0]
+            for link in list(boost.outputs[0].links):
+                target = link.to_socket
+                if source.is_linked:
+                    tree.links.new(source.links[0].from_socket, target)
+                else:
+                    tree.links.remove(link)
+                    target.default_value = source.default_value
+            tree.nodes.remove(boost)
+    for tree in bpy.data.node_groups:
+        if not tree.get("carbon_planeglow_version" if planes else "carbon_spotlight_version"):
+            continue
+        for node in list(tree.nodes):
+            if node.type == "EMISSION":
+                apply_sprite_boost(tree, node, value)

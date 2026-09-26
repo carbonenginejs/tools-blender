@@ -115,6 +115,7 @@ def _finish(graph, tree, emission):
     transparent = graph.nodes.new("ShaderNodeBsdfTransparent")
     emit = graph.nodes.new("ShaderNodeEmission")
     graph.bind(emission, emit.inputs["Color"])
+    nodes.apply_sprite_boost(tree, emit)
     add = graph.nodes.new("ShaderNodeAddShader")
     graph.bind(transparent.outputs[0], add.inputs[0])
     graph.bind(emit.outputs[0], add.inputs[1])

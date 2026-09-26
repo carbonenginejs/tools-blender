@@ -2507,10 +2507,163 @@ def build_sprite_sets(document, hull, collection, hull_sets=None,
     return built + lights
 
 
+def attachment_light_soft_radius(radius, inner_radius, unit=1.0):
+    """Fit Blender's soft 1/(d^2+a^2) response at 0.1R and 0.5R.
+
+    A deliberate preview fit, not Carbon's physical emitter size. These two
+    anchors preserve the half-range calibration and remove the point-light
+    singularity. Blender 5.0 soft-falloff probes in Cycles and Eevee verified
+    this response. Eevee's outer-distance window is included in the fit;
+    profiles and specular remain approximate.
+    """
+    if radius <= 0:
+        return 0.0
+    near, middle = radius * 0.1, radius * 0.5
+    def response(d):
+        return ((radius - d) / (d + 0.001)
+                * (1.0 - min(max(inner_radius / d, 0.0), 0.8)))
+    # Eevee 5 light_influence_attenuation: (1 - (d/R)^4)^2.
+    # Remove its window before fitting the native soft lamp.
+    ratio = (response(near) / (1.0 - 0.1 ** 4) ** 2
+             / (response(middle) / (1.0 - 0.5 ** 4) ** 2))
+    squared = (middle * middle - ratio * near * near) / (ratio - 1.0)
+    return math.sqrt(max(squared, 0.0)) * abs(unit)
+
+
+def attachment_light_power(brightness, radius, inner_radius, colour, unit=1.0, falloff=1.0):
+    """Return normalized RGB and watts matched at half the Carbon light range.
+
+    Blender preview adaptation, not a Carbon photometric unit conversion.
+    EVE 3542233 quadv5.sm_depth, Main PS, permutation 4 (SOPPT_ENABLED),
+    DXBC 372-384/399-401: after Tr2LightManager::AddLight's radius multiply,
+    S = brightness * (R-d)/(d+.001) * (1-clamp(innerRadius/d, 0, .8)).
+    Its diffuse term lacks Blender Lambert's 1/pi (DXBC 439-441), so a
+    normalized soft lamp needs 4*pi^2*(d_blender^2+a^2)*S watts before
+    compensating Eevee's (1-(d/R)^4)^2 influence window. Cycles nodes
+    replace that native distance response with the authored radial expression.
+    The chosen d=R/2 is our preview policy. Other distances, specular
+    broadening, profiles, cone falloff and screen-size fading are not matched.
+    EVE units are metres; importing at scale u requires u^2 power scaling.
+    """
+    rgb = tuple(float(v) for v in colour[:3])
+    peak = max(rgb)
+    if radius <= 0 or brightness <= 0 or peak <= 0:
+        return (0.0, 0.0, 0.0), 0.0
+    distance = float(radius) * 0.5
+    attenuation = (radius - distance) / (distance + 0.001)
+    inner = 1.0 - min(max(inner_radius / distance, 0.0), 0.8)
+    soft_radius = attachment_light_soft_radius(radius, inner_radius, unit) / max(float(falloff), 0.1)
+    power = 4.0 * math.pi ** 2 * ((distance * abs(unit)) ** 2 + soft_radius ** 2)
+    power *= brightness * attenuation * inner * peak / (1.0 - 0.5 ** 4) ** 2
+    return tuple(v / peak for v in rgb), power
+
+
+def attachment_light_curve(lamp, radius, inner, unit, brightness, colour, falloff):
+    """Cycles radial shader; Eevee uses the fitted native lamp plus cutoff.
+
+    Carbon quadv5.sm_depth Main PS, SOPPT_ENABLED, DXBC 372-384/399-401.
+    Cancel Blender's soft-lamp diffuse distance response, then evaluate Carbon's
+    radial response. Ray Length measures sampled emitter distance, so a finite
+    emitter still approximates the centre-distance curve; specular is not a
+    port of Carbon's BRDF. The global exponent is a deliberate preview override.
+    Blender 5 diffuse render probes (R=10, inner=8) measured errors of
+    about 9% at 0.1R and under 1% at 0.2R/0.5R in Cycles. Eevee's
+    fitted anchors are within 0.2%, but its edge fade remains steeper.
+    """
+    lamp.use_custom_distance = True
+    lamp.cutoff_distance = max(radius * abs(unit), 0.001)
+    lamp.use_nodes = True
+    tree = lamp.node_tree
+    tree.nodes.clear()
+    output = tree.nodes.new("ShaderNodeOutputLight")
+    emission = tree.nodes.new("ShaderNodeEmission")
+    tree.links.new(emission.outputs[0], output.inputs[0])
+    power = float(lamp.get("carbon_light_power", 0.0))
+    if radius <= 0 or unit == 0 or power <= 0:
+        emission.inputs['Strength'].default_value = 0.0
+        return
+    def op(kind, a, b):
+        node = tree.nodes.new("ShaderNodeMath")
+        node.operation = kind
+        for index, value in enumerate((a, b)):
+            if isinstance(value, (int, float)):
+                node.inputs[index].default_value = value
+            else:
+                tree.links.new(value, node.inputs[index])
+        return node.outputs[0]
+    ray = tree.nodes.new("ShaderNodeLightPath").outputs['Ray Length']
+    distance = op('DIVIDE', ray, abs(unit))
+    q = op('MINIMUM', op('MAXIMUM', op('DIVIDE', inner,
+           op('MAXIMUM', distance, 1e-8)), 0.0), 0.8)
+    response = op('MULTIPLY', op('DIVIDE',
+        op('MAXIMUM', op('SUBTRACT', radius, distance), 0.0),
+        op('ADD', distance, 0.001)), op('SUBTRACT', 1.0, q))
+    half = (radius * 0.5 / (radius * 0.5 + 0.001)
+            * (1.0 - min(max(inner / (radius * 0.5), 0.0), 0.8)))
+    response = op('MULTIPLY', op('POWER', op('DIVIDE', response, half),
+                               float(falloff)), half)
+    area = op('ADD', op('MULTIPLY', ray, ray), lamp.shadow_soft_size ** 2)
+    gain = 4.0 * math.pi ** 2 * brightness * max(colour[:3]) / power
+    strength = op('MULTIPLY', op('MULTIPLY', area, response), gain)
+    tree.links.new(strength, emission.inputs['Strength'])
+
+
+def update_attachment_light_boost(value):
+    """Scale attachment lamps only, preserving each lamp's unboosted energy.
+
+    Older scenes have the attachment radius marker but no saved baseline;
+    adopt their existing energy once. Other Blender lights are untouched.
+    """
+    for obj in bpy.data.objects:
+        if obj.type != "LIGHT" or "carbon_light_radius" not in obj:
+            continue
+        lamp = obj.data
+        if "carbon_light_brightness" not in lamp:
+            lamp["carbon_light_brightness"] = lamp.energy
+        lamp.energy = float(lamp.get("carbon_light_power", lamp["carbon_light_brightness"])) * float(value)
+
+
+def update_attachment_lights_enabled(enabled):
+    """Exclude generated lamps from viewport evaluation and rendering."""
+    for obj in bpy.data.objects:
+        if obj.type == "LIGHT" and "carbon_light_radius" in obj:
+            obj.hide_viewport = not enabled
+            obj.hide_render = not enabled
+
+
+def update_attachment_light_falloff(value, boost=1.0):
+    """Tune soft-emitter width while retaining the half-range brightness.
+
+    This is a Blender preview control, not an authored Carbon parameter.
+    Only lamps with the original colour and calibration metadata can be refit.
+    """
+    for obj in bpy.data.objects:
+        if obj.type != "LIGHT" or "carbon_light_radius" not in obj:
+            continue
+        lamp = obj.data
+        if "carbon_light_color" not in lamp:
+            continue
+        radius = float(obj["carbon_light_radius"])
+        inner = float(obj.get("carbon_light_inner_radius", 0.0))
+        unit = float(lamp.get("carbon_light_unit_scale", 1.0))
+        rgb, power = attachment_light_power(
+            float(lamp["carbon_light_brightness"]), radius, inner,
+            lamp["carbon_light_color"], unit, value)
+        lamp.color = rgb
+        lamp.shadow_soft_size = attachment_light_soft_radius(radius, inner, unit) / max(float(value), 0.1)
+        if hasattr(lamp, "use_soft_falloff"):
+            lamp.use_soft_falloff = True
+        lamp["carbon_light_power"] = power
+        lamp["carbon_light_conversion"] = "radial-curve-v3"
+        lamp.energy = power * float(boost)
+        attachment_light_curve(lamp, radius, inner, unit,
+            float(lamp["carbon_light_brightness"]), lamp["carbon_light_color"], value)
+
+
 def attachment_light(entry, name, hull, armature, owner=None):
     """One attachment's light. The same shape wherever it appears.
 
-    Sprites, planes, haze and spotlights all wrap the same `lightData`: a
+    Sprites, planes, haze, spotlights and banners all wrap the same `lightData`: a
     position and rotation, a colour, a radius and an inner radius, a
     brightness, and noise terms. So this is written once and used by each of
     them rather than copied per attachment type.
@@ -2527,20 +2680,39 @@ def attachment_light(entry, name, hull, armature, owner=None):
 
     data = entry.get("lightData") or {}
     lamp = bpy.data.lights.new(name, "POINT")
-    # radius is the reach, innerRadius the falloff start; Blender has one
-    # size, so the inner radius is what the lamp's own radius becomes.
-    #
-    # In the HULL'S units, not a hardcoded hundredth. The importer scales a
-    # hull by 0.01 by default, and writing that number here meant a radius
-    # that was only right while nobody changed the setting -- and silently
-    # wrong afterwards, in a way that reads as "the lights are too big".
-    unit = hull.matrix_world.to_scale().x if hull is not None else 1.0
-    lamp.shadow_soft_size = float(data.get("innerRadius") or 0.0) * abs(unit)
+    unit = abs(hull.matrix_world.to_scale().x) if hull is not None else 1.0
     colour = tuple(data.get("color") or (0.0, 0.0, 0.0, 0.0))
-    lamp.color = tuple(colour[:3]) or (1.0, 1.0, 1.0)
-    lamp.energy = float(data.get("brightness") or 1.0)
+    brightness = float(data.get("brightness", 1.0))
+    addon = bpy.context.preferences.addons.get("carbon_eve_resources")
+    falloff = getattr(addon.preferences, "light_falloff", 1.0) if addon else 1.0
+    rgb, power = attachment_light_power(
+        brightness, float(data.get("radius") or 0.0),
+        float(data.get("innerRadius") or 0.0), colour, unit, falloff)
+    # Carbon innerRadius alters attenuation and roughness; it is not a
+    # Blender spherical-emitter radius. Fit a soft emitter at two distances.
+    lamp.shadow_soft_size = attachment_light_soft_radius(
+        float(data.get("radius") or 0.0), float(data.get("innerRadius") or 0.0), unit) / falloff
+    if hasattr(lamp, "use_soft_falloff"):
+        lamp.use_soft_falloff = True
+    if hasattr(lamp, "normalize"):
+        lamp.normalize = True
+    if hasattr(lamp, "exposure"):
+        lamp.exposure = 0.0
+    lamp.color = rgb
+    lamp["carbon_light_color"] = colour
+    lamp["carbon_light_brightness"] = brightness
+    lamp["carbon_light_power"] = power
+    lamp["carbon_light_unit_scale"] = unit
+    lamp["carbon_light_conversion"] = "radial-curve-v3"
+    boost = getattr(addon.preferences, "light_boost", 1.0) if addon else 1.0
+    lamp.energy = power * boost
+    attachment_light_curve(lamp, float(data.get("radius") or 0.0),
+        float(data.get("innerRadius") or 0.0), unit, brightness, colour, falloff)
 
     obj = bpy.data.objects.new(name, lamp)
+    enabled = getattr(addon.preferences, "light_emitters", True) if addon else True
+    obj.hide_viewport = not enabled
+    obj.hide_render = not enabled
     world = item_matrix(data, hull)
     obj.matrix_world = world
     obj["carbon_light_radius"] = float(data.get("radius") or 0.0)

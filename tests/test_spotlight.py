@@ -113,3 +113,41 @@ class SpotlightGraphTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(bpy is None, "needs Blender")
+class SpotlightBoostScopeTests(unittest.TestCase):
+    def test_boost_excludes_standalone_sprites_and_restores_legacy_links(self):
+        from carbon_eve_resources import ship
+        from carbon_eve_resources.quad import nodes
+        materials = [ship.sprite_material(999), ship.faction_colour_material(None, "primary")]
+        for material in materials:
+            self.addCleanup(bpy.data.materials.remove, material)
+            tree = material.node_tree
+            emission = next(n for n in tree.nodes if n.type == "EMISSION")
+            original = emission.inputs["Strength"].links[0].from_socket
+            self.assertIsNone(tree.nodes.get(nodes.SPRITE_BOOST_NODE))
+            # Emulate a saved scene made before Spotlight boost was scoped.
+            nodes.apply_sprite_boost(tree, emission, 10)
+            nodes.update_sprite_boost(0)
+            self.assertIsNone(tree.nodes.get(nodes.SPRITE_BOOST_NODE))
+            self.assertEqual(emission.inputs["Strength"].links[0].from_socket, original)
+            nodes.update_sprite_boost(10)
+            self.assertEqual(emission.inputs["Strength"].links[0].from_socket, original)
+
+    def test_spotlight_and_plane_boosts_remain_independent(self):
+        from carbon_eve_resources.quad import nodes
+        groups = []
+        for marker in ("carbon_spotlight_version", "carbon_planeglow_version"):
+            tree = bpy.data.node_groups.new("boost scope fixture", "ShaderNodeTree")
+            tree[marker] = 1
+            self.addCleanup(bpy.data.node_groups.remove, tree)
+            emission = tree.nodes.new("ShaderNodeEmission")
+            nodes.apply_sprite_boost(tree, emission, 1)
+            groups.append(tree)
+        nodes.update_sprite_boost(0)
+        self.assertEqual(groups[0].nodes[nodes.SPRITE_BOOST_NODE].inputs[1].default_value, 0)
+        self.assertEqual(groups[1].nodes[nodes.SPRITE_BOOST_NODE].inputs[1].default_value, 1)
+        nodes.update_sprite_boost(3, planes=True)
+        self.assertEqual(groups[0].nodes[nodes.SPRITE_BOOST_NODE].inputs[1].default_value, 0)
+        self.assertEqual(groups[1].nodes[nodes.SPRITE_BOOST_NODE].inputs[1].default_value, 3)
