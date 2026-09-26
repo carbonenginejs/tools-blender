@@ -24,22 +24,17 @@ notice.
 EVE Online and all related assets are the property of CCP hf. This tool is a
 third-party utility and is not affiliated with or endorsed by CCP.
 
-## Known issue: attachments can sit on the wrong bone
+## Rebuild older ships to correct attachment bones
 
-**In 0.7.2, an attachment can be bound to the wrong bone — sometimes an
-ancestor of the right one.** Sprites, spotlights, plane sets and banners are
-placed correctly on a hull at rest, so a still image looks right. Put the hull
-into an animation state, or scrub an animation, and the ones on a wrong bone
-travel with the wrong part of the ship.
+Ships built with 0.9.0 or earlier can have sprites, spotlights, plane sets and
+light emitters bound to the wrong bones. They may look correctly placed at
+rest but follow the wrong part when an animation plays.
 
-Nothing is lost and nothing needs re-downloading; it is where an attachment is
-bound, not what it is. A hull with no animation is unaffected.
-
-The cause is not yet identified. What has been ruled out: the SOF's own bone
-indices are correct, a ship carries only one skeleton, the bone order the
-importer records resolves cleanly, placement at rest is exact, and bone
-parenting itself tracks correctly under pose. So the fault is in how this
-add-on maps a bone index onto a Blender bone, and it is being worked on.
+Attachment indices address the geometry's mesh bone palette, which can differ
+from skeleton order. The importer now retains that palette and uses it when
+binding attachments. Rebuild the ship after upgrading; existing armatures
+lack the mapping needed to repair these bindings automatically. Cached
+geometry does not need downloading again.
 
 ## What it does not do yet
 
@@ -58,7 +53,7 @@ Step-by-step, with troubleshooting: [docs/setup.md](docs/setup.md).
 
 Current download:
 
-- [CarbonEngineJS Blender Tools 0.9.0](https://github.com/carbonenginejs/tools-blender/releases/download/v0.9.0/carbon_eve_resources-0.9.0.zip)
+- [CarbonEngineJS Blender Tools 0.9.1](https://github.com/carbonenginejs/tools-blender/releases/download/v0.9.1/carbon_eve_resources-0.9.1.zip)
   — EVE resource browsing and ship loading, with GR2 and CMF importers.
 
 The readers can also be installed without Blender:

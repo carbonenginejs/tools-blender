@@ -111,5 +111,72 @@ class AnchorTests(unittest.TestCase):
         self.assertIsNone(ship_anchor([]))
 
 
+
+class AttachmentPaletteTests(unittest.TestCase):
+    """Attachment indices use the mesh palette supplied by GetBoneList."""
+
+    def setUp(self):
+        import bpy
+        from carbon_eve_resources.gr2_importer import addon
+        self.bpy = bpy
+        graph = {"models": [{"skeleton": {"bones": [
+            {"name": "root", "parentIndex": -1},
+            {"name": "wing", "parentIndex": 0, "position": [3, 0, 0]},
+            {"name": "antenna", "parentIndex": 0, "position": [0, 4, 0]},
+        ]}}], "meshes": [{"boneBindings": [
+            {"name": "root"}, {"name": "antenna"}, {"name": "wing"}]}]}
+        self.arm, _ = addon.import_armature(graph, bpy.context.scene.collection,
+            "palette fixture", .1, 90, "LOCAL_Y")
+        self.addCleanup(bpy.data.armatures.remove, self.arm.data)
+        self.addCleanup(bpy.data.objects.remove, self.arm, do_unlink=True)
+        bpy.context.view_layer.update()
+
+    def test_reordered_palette_tracks_the_right_animated_bone(self):
+        from mathutils import Matrix
+        from carbon_eve_resources import ship
+        bpy, arm = self.bpy, self.arm
+        obj = bpy.data.objects.new("attachment fixture", None)
+        bpy.context.scene.collection.objects.link(obj)
+        self.addCleanup(bpy.data.objects.remove, obj, do_unlink=True)
+        world = arm.matrix_world @ Matrix.Translation((2, 6, 1))
+        obj.matrix_world = world
+        self.assertTrue(ship.attach_to_bone(obj, arm, 1))
+        self.assertEqual(obj.parent_bone, "antenna")
+        bpy.context.view_layer.update()
+        self.assertLess((obj.matrix_world.translation-world.translation).length, 1e-6)
+        arm.pose.bones['antenna'].rotation_mode = 'XYZ'
+        arm.pose.bones['antenna'].rotation_euler.z = .7
+        arm.pose.bones['wing'].location.x = 9
+        bpy.context.view_layer.update()
+        expected = (arm.matrix_world @ arm.pose.bones['antenna'].matrix
+            @ arm.data.bones['antenna'].matrix_local.inverted()
+            @ arm.matrix_world.inverted() @ world)
+        for actual_row, expected_row in zip(obj.matrix_world, expected):
+            self.assertLess((actual_row-expected_row).length, 1e-5)
+        before = obj.matrix_world.translation.copy()
+        arm.location.x += 5
+        bpy.context.view_layer.update()
+        self.assertAlmostEqual(obj.matrix_world.translation.x-before.x, 5, places=5)
+
+    def test_light_emitter_uses_the_same_palette(self):
+        from carbon_eve_resources import ship
+        obj = ship.attachment_light({'lightData': {'boneIndex': 2,
+            'radius': 10, 'brightness': 1, 'color': [1, 1, 1, 1],
+            'position': [2, 0, 0]}}, 'palette lamp', self.arm, self.arm)
+        self.addCleanup(self.bpy.data.lights.remove, obj.data)
+        self.addCleanup(self.bpy.data.objects.remove, obj, do_unlink=True)
+        self.assertEqual(obj.parent_bone, 'wing')
+        self.assertEqual(obj['carbon_bone_index'], 2)
+
+    def test_missing_palette_entry_never_selects_a_skeleton_bone(self):
+        from carbon_eve_resources import ship
+        self.arm['carbon_mesh_bone_order'] = ['root', 'missing']
+        for index in (1, 2, -1):
+            obj = self.bpy.data.objects.new('missing binding', None)
+            self.addCleanup(self.bpy.data.objects.remove, obj, do_unlink=True)
+            self.assertFalse(ship.attach_to_bone(obj, self.arm, index))
+            self.assertEqual(obj.parent_type, 'OBJECT')
+            self.assertEqual(obj.parent, self.arm)
+
 if __name__ == "__main__":
     unittest.main()

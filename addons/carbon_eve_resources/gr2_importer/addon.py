@@ -970,15 +970,18 @@ def import_armature(
         if isinstance(bn, str):
             name_to_index[bn] = i
 
-    # The MODEL's bone order, kept because Blender does not.
-    #
-    # Bones are created below in model order, but leaving edit mode re-sorts
-    # them by hierarchy, so `armature.data.bones[i]` is not bone `i` of the
-    # model -- on a Celestis exactly one of nineteen positions still agrees.
-    # Every attachment the SOF places by bone INDEX therefore lands on the
-    # wrong bone, and the wrong bone is only obvious once the hull animates
-    # and the attachment leaves with it.
+    # Preserve skeleton order for animation and skinning metadata. Blender
+    # reorders its own collection by hierarchy on leaving edit mode.
     arm_obj["carbon_bone_order"] = order
+    # Attachment boneIndex addresses the first mesh's palette, not the
+    # skeleton array. Tr2GrannyAnimation::RebuildCachedData selects mesh 0;
+    # GetBoneList returns GetMeshBoneMatrixList for attachment rendering.
+    # Preserve both orders: animation tracks still use skeleton bone names.
+    meshes = gr2.get("meshes") or []
+    bindings = (meshes[0].get("boneBindings") or []) if meshes else []
+    if bindings:
+        arm_obj["carbon_mesh_bone_order"] = [
+            str(binding.get("name") or "") for binding in bindings]
     inverse_bind = [bone.get("inverseWorldTransform") for bone in bones]
     if all(isinstance(matrix, list) and len(matrix) == 16 for matrix in inverse_bind):
         arm_obj["carbon_inverse_bind"] = [float(value) for matrix in inverse_bind for value in matrix]

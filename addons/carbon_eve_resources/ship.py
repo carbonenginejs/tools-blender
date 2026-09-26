@@ -1743,9 +1743,9 @@ def attach_to_bone(obj, armature, bone_index):
     several -- so it is bone-parented rather than skinned, which is the opposite
     of how a decal follows the hull.
 
-    The index is stored either way. Bone order is the model's, and if that ever
-    disagrees with the armature's the property is what makes it visible instead
-    of leaving an attachment silently on the wrong bone.
+    The index is stored either way. Carbon attachments index the primary mesh's
+    bone palette; animation tracks instead address the skeleton. Both orders
+    are preserved on the imported armature.
     """
 
     # Recorded first, and tolerantly: a missing field is -1, the same as an
@@ -1774,25 +1774,25 @@ def attach_to_bone(obj, armature, bone_index):
         # it.
         return ride_the_hull(obj, armature)
 
-    # Through the MODEL's own bone order, not Blender's.
-    #
-    # Blender re-sorts bones by hierarchy on leaving edit mode, so
-    # `data.bones[i]` is not bone `i` of the model: one of nineteen positions
-    # agrees on a Celestis. The importer records the real order, and reading
-    # it is the difference between an attachment on its own bone and one on
-    # somebody else's -- which looks fine at rest and flies off the moment the
-    # hull animates.
-    order = armature.get("carbon_bone_order")
+    # EveSpriteSet/PlaneSet/SpotlightSet receive GetBoneList(), which exposes
+    # Tr2GrannyAnimation's mesh palette, not its skeleton array. On mde3_t3,
+    # palette index 6 is FrontPart but skeleton index 6 is joint11.
+    palette = armature.get("carbon_mesh_bone_order")
     bones = armature.data.bones
-    bone = None
-    if order is not None and 0 <= bone_index < len(order):
-        bone = bones.get(str(order[bone_index]))
-    if bone is None:
-        if bone_index >= len(bones):
-            # More bones asked for than the armature has. Riding the hull is
-            # wrong-but-attached; unparented is wrong AND adrift.
+    if palette is not None:
+        bone = bones.get(str(palette[bone_index])) if bone_index < len(palette) else None
+        if bone is None:
+            # Never reinterpret an invalid palette index as a skeleton index.
             return ride_the_hull(obj, armature)
-        bone = bones[bone_index]
+    else:
+        # Older saved armatures did not preserve the palette. Retain their
+        # existing mapping until the geometry is reimported.
+        order = armature.get("carbon_bone_order")
+        bone = bones.get(str(order[bone_index])) if order is not None and bone_index < len(order) else None
+        if bone is None:
+            if bone_index >= len(bones):
+                return ride_the_hull(obj, armature)
+            bone = bones[bone_index]
     obj["carbon_bone_name"] = bone.name
     world = obj.matrix_world.copy()
     obj.parent = armature
