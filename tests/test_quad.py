@@ -54,8 +54,8 @@ class FamilyData(unittest.TestCase):
         self.assertEqual(self.family.permutation.get("SPACE_OBJECT_PPT_ENABLED"), "SOPPT_ENABLED")
 
     def test_every_member_is_present(self):
-        self.assertEqual(len(self.family.members), 12)
-        for name in ("quadv5", "fxv5", "fxdistortionv5"):
+        self.assertEqual(len(self.family.members), 15)
+        for name in ("quadv5", "fxv5", "fxdistortionv5", "planeglow", "spotlightconepool", "spotlightglowpool"):
             self.assertIn(name, self.family.members)
 
     def test_fxv5_is_the_additive_fresnel_layer_pair(self):

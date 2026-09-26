@@ -2601,16 +2601,13 @@ def build_plane_sets(document, hull, collection, hull_sets=None,
             obj.matrix_world = item_matrix(item, hull)
 
             colour = tuple(item.get("color") or (1.0, 1.0, 1.0, 1.0))
-            # A ZERO colour means the item is not drawn. Carbon sets
-            # display=false for it once the faction colour is in
-            # (`EveSOFData`: `if (isZeroColor(item.color)) item.display =
-            # false`), which is why an Abaddon's planes are (0,0,0,1): they
-            # are off, not black. Drawing them was what made plane sets look
-            # like solid slabs.
+            # EvePlaneSet::Rebuild skips a plane whose colour is exactly
+            # (0, 0, 0, 0) (`EvePlaneSet.cpp:298`). Any other colour is drawn;
+            # the additive blend makes a black one contribute nothing.
             #
             # Hidden rather than skipped: the item is still part of the SOF and
             # has to survive being exported.
-            if not any(float(v) for v in colour[:3]):
+            if not any(float(v) for v in colour[:4]):
                 obj.hide_viewport = True
                 obj.hide_render = True
                 obj["carbon_display"] = False
@@ -2658,6 +2655,100 @@ def build_plane_sets(document, hull, collection, hull_sets=None,
         if hidden:
             print(f"    {hidden} plane(s) hidden: a zero colour means the "
                   f"item is not drawn")
+    return built + lights
+
+
+def build_spotlight_sets(document, hull, collection, hull_sets=None,
+                         resources=None):
+    """A cone and a glow per `EveSpotlightSetItem`, from the measured effects.
+
+    The shapes and graphs are `quad/spotlight.py`. A set that is not skinned
+    ignores its items' bones (`EveSpotlightSet::AddToQuadRenderer`), so its
+    parts ride the hull.
+    """
+
+    from .quad import fx, spotlight
+
+    family = quad_interface.load_family()
+    armature = ship_armature(hull, collection)
+    # Carbon's world units in this scene's: the importer scales the hull.
+    unit = abs(hull.matrix_world.to_scale().x) if hull is not None else 1.0
+    built, lights = [], []
+    for set_index, spot_set in enumerate(find_typed(document, "EveSpotlightSet")):
+        items = spot_set.get("spotlightItems") or []
+        if not items:
+            continue
+        cone_effect = spot_set.get("coneEffect") or {}
+        glow_effect = spot_set.get("glowEffect") or {}
+        cone_member = family.member(str(cone_effect.get("effectFilePath") or ""))
+        glow_member = family.member(str(glow_effect.get("effectFilePath") or ""))
+        if (cone_member is None or cone_member.name != "spotlightconepool"
+                or glow_member is None or glow_member.name != "spotlightglowpool"):
+            print(f"  ! spotlight set {set_index}: no measured member for "
+                  f"{cone_effect.get('effectFilePath')} / {glow_effect.get('effectFilePath')}")
+            continue
+        source = (hull_sets or [])[set_index] if set_index < len(hull_sets or []) else {}
+        group = attachment_collection(
+            collection, "spotlightSets",
+            str(source.get("visibilityGroupName") or "primary"),
+            source.get("visibilityGroup"))
+        z_offset = next((float((c.get("value") or [0.0])[0]) for c in (cone_effect.get("constParameters") or [])
+                         if c.get("name") == "zOffset"), 0.0)
+        cone_mesh = spotlight.cone_mesh(f"spotlight{set_index}_cone", z_offset)
+        glow_mesh = spotlight.glow_mesh(f"spotlight{set_index}_glow")
+        # One slot on each shared mesh; every object links its own material.
+        cone_mesh.materials.append(None)
+        glow_mesh.materials.append(None)
+        cone_image = _effect_image("TextureMap", cone_effect, resources)
+        glow_image = _effect_image("TextureMap", glow_effect, resources)
+        cone_group = spotlight.build_cone_group(cone_member)
+        glow_group = spotlight.build_glow_group(glow_member)
+        skinned = bool(spot_set.get("skinned"))
+        owners = []
+        for index, item in enumerate(items):
+            rows = tuple(float(v) for v in (item.get("transform") or ()))
+            local = (mathutils.Matrix((rows[0:4], rows[4:8], rows[8:12], rows[12:16])).transposed()
+                     if len(rows) == 16 else mathutils.Matrix.Identity(4))
+            world = (hull.matrix_world @ local) if hull is not None else local
+            influence = bool(item.get("boosterGainInfluence"))
+            parts = (
+                ("cone", cone_mesh, cone_member, cone_group, {"Color": item.get("coneColor") or (1, 1, 1)},
+                 cone_image, "EXTEND"),       # cone PS s1 clamps
+                ("glow", glow_mesh, glow_member, glow_group,
+                 {"SpriteColor": item.get("spriteColor") or (1, 1, 1), "FlareColor": item.get("flareColor") or (1, 1, 1)},
+                 glow_image, "REPEAT"),       # glow PS s0 wraps
+            )
+            for part, mesh, member, node_group, colors, image, extension in parts:
+                meaning = f"spotlight_{set_index}_{index}_{part}"
+                obj = remember_name(bpy.data.objects.new(unique_name(meaning, collection.name), mesh),
+                                    meaning, collection.name)
+                group.objects.link(obj)
+                obj.matrix_world = world
+                obj.material_slots[0].link = "OBJECT"
+                obj.material_slots[0].material = spotlight.build_material(
+                    unique_name(meaning, ""), member, node_group, colors, influence, image, extension)
+                obj["carbon_spotlight_bone_index"] = int(item.get("boneIndex") or 0)
+                attach_to_bone(obj, armature, item.get("boneIndex") if skinned else -1)
+                stamp_identity(obj, f"spotlight_{index}_{part}", "spotlight",
+                               str(source.get("visibilityGroupName") or "primary"))
+                if part == "cone":
+                    fx.attach_vertex_view(obj, bpy.context.scene)
+                else:
+                    spotlight.attach_billboard(obj, bpy.context.scene, item.get("spriteScale") or (1, 1, 1), unit)
+                    obj["carbon_spotlight_sprite_scale"] = tuple(float(v) for v in (item.get("spriteScale") or (1, 1, 1)))
+                    owners.append(obj)
+                built.append(obj)
+        for order, light in enumerate(spot_set.get("lights") or []):
+            wanted = light.get("index")
+            owner = (owners[int(wanted)] if isinstance(wanted, (int, float))
+                     and 0 <= int(wanted) < len(owners) else None)
+            obj = attachment_light(light, unique_name(f"spotlight_{set_index}_light_{order}", collection.name),
+                                   hull, armature, owner)
+            group.objects.link(obj)
+            lights.append(obj)
+    if built or lights:
+        print(f"  built {len(built)} spotlight part(s) and {len(lights)} spotlight light(s) "
+              f"from {len(find_typed(document, 'EveSpotlightSet'))} set(s)")
     return built + lights
 
 
@@ -2713,141 +2804,26 @@ def attachment_collection(parent, kind, group="", visibility_hash=None):
 
 def plane_material(item, set_index, index, effect=None, resources=None,
                    ship_object=None):
-    """A glow panel: two scrolling layers through a mask, ADDED to the scene.
+    """A glow panel, drawn by the measured `planeglow` member.
 
-    The same shape as a banner, which is measured from `banner.fx`, minus the
-    logo -- `planeglow.fx` carries Layer1Map, Layer2Map and MaskMap and nothing
-    else to draw:
-
-        uv1    = uv * layer1Transform.xy + layer1Transform.zw + layer1Scroll.xy * t
-        uv2    = uv * layer2Transform.xy + layer2Transform.zw + layer2Scroll.xy * t
-        colour = Mask * Layer2 * Layer1 * Color
-        alpha  = Layer1.a * Layer2.a * Mask.a
-
-    The difference from a banner is WHERE the numbers come from: a banner's
-    transforms are constants on the effect, shared by the set, while a plane
-    carries its own -- which is what lets one strip crawl and the next one
-    shimmer while both read the same two maps.
-
-    This was a flat emission of the plane's authored colour before, which is
-    why the panels looked like solid geometry: that colour is (0, 0, 0, 1) on
-    every plane of an Abaddon, so the quads rendered as black slabs. Black is
-    the honest answer for an unlit panel once the blend is additive -- it adds
-    nothing, and the light comes from the maps.
+    The arithmetic, the per-plane coordinates and the blink curves live in
+    `quad/planeglow.py`; this names the material and hands it the set's maps
+    and `PlaneData`.
     """
 
-    material = bpy.data.materials.new(unique_name(f"plane_{set_index}_{index}", ""))
-    material.use_nodes = True
-    tree = material.node_tree
-    tree.nodes.clear()
-    output = tree.nodes.new("ShaderNodeOutputMaterial")
-    output.location = (760, 0)
+    from .quad import planeglow
 
-    def four(name, fallback):
-        value = list(item.get(name) or fallback)
-        return [float(v) for v in (value + fallback)[:4]]
-
-    layer1_transform = four("layer1Transform", [1.0, 1.0, 0.0, 0.0])
-    layer2_transform = four("layer2Transform", [1.0, 1.0, 0.0, 0.0])
-    layer1_scroll = four("layer1Scroll", [0.0, 0.0, 0.0, 0.0])
-    layer2_scroll = four("layer2Scroll", [0.0, 0.0, 0.0, 0.0])
-    tint = four("color", [1.0, 1.0, 1.0, 1.0])
-
-    time_socket = nodes.time_value(tree, (-1500, 300))
-
-    def scrolled(transform, rate, row):
-        """One layer's UV: scaled, offset, and carried along by time."""
-
-        coordinate = tree.nodes.new("ShaderNodeUVMap")
-        coordinate.location = (-1500, row)
-        mapping = tree.nodes.new("ShaderNodeMapping")
-        mapping.location = (-1300, row)
-        mapping.inputs["Scale"].default_value = (transform[0], transform[1], 1.0)
-        mapping.inputs["Location"].default_value = (transform[2], transform[3], 0.0)
-        tree.links.new(coordinate.outputs["UV"], mapping.inputs["Vector"])
-
-        offset = tree.nodes.new("ShaderNodeVectorMath")
-        offset.operation = "SCALE"
-        offset.location = (-1120, row - 140)
-        offset.inputs[0].default_value = (rate[0], rate[1], 0.0)
-        tree.links.new(time_socket, offset.inputs["Scale"])
-
-        moved = tree.nodes.new("ShaderNodeVectorMath")
-        moved.operation = "ADD"
-        moved.location = (-940, row)
-        tree.links.new(mapping.outputs["Vector"], moved.inputs[0])
-        tree.links.new(offset.outputs[0], moved.inputs[1])
-        return moved.outputs[0]
-
-    def sample(name, vector, row):
-        node = tree.nodes.new("ShaderNodeTexImage")
-        node.location = (-720, row)
-        node.label = name
-        node.extension = "REPEAT"
-        image = _effect_image(name, effect, resources)
-        if image is not None:
-            node.image = image
-        if vector is not None:
-            tree.links.new(vector, node.inputs["Vector"])
-        return node
-
-    layer1 = sample("Layer1Map", scrolled(layer1_transform, layer1_scroll, 520), 520)
-    layer2 = sample("Layer2Map", scrolled(layer2_transform, layer2_scroll, 200), 200)
-    mask = sample("MaskMap", None, -140)
-
-    def multiply(a, b, row, label):
-        node = tree.nodes.new("ShaderNodeVectorMath")
-        node.operation = "MULTIPLY"
-        node.location = (-260, row)
-        node.label = label
-        tree.links.new(a, node.inputs[0])
-        tree.links.new(b, node.inputs[1])
-        return node.outputs[0]
-
-    colour = multiply(layer1.outputs["Color"], layer2.outputs["Color"],
-                      340, "layer1 x layer2")
-    colour = multiply(mask.outputs["Color"], colour, -20, "x mask")
-
-    tinted = tree.nodes.new("ShaderNodeVectorMath")
-    tinted.operation = "MULTIPLY"
-    tinted.location = (-60, -20)
-    tinted.label = "x Color"
-    tinted.inputs[1].default_value = tuple(tint[:3])
-    tree.links.new(colour, tinted.inputs[0])
-
-    alpha = tree.nodes.new("ShaderNodeMath")
-    alpha.operation = "MULTIPLY"
-    alpha.location = (-60, -280)
-    tree.links.new(layer1.outputs["Alpha"], alpha.inputs[0])
-    tree.links.new(layer2.outputs["Alpha"], alpha.inputs[1])
-    with_mask = tree.nodes.new("ShaderNodeMath")
-    with_mask.operation = "MULTIPLY"
-    with_mask.location = (100, -280)
-    with_mask.label = "alpha"
-    tree.links.new(alpha.outputs[0], with_mask.inputs[0])
-    tree.links.new(mask.outputs["Alpha"], with_mask.inputs[1])
-
-    premultiplied = tree.nodes.new("ShaderNodeVectorMath")
-    premultiplied.operation = "SCALE"
-    premultiplied.location = (260, -20)
-    premultiplied.label = "colour x alpha"
-    tree.links.new(tinted.outputs[0], premultiplied.inputs[0])
-    tree.links.new(with_mask.outputs[0], premultiplied.inputs["Scale"])
-
-    emission = tree.nodes.new("ShaderNodeEmission")
-    emission.location = (440, -20)
-    tree.links.new(premultiplied.outputs[0], emission.inputs["Color"])
-
-    # Added, not blended: a glow panel puts light on top of what is behind it.
-    transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
-    transparent.location = (440, 200)
-    add = tree.nodes.new("ShaderNodeAddShader")
-    add.location = (600, 60)
-    tree.links.new(transparent.outputs[0], add.inputs[0])
-    tree.links.new(emission.outputs[0], add.inputs[1])
-    tree.links.new(add.outputs[0], output.inputs["Surface"])
-    if hasattr(material, "surface_render_method"):
-        material.surface_render_method = "BLENDED"
+    shader = str((effect or {}).get("effectFilePath") or "")
+    member = quad_interface.load_family().member(shader)
+    if member is None or member.name != "planeglow":
+        print(f"  ! plane {set_index}.{index}: no measured member for {shader.rsplit('/', 1)[-1]}")
+        return None
+    plane_data = next((c.get("value") for c in ((effect or {}).get("constParameters") or [])
+                       if c.get("name") == "PlaneData" and c.get("value")), None)
+    images = {texture: _effect_image(texture, effect, resources) for texture in member.textures}
+    material = planeglow.build_material(unique_name(f"plane_{set_index}_{index}", ""), member, item,
+                                        plane_data or member.constant("PlaneData").default, images)
+    material["carbon_effect_path"] = shader
     return material
 
 
@@ -3289,6 +3265,9 @@ def build_ship(document_path, resources_directory, *, clear=True,
     plane_objects = build_plane_sets(document, primary, collection,
                                      (hull_record or {}).get("planeSets"),
                                      resources)
+    spotlight_objects = build_spotlight_sets(document, primary, collection,
+                                             (hull_record or {}).get("spotlightSets"),
+                                             resources)
     haze_objects = build_haze_sets(document, primary, collection,
                                    (hull_record or {}).get("hazeSets"),
                                    faction_slots, faction_tree,
@@ -3310,7 +3289,7 @@ def build_ship(document_path, resources_directory, *, clear=True,
     # its own object, so the values are written to all of them and the material
     # sockets are driven from the hull.
     ship = ([primary] + list(decal_objects) + list(plane_objects)
-            + list(sprite_objects) + list(haze_objects)
+            + list(spotlight_objects) + list(sprite_objects) + list(haze_objects)
             + list(banner_objects) + list(booster_objects))
     apply_ship_globals(ship, globals_overrides)
     drive_ship_sockets(ship, primary)

@@ -64,6 +64,11 @@ def evaluate(tree, output_name=None, inputs=None, uv=None, socket=None, transfor
             result = (uv or {}).get(node.uv_map, (0, 0, 0))
         elif kind == "ShaderNodeAttribute":
             result = (uv or {}).get(node.attribute_name, (0, 0, 0))
+        elif kind == "ShaderNodeValue":
+            # Driven values (the scene clock) are supplied by label.
+            result = (uv or {}).get(node.label, node.outputs[0].default_value)
+        elif kind == "ShaderNodeNewGeometry":
+            result = (uv or {})[socket.name]
         elif kind == "ShaderNodeTexImage":
             assert node.interpolation == "Closest" and node.image.colorspace_settings.name == "Non-Color"
             u, v, _ = read(node.inputs["Vector"])
@@ -90,7 +95,8 @@ def evaluate(tree, output_name=None, inputs=None, uv=None, socket=None, transfor
                 "LESS_THAN": lambda: float(a<b), "GREATER_THAN": lambda: float(a>b),
                 "MINIMUM": lambda: min(a,b), "MAXIMUM": lambda: max(a,b),
                 "ABSOLUTE": lambda: abs(a), "SQRT": lambda: math.sqrt(max(a,0)),
-                "SINE": lambda: math.sin(a),
+                "SINE": lambda: math.sin(a), "FRACT": lambda: a - math.floor(a),
+                "MULTIPLY_ADD": lambda: a * b + read(node.inputs[2]),
                 "TRUNC": lambda: math.trunc(a), "MODULO": lambda: a % b,
                 "FLOOR": lambda: math.floor(a), "LOGARITHM": lambda: math.log(a, b),
                 "COMPARE": lambda: float(abs(a-b) <= read(node.inputs[2]))}

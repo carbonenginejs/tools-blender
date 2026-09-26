@@ -4790,6 +4790,99 @@
      "UIWidget": "VectorMixed"
     }
    }
+  },
+  "planeglow": {
+   "permutationIndex": 0,
+   "constantBufferBytes": 16,
+   "textures": [
+    "Layer1Map",
+    "Layer2Map",
+    "MaskMap"
+   ],
+   "sceneTextures": [
+    "EveSceneFogVolumeMap"
+   ],
+   "constants": {
+    "PlaneData": {
+     "vec4": 0,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    }
+   },
+   "annotations": {
+    "EveSceneFogVolumeMap": {
+     "AutoRegister": true
+    },
+    "Layer1Map": {
+     "SasUiVisible": true
+    },
+    "Layer2Map": {
+     "SasUiVisible": true
+    },
+    "MaskMap": {
+     "SasUiVisible": true
+    },
+    "PlaneData": {
+     "Component1": "Power of fade angle",
+     "Component2": "Mask atlas size",
+     "Component3": "Atlas Aspect Ratio X",
+     "Component4": "Atlas Aspect Ratio 4",
+     "Group": "Planes",
+     "SasUiDescription": "( fadeAngle, atlasSize, atlasAspectRatioX, atlasAspectRatioY )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    }
+   }
+  },
+  "spotlightconepool": {
+   "permutationIndex": 0,
+   "constantBufferBytes": 0,
+   "textures": [
+    "TextureMap"
+   ],
+   "sceneTextures": [
+    "EveSceneFogVolumeMap"
+   ],
+   "constants": {},
+   "annotations": {
+    "EveSceneFogVolumeMap": {
+     "AutoRegister": true
+    },
+    "TextureMap": {
+     "SasUiVisible": true
+    },
+    "zOffset": {
+     "Group": "Spotlight",
+     "SasUiVisible": true
+    }
+   }
+  },
+  "spotlightglowpool": {
+   "permutationIndex": 0,
+   "constantBufferBytes": 0,
+   "textures": [
+    "TextureMap"
+   ],
+   "sceneTextures": [
+    "EveSceneFogVolumeMap",
+    "DepthMap"
+   ],
+   "constants": {},
+   "annotations": {
+    "DepthMap": {
+     "AutoRegister": true
+    },
+    "EveSceneFogVolumeMap": {
+     "AutoRegister": true
+    },
+    "TextureMap": {
+     "SasUiVisible": true
+    }
+   }
   }
  }
 }

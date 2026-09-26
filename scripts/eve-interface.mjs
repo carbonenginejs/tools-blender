@@ -12,14 +12,17 @@ import { CjsHlslFormat } from "../../runtime/src/resource/formats/hlsl/index.js"
 
 const [service = "http://127.0.0.1:5510", build = "3478781", output] = process.argv.slice(2);
 const target = "eve";
+// Relative to managed/space/spaceobject/. The attachment-set effects
+// (EvePlaneSet, EveSpotlightSet) live in fx/ beside v5/, not under it.
 const families = [
-    "quad/quaddetailv5", "quad/quadenvironmentv5", "quad/quadglassv5", "quad/quadheatdetailv5",
-    "quad/quadheatv5", "quad/quadinstancedv5", "quad/quadoilv5", "quad/quadsailsv5", "quad/quadv5",
-    "quad/quadwreckv5", "fx/fxv5", "fx/fxdistortionv5",
+    "v5/quad/quaddetailv5", "v5/quad/quadenvironmentv5", "v5/quad/quadglassv5", "v5/quad/quadheatdetailv5",
+    "v5/quad/quadheatv5", "v5/quad/quadinstancedv5", "v5/quad/quadoilv5", "v5/quad/quadsailsv5", "v5/quad/quadv5",
+    "v5/quad/quadwreckv5", "v5/fx/fxv5", "v5/fx/fxdistortionv5",
+    "fx/planeglow", "fx/spotlightconepool", "fx/spotlightglowpool",
 ];
 const tier = "sm_depth";
 const sceneNames = new Set([
-    "EveSpaceSceneEnvMap", "SSAOMap", "EveSpaceSceneShadowMap", "EveSceneFogVolumeMap",
+    "EveSpaceSceneEnvMap", "SSAOMap", "EveSpaceSceneShadowMap", "EveSceneFogVolumeMap", "DepthMap",
     "EveSpaceSceneDynamicShadowMap", "EveSpaceSceneReflectionCorrectionLookupTable",
     "LightIndexBuffer", "LightBuffer", "LightProfileArray", "ShadowMapAtlas",
     "SharedIndexVertexBuffer", "MorphTargetAnimations",
@@ -40,7 +43,7 @@ function constantsOf(stage) {
 }
 
 for (const name of families) {
-    const compiledPath = `res:/graphics/effect.dx11/managed/space/spaceobject/v5/${name}.${tier}`;
+    const compiledPath = `res:/graphics/effect.dx11/managed/space/spaceobject/${name}.${tier}`;
     const response = await fetch(`${service}/${target}/${build}/resources/${compiledPath.slice(5)}`);
     if (!response.ok) throw new Error(`${compiledPath}: HTTP ${response.status}`);
     const bytes = new Uint8Array(await response.arrayBuffer());
