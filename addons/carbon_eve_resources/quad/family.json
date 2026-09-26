@@ -4550,6 +4550,246 @@
      "UIWidget": "VectorMixed"
     }
    }
+  },
+  "fxv5": {
+   "permutationIndex": 0,
+   "constantBufferBytes": 96,
+   "textures": [
+    "LayerMaskMap",
+    "Layer1Map",
+    "Layer2Map"
+   ],
+   "sceneTextures": [],
+   "constants": {
+    "FresnelFactors": {
+     "vec4": 0,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "Layer1Transform": {
+     "vec4": 1,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "Layer2Transform": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "Layer1Scroll": {
+     "vec4": 3,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "Layer2Scroll": {
+     "vec4": 4,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "BaseColor": {
+     "vec4": 5,
+     "default": [
+      1,
+      1,
+      1,
+      1
+     ]
+    }
+   },
+   "annotations": {
+    "BaseColor": {
+     "Group": "FX",
+     "SasUiDescription": "Effect base color",
+     "SasUiVisible": true,
+     "UIWidget": "Color"
+    },
+    "FresnelFactors": {
+     "Component1": "Fresnel Power",
+     "Component2": "Multiply",
+     "Component3": "DotProductShift",
+     "Component4": "ClipSphereFactor",
+     "Group": "Material",
+     "SasUiDescription": "( Fresnel Power, Mult factor, Dot product shift, clipShpere )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed",
+     "Validation": "self.x > 0",
+     "ValidationMessage": "Fresnel Power must be more than 0."
+    },
+    "Layer1Map": {
+     "SasUiVisible": true
+    },
+    "Layer1Scroll": {
+     "Component1": "Scroll Speed U",
+     "Component2": "Scroll Speed V",
+     "Component3": "Scroll Offset U",
+     "Component4": "Scroll Offset V",
+     "Group": "FX",
+     "SasUiDescription": "( scroll speed u, scroll speed v, scroll offset u, scroll offset v )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Layer1Transform": {
+     "Component1": "Scale U",
+     "Component2": "Scale V",
+     "Component3": "Offset U",
+     "Component4": "Offset V",
+     "Group": "FX",
+     "SasUiDescription": "( scale u, scale v, offset u, offset v )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Layer2Map": {
+     "SasUiVisible": true
+    },
+    "Layer2Scroll": {
+     "Component1": "Scroll Speed U",
+     "Component2": "Scroll Speed V",
+     "Component3": "Scroll Offset U",
+     "Component4": "Scroll Offset V",
+     "Group": "FX",
+     "SasUiDescription": "( scroll speed u, scroll speed v, scroll offset u, scroll offset v )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Layer2Transform": {
+     "Component1": "Scale U",
+     "Component2": "Scale V",
+     "Component3": "Offset U",
+     "Component4": "Offset V",
+     "Group": "FX",
+     "SasUiDescription": "( scale u, scale v, offset u, offset v )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "LayerMaskMap": {
+     "SasUiVisible": true
+    }
+   }
+  },
+  "fxdistortionv5": {
+   "permutationIndex": 0,
+   "constantBufferBytes": 48,
+   "textures": [
+    "Layer2Map",
+    "DistortionMap"
+   ],
+   "sceneTextures": [],
+   "constants": {
+    "FresnelFactors": {
+     "vec4": 0,
+     "default": [
+      1,
+      1,
+      0,
+      0
+     ]
+    },
+    "MAX_DISTORTION_OFFSET": {
+     "vec4": 1,
+     "default": [
+      64
+     ]
+    },
+    "DistortionFactors": {
+     "vec4": 2,
+     "default": [
+      1,
+      1,
+      10000,
+      1
+     ]
+    }
+   },
+   "annotations": {
+    "DistortionFactors": {
+     "Component1": "Distortion amount",
+     "Component2": "Chromatic refraction",
+     "Component3": "Falloff",
+     "Component4": "Bumpiness",
+     "Group": "Distortion",
+     "SasUiDescription": "Distortion factors",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "DistortionMap": {
+     "SasUiVisible": true
+    },
+    "FresnelFactors": {
+     "Component1": "Fresnel Power",
+     "Component2": "Multiply",
+     "Component3": "DotProductShift",
+     "Component4": "ClipSphereFactor",
+     "Group": "Material",
+     "SasUiDescription": "( Fresnel Power, Mult factor, Dot product shift, clipShpere )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed",
+     "Validation": "self.x > 0",
+     "ValidationMessage": "Fresnel Power must be more than 0."
+    },
+    "Layer1Scroll": {
+     "Component1": "Scroll Speed U",
+     "Component2": "Scroll Speed V",
+     "Component3": "Scroll Offset U",
+     "Component4": "Scroll Offset V",
+     "Group": "FX",
+     "SasUiDescription": "( scroll speed u, scroll speed v, scroll offset u, scroll offset v )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Layer1Transform": {
+     "Component1": "Scale U",
+     "Component2": "Scale V",
+     "Component3": "Offset U",
+     "Component4": "Offset V",
+     "Group": "FX",
+     "SasUiDescription": "( scale u, scale v, offset u, offset v )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Layer2Map": {
+     "SasUiVisible": true
+    },
+    "Layer2Scroll": {
+     "Component1": "Scroll Speed U",
+     "Component2": "Scroll Speed V",
+     "Component3": "Scroll Offset U",
+     "Component4": "Scroll Offset V",
+     "Group": "FX",
+     "SasUiDescription": "( scroll speed u, scroll speed v, scroll offset u, scroll offset v )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    },
+    "Layer2Transform": {
+     "Component1": "Scale U",
+     "Component2": "Scale V",
+     "Component3": "Offset U",
+     "Component4": "Offset V",
+     "Group": "FX",
+     "SasUiDescription": "( scale u, scale v, offset u, offset v )",
+     "SasUiVisible": true,
+     "UIWidget": "VectorMixed"
+    }
+   }
   }
  }
 }

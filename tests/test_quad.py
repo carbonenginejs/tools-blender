@@ -37,6 +37,9 @@ class NormalizeShaderName(unittest.TestCase):
         # stage's resource set, so they must resolve to the same member.
         family = load_family()
         self.assertIs(family.member("skinned_quadheatv5.fx"), family.member("quadheatv5.fx"))
+        # fxv5's four spellings compile to one pixel program (TQ 3542233).
+        self.assertIs(family.member("skinned_fxv5.fx"), family.member("fxv5.fx"))
+        self.assertIs(family.member("skinned_fxdistortionv5.fx"), family.member("fxdistortionv5.fx"))
 
 
 class FamilyData(unittest.TestCase):
@@ -51,8 +54,25 @@ class FamilyData(unittest.TestCase):
         self.assertEqual(self.family.permutation.get("SPACE_OBJECT_PPT_ENABLED"), "SOPPT_ENABLED")
 
     def test_every_member_is_present(self):
-        self.assertEqual(len(self.family.members), 10)
-        self.assertIn("quadv5", self.family.members)
+        self.assertEqual(len(self.family.members), 12)
+        for name in ("quadv5", "fxv5", "fxdistortionv5"):
+            self.assertIn(name, self.family.members)
+
+    def test_fxv5_is_the_additive_fresnel_layer_pair(self):
+        fx = self.family.member("fxv5.fx")
+        self.assertEqual(fx.textures, ("LayerMaskMap", "Layer1Map", "Layer2Map"))
+        self.assertEqual(fx.scene_textures, ())
+        self.assertEqual([(name, c.vec4) for name, c in fx.constants.items()],
+                         [("FresnelFactors", 0), ("Layer1Transform", 1), ("Layer2Transform", 2),
+                          ("Layer1Scroll", 3), ("Layer2Scroll", 4), ("BaseColor", 5)])
+        self.assertEqual(fx.constant("BaseColor").default, WHITE)
+        # EVE's layers are read raw (Frontier's copy of the shader marks them
+        # sRGB), and the colourspace of each image is taken from this.
+        for texture in fx.textures:
+            self.assertFalse(fx.annotation(texture).srgb, texture)
+        # Documents without a per-member tier lend it to their members, which
+        # is what the fx graph checks.
+        self.assertEqual(fx.tier, "sm_depth")
 
     def test_quadv5_adds_nothing_of_its_own(self):
         # quadv5 IS the base: every texture it binds is bound by at least one
@@ -75,6 +95,7 @@ class FamilyData(unittest.TestCase):
                          "GlowMap", "DirtMap", "DustNoiseMap"):
             self.assertIn(expected, common)
         # PaintMaskMap is only 8/10 -- absent from environment and instanced.
+        # The fx members bind none of these and are not quad members.
         self.assertNotIn("PaintMaskMap", common)
 
     def test_dirt_and_dust_are_baseline_not_debug(self):

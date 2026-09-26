@@ -1234,10 +1234,15 @@ def build_group(member: Optional[Member] = None, *, rebuild: bool = False):
 
 
 def build_all() -> list:
-    """Builds a group for every measured family member."""
+    """Builds a group for every measured quad member.
+
+    `fxv5` and `fxdistortionv5` are in the family too: fxv5 is drawn by the
+    fx graph in `frontier.py`, fxdistortionv5 by `materials`.
+    """
 
     family = load_family()
-    return [build_group(member) for member in family.members.values()]
+    return [build_group(member) for member in family.members.values()
+            if member.name.startswith("quad")]
 
 
 #: The decal projection group; one per blend file, shared by every decal.

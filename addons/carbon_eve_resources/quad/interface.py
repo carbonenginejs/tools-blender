@@ -10,7 +10,9 @@ is.
 authored by hand. Blender targets ``.sm_depth`` ONLY. Lower tiers can omit
 material features while remaining valid shaders. EVE's measured family uses
 ``SOPPT_ENABLED``; Frontier explicitly uses ``SOPPT_DISABLED`` where present.
-``scripts/frontier-interface.mjs`` reproduces the Frontier interface metadata.
+``scripts/frontier-interface.mjs`` reproduces the Frontier interface metadata;
+``scripts/eve-interface.mjs`` generates this file through tools-core at a
+pinned build; at 3478781 it reproduces it byte for byte.
 
 This module has no ``bpy`` dependency so it can be tested with the standard
 library alone.
@@ -270,13 +272,14 @@ class Family:
         return None
 
     def common_textures(self) -> tuple[str, ...]:
-        """Textures every member binds, in the order the base member binds them."""
+        """Textures every quad member binds, in the order the base member binds them."""
 
-        if not self.members:
+        quads = [m for m in self.members.values() if m.name.startswith("quad")]
+        if not quads:
             return ()
-        shared = set.intersection(*(set(m.textures) for m in self.members.values()))
+        shared = set.intersection(*(set(m.textures) for m in quads))
         base = self.members.get("quadv5")
-        order = base.textures if base else next(iter(self.members.values())).textures
+        order = base.textures if base else quads[0].textures
         return tuple(name for name in order if name in shared)
 
 
@@ -346,7 +349,7 @@ def load_family(path: Optional[Path] = None, *, target="eve") -> Family:
         )
 
     members = {
-        name: _member(name, entry)
+        name: _member(name, entry, tier=str(raw.get("tier", "")))
         for name, entry in (raw.get("members") or {}).items()
     }
     return Family(
@@ -358,7 +361,7 @@ def load_family(path: Optional[Path] = None, *, target="eve") -> Family:
     )
 
 
-def _member(name: str, entry: Mapping) -> Member:
+def _member(name: str, entry: Mapping, *, tier: str = "") -> Member:
     # Authored surface controls may be consumed in the vertex stage (the
     # asteroid's triplanar tiling and secondary material indices are examples).
     # Keep stage layouts in the manifest; expose their named values together.
@@ -392,7 +395,8 @@ def _member(name: str, entry: Mapping) -> Member:
         effect_path=str(entry.get("effectPath", "")),
         selected_options=dict(entry.get("selectedOptions") or {}),
         digest=str(entry.get("sha256", "")),
-        tier=str(entry.get("tier", "")),
+        # EVE's members inherit the document's tier; Frontier's state their own.
+        tier=str(entry.get("tier", tier)),
         aliases=dict(entry.get("aliases") or {}),
     )
 

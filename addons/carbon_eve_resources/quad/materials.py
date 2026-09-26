@@ -342,6 +342,35 @@ def build_heat_area_material(area, member, resources, index, context, *, base_ma
     return material, None
 
 
+def build_distortion_area_material(area, member, shader, index):
+    """A surface that draws nothing, because Carbon's pass adds no colour.
+
+    EVE's fxdistortionv5 Main pass (TQ 3542233 depth, PS0-35) writes only a
+    screen offset, a constant 1/256 and `DistortionFactors.y` into the
+    distortion buffer; a post-process then bends the frame behind the area by
+    it. Without a member the area kept the importer's opaque white, which on a
+    Nestor is the whole disc inside the ring. Transparent is what the colour
+    pass sees; the bending is not reproduced.
+    """
+
+    material = bpy.data.materials.new(f"{index:02d} {area.get('name') or member.name}")
+    material["carbon_source"] = member.target
+    material["carbon_effect_path"] = shader
+    material["carbon_effect_identity"] = member.identity
+    if hasattr(material, "surface_render_method"):
+        material.surface_render_method = "BLENDED"
+    else:
+        material.blend_method = "BLEND"
+    material.use_nodes = True
+    mnodes, mlinks = material.node_tree.nodes, material.node_tree.links
+    mnodes.clear()
+    output = mnodes.new("ShaderNodeOutputMaterial")
+    output.location = (200, 0)
+    transparent = mnodes.new("ShaderNodeBsdfTransparent")
+    mlinks.new(transparent.outputs[0], output.inputs["Surface"])
+    return material
+
+
 def build_area_material(area, family, resources, index, *, heat_context=None):
     """One material for one mesh area, from its own effect."""
 
@@ -350,6 +379,9 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
     member = family.member(shader, effect.get("options"))
     if member is None:
         return None, f"{area.get('name')}: no measured member for {shader.rsplit('/', 1)[-1]}"
+
+    if member.name == "fxdistortionv5":
+        return build_distortion_area_material(area, member, shader, index), None
 
     if member.target == "frontier":
         from . import frontier
@@ -373,13 +405,20 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
             if lookup_samples is None:
                 print(f"  ! {area.get('name')}: MaterialLookupGradient unavailable; using the unbound black lookup")
         tree = frontier.build_group(member, lookup_samples=lookup_samples)
+    elif member.name == "fxv5":
+        # fxv5 is EVE's shader, and Frontier inherited it. TQ 3542233's depth
+        # PS0-29 is `Graph.fx` instruction for instruction, with the same
+        # ONE+ONE pass, so EVE's areas are drawn by that graph. It sits in
+        # frontier.py only because Frontier's support was written first.
+        from . import frontier
+        tree = frontier.build_group(member)
     else:
         tree = nodes.build_group(member)
     material = bpy.data.materials.new(f"{index:02d} {area.get('name') or member.name}")
     material["carbon_source"] = member.target
     material["carbon_effect_path"] = shader
     material["carbon_effect_identity"] = member.identity
-    if member.target == "frontier" and member.name == "fxv5":
+    if member.name == "fxv5":
         material["carbon_frontier_vertex_view"] = True
         # Eevee's dithered path discards the fully transparent closure and
         # loses its additive emission. The blended path preserves ONE+ONE.
@@ -394,6 +433,11 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
         material["carbon_frontier_normal_limit"] = "Authored tangent frame remains in the rest pose"
         alias = member.aliases.get(shader.lower(), {})
         material["carbon_rigid_frame_required"] = alias.get("vertexSha256") == frontier.RIGID_VERTEX_SHA256
+    elif member.name == "fxv5" and "skinned_" in shader.rsplit("/", 1)[-1].lower():
+        # The fx graph reads the imported normal attribute, which the Armature
+        # modifier leaves in the rest pose. The flag keeps its Frontier name
+        # until the graph moves out of frontier.py.
+        material["carbon_frontier_normal_limit"] = "Authored tangent frame remains in the rest pose"
     material.use_nodes = True
     mnodes, mlinks = material.node_tree.nodes, material.node_tree.links
     mnodes.clear()
@@ -475,7 +519,7 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
             alpha = group.inputs.get(name.replace("Map", "Alpha"))
             if alpha is not None:
                 mlinks.new(node.outputs["Alpha"], alpha)
-        if member.target == "frontier" and member.name == "fxv5":
+        if member.name == "fxv5":
             mlinks.new(node.outputs["Alpha"], group.inputs[name + "Alpha"])
         row -= 300
 
@@ -486,10 +530,13 @@ def build_area_material(area, family, resources, index, *, heat_context=None):
         from .frontier import wire_coordinates
         wire_coordinates(member, effect, material)
         wire_heat_shimmer(member, effect, group, mnodes, mlinks, resources)
+    elif member.name == "fxv5":
+        from .frontier import wire_coordinates
+        wire_coordinates(member, effect, material)
 
     for constant in effect.get("constParameters", []):
         name, value = constant.get("name"), constant.get("value") or []
-        if member.target == "frontier":
+        if member.target == "frontier" or member.name == "fxv5":
             if name not in member.constants or not value:
                 continue
             if member.name == "fxv5" and name == "BaseColor" and len(value) > 3:
