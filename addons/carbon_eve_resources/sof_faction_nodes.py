@@ -37,7 +37,8 @@ PREFIX = "SofFaction"
 TOLERANCE = 1e-4
 
 
-#: Colour TYPE by index, from EveSOFDataFactionColorSet.Types in the runtime.
+#: Colour TYPE by index: Carbon's SOFDataFactionColorChooser::ColorType order,
+#: EveSOFDataFactionColorSet.ColorType in the runtime.
 #:
 #: This is how a child names its colour where it names one at all: a decal
 #: carries `glowColorType`, an index into this list, and the faction supplies
