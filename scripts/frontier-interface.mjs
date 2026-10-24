@@ -1,7 +1,7 @@
 /** Measure interfaces only; never store shader code or bytecode in Blender. */
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { CjsHlslFormat } from "../../runtime/src/resource/formats/hlsl/index.js";
+import { CjsCarbonEffectFormat } from "../../runtime/src/resource/formats/carbonEffect/index.js";
 
 const [service = "http://127.0.0.1:5510", build = "3512930", output] = process.argv.slice(2);
 const target = "frontier";
@@ -44,7 +44,7 @@ for (const name of families) {
     const response = await fetch(`${service}/${target}/${build}/resources/${compiledPath.slice(5)}`);
     if (!response.ok) throw new Error(`${compiledPath}: HTTP ${response.status}`);
     const bytes = new Uint8Array(await response.arrayBuffer());
-    const raw = CjsHlslFormat.read(bytes, {emit: "raw"});
+    const raw = CjsCarbonEffectFormat.read(bytes, {emit: "raw"});
     const transparency = raw.m_permutations.find(p => p.name === "SPACE_OBJECT_TRANSPARENCY");
     for (const variant of transparency?.options ?? [null]) {
         const selectedOptions = {};
@@ -61,7 +61,7 @@ for (const name of families) {
         }
         const shader = raw.GetShaderByIndex(permutationIndex).toJSON();
         const rawPass = shader.effect.techniques.find(t => t.name === "Main").passes[0];
-        const reflected = CjsHlslFormat.read(bytes, {permutation: Object.entries(selectedOptions).map(([name, value]) => ({name, value}))});
+        const reflected = CjsCarbonEffectFormat.read(bytes, {permutation: Object.entries(selectedOptions).map(([name, value]) => ({name, value}))});
         const pass = reflected.effect.techniques.find(t => t.name === "Main").passes[0];
         const annotations = Object.fromEntries(reflected.effect.annotations.map(entry => [entry.name,
             Object.fromEntries(entry.annotations.map(a => [a.name, a[["boolValue", "intValue", "floatValue", "stringValue"][a.type]]]))]));
@@ -103,7 +103,7 @@ for (const name of families) {
                 if (response.status === 404) continue;
                 if (!response.ok) throw new Error(`${compiled}: ${response.status}`);
                 const aliasBytes = new Uint8Array(await response.arrayBuffer());
-                const aliasShader = CjsHlslFormat.read(aliasBytes, {permutation: Object.entries(selectedOptions).map(([name, value]) => ({name, value}))});
+                const aliasShader = CjsCarbonEffectFormat.read(aliasBytes, {permutation: Object.entries(selectedOptions).map(([name, value]) => ({name, value}))});
                 const aliasPass = aliasShader.effect.techniques.find(t => t.name === "Main").passes[0];
                 const aliasPixel = aliasPass.stageInputs.find(s => s?.stageType === 1).bytecode.bytes;
                 const aliasVertex = aliasPass.stageInputs.find(s => s?.stageType === 0).bytecode.bytes;

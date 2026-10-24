@@ -8,7 +8,7 @@
  *   node scripts/eve-interface.mjs [service] [build] [output]
  */
 import { writeFile } from "node:fs/promises";
-import { CjsHlslFormat } from "../../runtime/src/resource/formats/hlsl/index.js";
+import { CjsCarbonEffectFormat } from "../../runtime/src/resource/formats/carbonEffect/index.js";
 
 const [service = "http://127.0.0.1:5510", build = "3478781", output] = process.argv.slice(2);
 const target = "eve";
@@ -47,7 +47,7 @@ for (const name of families) {
     const response = await fetch(`${service}/${target}/${build}/resources/${compiledPath.slice(5)}`);
     if (!response.ok) throw new Error(`${compiledPath}: HTTP ${response.status}`);
     const bytes = new Uint8Array(await response.arrayBuffer());
-    const raw = CjsHlslFormat.read(bytes, {emit: "raw"});
+    const raw = CjsCarbonEffectFormat.read(bytes, {emit: "raw"});
     const selectedOptions = {};
     let permutationIndex = 0, multiplier = 1;
     for (const axis of raw.m_permutations) {
@@ -61,7 +61,7 @@ for (const name of families) {
     }
     const rawPass = raw.GetShaderByIndex(permutationIndex).toJSON()
         .effect.techniques.find(t => t.name === "Main").passes[0];
-    const reflected = CjsHlslFormat.read(bytes, {permutation: Object.entries(selectedOptions).map(([name, value]) => ({name, value}))});
+    const reflected = CjsCarbonEffectFormat.read(bytes, {permutation: Object.entries(selectedOptions).map(([name, value]) => ({name, value}))});
     const pass = reflected.effect.techniques.find(t => t.name === "Main").passes[0];
     const annotations = Object.fromEntries(reflected.effect.annotations.map(entry => [entry.name,
         Object.fromEntries(entry.annotations.map(a => [a.name, a[["boolValue", "intValue", "floatValue", "stringValue"][a.type]]]))]));
